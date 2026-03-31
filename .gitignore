@@ -1,0 +1,60 @@
+# Environment files
+.env
+.env.*
+*.env.local
+
+# IDE and editor files
+.claude/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.sublime-*
+
+# Streamlit - only ignore secrets, not config
+.streamlit/secrets.toml
+
+# Virtual environments
+01_env/
+venv/
+env/
+.venv/
+
+# Python cache and files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.coverage
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Application data and logs
+text_to_sql_api/data/
+text_to_sql_api/logs/
+*.log
+*.log.*
+
+# Node.js
+node_modules/
+package-lock.json
+yarn.lock
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/

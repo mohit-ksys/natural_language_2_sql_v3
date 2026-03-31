@@ -1,0 +1,214 @@
+===========================================
+TABLE: latest_course_statuses
+===========================================
+
+PURPOSE:
+Stores the current/latest status of each course that a student has applied to or is interested in. After a student fills a form, this table tracks the progress of their application for each course. One record per student-course combination, representing the most recent status. This is different from course_status_journeys which maintains historical records.
+
+KEY BUSINESS RULES:
+- One record per student-course combination (current status only)
+- Created when counsellor shortlists a course for a student
+- Tracks payment progress and admission milestones
+- Links to university API for data synchronization
+- Default status is "Shortlisted" when record is created 
+
+
+
+===========================================
+TABLE SCHEMA
+===========================================
+
+CREATE TABLE public.latest_course_statuses (
+  id integer NOT NULL DEFAULT nextval('latest_course_statuses_id_seq'::regclass),
+  course_id character varying,
+  student_id character varying,
+  created_by character varying,
+  latest_course_status character varying DEFAULT 'Shortlisted',
+  is_shortlisted boolean DEFAULT false,
+  created_at timestamp with time zone,
+  college_api_sent_status character varying DEFAULT '',
+  updated_at timestamp with time zone,
+  CONSTRAINT latest_course_statuses_pkey PRIMARY KEY (id),
+  CONSTRAINT latest_course_statuses_course_id_fkey FOREIGN KEY (course_id) REFERENCES public.university_courses(course_id),
+  CONSTRAINT latest_course_statuses_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(student_id)
+);
+
+===========================================
+COLUMN DEFINITIONS
+===========================================
+
+1. id (PRIMARY KEY)
+   - Type: integer
+   - Description: Unique identifier for each course status record
+   - Auto-generated using sequence
+   - Constraints: NOT NULL, PRIMARY KEY
+
+2. student_id
+   - Type: character varying
+   - Description: ID of the student
+   - Foreign Key: References students.student_id
+
+3. course_id
+   - Type: character varying
+   - Description: ID of the university course
+   - Foreign Key: References university_courses.course_id
+
+4. created_by
+   - Type: character varying
+   - Description: ID of the counsellor or user who created this status record
+
+5. latest_course_status
+   - Type: character varying
+   - Description: Current admission status for this student-course combination
+   - Default: 'Shortlisted'
+   - Possible Values:
+     
+     INITIAL STAGE:
+     * "Shortlisted" - Course shortlisted for student
+     * "Repo Call Done" - Repo call completed
+     
+     FORM SUBMISSION STAGE:
+     * "Form Filled" - Admission form filled
+     * "Form Filled_Partner website" - Form filled via partner website
+     * "Form Submitted – Portal Pending" - Form submitted, processing pending
+     * "Form Submitted – Completed" - Form submission completed
+     * "Application" - Application submitted
+     
+     REGISTRATION STAGE:
+     * "Registration done" - Course registration completed
+     * "Admission" - Admission completed
+     
+     PAYMENT STAGES:
+     * "Partially Paid" - Partial fee payment
+     * "Semester Paid" - Semester fees paid
+     * "Semester fee paid" - Semester fees paid
+     * "1st Year Fee Paid" - First year fees paid
+     * "one year fee paid" - First year fees paid
+     * "Full Fee Paid" - Complete fees paid
+     * "full fee paid" - Complete fees paid
+     
+     FINAL STAGE:
+     * "Enrolled" - Enrollment completed
+     
+     OTHER STATUSES:
+     * "On Hold – Missing Docs" - On hold due to missing documents
+
+6. is_shortlisted
+   - Type: boolean
+   - Description: Flag indicating if course is shortlisted
+   - Default: false
+
+7. college_api_sent_status
+   - Type: character varying
+   - Description: Status of data synchronization with university API
+   - Default: Empty string
+   - Possible Values:
+     * "Proceed" - Approved to send to university API
+     * "Success" - Successfully sent to university system
+     * "Do Not Proceed" / "Do not Proceed" - Should not be sent
+     * "Failed due to Technical Issues" - API request failed
+     * Empty - Not recorded or not applicable
+
+8. created_at
+   - Type: timestamp with time zone
+   - Description: When the status record was created
+
+9. updated_at
+   - Type: timestamp with time zone
+   - Description: When the status was last updated
+
+===========================================
+RELATIONSHIPS
+===========================================
+
+FOREIGN KEYS (This table references):
+1. course_id → university_courses.course_id
+   - Links to the specific university course
+
+2. student_id → students.student_id
+   - Links to the student profile
+
+===========================================
+CONSTRAINTS & RULES
+===========================================
+
+PRIMARY KEY: id
+- Auto-incremented unique identifier
+
+FOREIGN KEY CONSTRAINTS:
+- Must reference valid course_id from university_courses
+- Must reference valid student_id from students
+
+BUSINESS RULES:
+- One record per student-course combination (latest status only)
+- Status progression: Shortlisted → Form Filled → Registration → Payment → Enrolled
+- API status tracks integration with university systems
+- Different from course_status_journeys which keeps full history
+
+===========================================
+COMMON QUERY PATTERNS
+===========================================
+
+1. Get all courses for a student:
+   SELECT lcs.*, uc.university_name, uc.degree_name
+   FROM latest_course_statuses lcs
+   JOIN university_courses uc ON lcs.course_id = uc.course_id
+   WHERE lcs.student_id = 'STU123';
+
+2. Find students who filled forms:
+   SELECT * FROM latest_course_statuses 
+   WHERE latest_course_status LIKE 'Form Filled%';
+
+3. Get enrolled students:
+   SELECT * FROM latest_course_statuses WHERE latest_course_status = 'Enrolled';
+
+4. Find shortlisted courses:
+   SELECT * FROM latest_course_statuses WHERE latest_course_status = 'Shortlisted';
+
+5. Track payment status:
+   SELECT * FROM latest_course_statuses 
+   WHERE latest_course_status IN ('Partially Paid', 'Semester Paid', '1st Year Fee Paid', 'Full Fee Paid');
+
+6. Check API sync status:
+   SELECT * FROM latest_course_statuses WHERE college_api_sent_status = 'Success';
+
+7. Find failed API syncs:
+   SELECT * FROM latest_course_statuses 
+   WHERE college_api_sent_status = 'Failed due to Technical Issues';
+
+8. Count students by course status:
+   SELECT latest_course_status, COUNT(*) as count
+   FROM latest_course_statuses GROUP BY latest_course_status;
+
+9. Get courses by university:
+   SELECT lcs.*, uc.university_name 
+   FROM latest_course_statuses lcs
+   JOIN university_courses uc ON lcs.course_id = uc.course_id
+   WHERE uc.university_name = 'Amity University';
+
+10. Find students pending registration:
+    SELECT * FROM latest_course_statuses 
+    WHERE latest_course_status LIKE 'Form Submitted%';
+
+11. Get student course count:
+    SELECT student_id, COUNT(*) as course_count
+    FROM latest_course_statuses GROUP BY student_id;
+
+12. Find courses created by counsellor:
+    SELECT * FROM latest_course_statuses WHERE created_by = 'COUN123';
+
+===========================================
+BUSINESS CONTEXT
+===========================================
+
+- Tracks current status of student course applications
+- One record per student-course pair (current state snapshot)
+- Used by counsellors to monitor application progress
+- Integrates with university APIs for data synchronization
+- Critical for tracking conversion from shortlist to enrollment
+- Complements course_status_journeys which maintains full history
+- Helps identify bottlenecks in admission funnel
+- Used for reporting on course popularity and enrollment rates
+- Supports payment tracking and financial reconciliation
+
+

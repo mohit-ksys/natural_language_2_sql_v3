@@ -1,0 +1,257 @@
+## FEW-SHOT EXAMPLES
+Study these examples carefully. Each one demonstrates a pattern you MUST follow when you see a similar query.
+Do not deviate from these patterns.
+
+---
+
+Question: Show me the top 10 counsellors with the most students and how many of those students are at each stage from pre-application to enrollment.
+
+```sql
+SELECT
+    c.counsellor_name,
+    COUNT(DISTINCT s.student_id) AS total_students,
+    COUNT(DISTINCT CASE WHEN s.current_student_status = 'Pre Application' THEN s.student_id END) AS pre_application,
+    COUNT(DISTINCT CASE WHEN s.current_student_status = 'Initial Counselling Completed' THEN s.student_id END) AS counselling_completed,
+    COUNT(DISTINCT CASE WHEN csj.course_status = 'Application' THEN csj.student_id END) AS applications,
+    COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' THEN csj.student_id END) AS admissions,
+    COUNT(DISTINCT CASE WHEN csj.course_status = 'Enrolled' THEN csj.student_id END) AS enrolled
+FROM counsellors c
+JOIN students s ON c.counsellor_id = s.assigned_counsellor_id
+LEFT JOIN course_status_journeys csj ON s.student_id = csj.student_id
+GROUP BY c.counsellor_id, c.counsellor_name
+HAVING COUNT(DISTINCT s.student_id) > 0
+ORDER BY total_students DESC
+LIMIT 10;
+```
+Key patterns: one row per counsellor, one column per stage via CASE WHEN. Never return one row per status (long format). Always include total_students. No status = 'active' filter. No is_partner filter.
+
+---
+
+Question: For each counsellor, show me how many students reached admission or enrollment, how many remarks they logged, upcoming and overdue callbacks, and their conversion rate.
+
+```sql
+SELECT
+    c.counsellor_name,
+    COUNT(DISTINCT s.student_id) AS total_students,
+    COUNT(DISTINCT CASE WHEN csj.course_status IN ('Admission', 'Enrolled') THEN csj.student_id END) AS converted_students,
+    COUNT(DISTINCT sr.remark_id) AS total_remarks,
+    COUNT(DISTINCT CASE WHEN sr.callback_date >= CURRENT_DATE THEN sr.remark_id END) AS upcoming_callbacks,
+    COUNT(DISTINCT CASE WHEN sr.callback_date < CURRENT_DATE THEN sr.remark_id END) AS overdue_callbacks,
+    ROUND(
+        COUNT(DISTINCT CASE WHEN csj.course_status IN ('Admission', 'Enrolled') THEN csj.student_id END)::numeric
+        / NULLIF(COUNT(DISTINCT s.student_id), 0) * 100, 2
+    ) AS conversion_rate_pct
+FROM counsellors c
+JOIN students s ON c.counsellor_id = s.assigned_counsellor_id
+LEFT JOIN course_status_journeys csj ON s.student_id = csj.student_id
+LEFT JOIN student_remarks sr ON s.student_id = sr.student_id AND sr.counsellor_id = c.counsellor_id
+GROUP BY c.counsellor_id, c.counsellor_name
+HAVING COUNT(DISTINCT s.student_id) > 0
+ORDER BY total_students DESC;
+```
+Key patterns: NO status = 'active' filter. NO is_partner filter. Callbacks count remark_id not student_id. Always include total_students. No LIMIT on full summary queries.
+
+---
+
+Question: How many students are currently in the application stage for programs at Amity University?
+
+```sql
+SELECT COUNT(DISTINCT csj.student_id) AS applications
+FROM course_status_journeys csj
+JOIN university_courses uc ON csj.course_id = uc.course_id
+WHERE uc.university_name ILIKE '%amity%'
+  AND csj.course_status = 'Application';
+```
+Key patterns: "application stage", "paperwork stage", "document submission stage", "being formally processed", "form filled", "form fills" ALL mean `course_status_journeys.course_status = 'Application'`. NEVER use `students.current_student_status` for Application/Admission/Enrolled stages. NEVER filter `latest_course_statuses.latest_course_status ILIKE '%Form%'`. For Application/Admission/Enrolled → always use course_status_journeys.
+
+---
+
+Question: Show me how many students are at pre-application, application, admission, and enrolled for each university.
+
+```sql
+WITH stage_priority AS (
+    SELECT
+        uc.university_name,
+        s.student_id,
+        MAX(
+            CASE
+                WHEN csj.course_status = 'Enrolled'        THEN 4
+                WHEN csj.course_status = 'Admission'       THEN 3
+                WHEN csj.course_status = 'Application'     THEN 2
+                WHEN s.current_student_status = 'Pre Application' THEN 1
+                ELSE 0
+            END
+        ) AS final_stage_rank
+    FROM students s
+    LEFT JOIN course_status_journeys csj ON s.student_id = csj.student_id
+    LEFT JOIN university_courses uc ON csj.course_id = uc.course_id
+    GROUP BY uc.university_name, s.student_id
+)
+SELECT
+    university_name,
+    COUNT(*) FILTER (WHERE final_stage_rank = 1) AS pre_application,
+    COUNT(*) FILTER (WHERE final_stage_rank = 2) AS applications,
+    COUNT(*) FILTER (WHERE final_stage_rank = 3) AS admissions,
+    COUNT(*) FILTER (WHERE final_stage_rank = 4) AS enrolled
+FROM stage_priority
+GROUP BY university_name
+ORDER BY applications DESC;
+```
+Key patterns: always use a stage_rank CTE to find each student's highest stage before counting per university. Never count the same student across multiple stage buckets. For Pre Application use students.current_student_status, for Application/Admission/Enrolled use course_status_journeys.course_status. Join path: students → course_status_journeys → university_courses. No LIMIT.
+---
+
+Question: On average, how many days from when a student first enters the system to when they get admission or enroll?
+
+```sql
+SELECT
+    AVG(EXTRACT(EPOCH FROM (csj.created_at - s.created_at)) / 86400) AS avg_tat_days
+FROM students s
+JOIN course_status_journeys csj ON s.student_id = csj.student_id
+WHERE csj.course_status IN ('Admission', 'Enrolled')
+  AND s.created_at IS NOT NULL
+  AND csj.created_at IS NOT NULL;
+```
+
+For university-level TAT (breakdown per university):
+```sql
+SELECT
+    uc.university_name,
+    COUNT(DISTINCT s.student_id) AS converted_students,
+    ROUND(AVG(EXTRACT(EPOCH FROM (csj.created_at - s.created_at)) / 86400)::numeric, 1) AS avg_tat_days,
+    ROUND(MIN(EXTRACT(EPOCH FROM (csj.created_at - s.created_at)) / 86400)::numeric, 1) AS min_tat_days,
+    ROUND(MAX(EXTRACT(EPOCH FROM (csj.created_at - s.created_at)) / 86400)::numeric, 1) AS max_tat_days
+FROM students s
+JOIN course_status_journeys csj ON s.student_id = csj.student_id
+JOIN university_courses uc ON csj.course_id = uc.course_id
+WHERE csj.course_status IN ('Admission', 'Enrolled')
+  AND s.created_at IS NOT NULL
+  AND csj.created_at IS NOT NULL
+GROUP BY uc.university_name
+ORDER BY converted_students DESC;
+```
+Key patterns: TAT = course_status_journeys.created_at − students.created_at. Use course_status_journeys for Admission/Enrolled timestamps. NEVER use students.updated_at for TAT — it doesn't reflect when they reached Admission/Enrolled. NEVER join student_remarks for TAT — remark timestamps are logged after status change and produce wrong intervals. Always compute (later − earlier): csj.created_at − s.created_at, never the reverse. No LIMIT.
+
+---
+
+Question: Which counsellors are best at reaching students and having quality conversations with strong or moderate interest?
+
+```sql
+SELECT
+    c.counsellor_name,
+    COUNT(sr.remark_id) AS total_attempts,
+    COUNT(CASE WHEN sr.calling_status = 'Connected' AND sr.sub_calling_status IN ('Hot', 'Warm') THEN 1 END) AS quality_connections,
+    COUNT(CASE WHEN sr.calling_status = 'Connected' THEN 1 END) AS total_connected,
+    ROUND(
+        COUNT(CASE WHEN sr.calling_status = 'Connected' AND sr.sub_calling_status IN ('Hot', 'Warm') THEN 1 END)::numeric
+        / NULLIF(COUNT(sr.remark_id), 0) * 100, 2
+    ) AS quality_rate_pct
+FROM counsellors c
+JOIN student_remarks sr ON c.counsellor_id = sr.counsellor_id
+GROUP BY c.counsellor_id, c.counsellor_name
+HAVING COUNT(sr.remark_id) > 0
+ORDER BY quality_rate_pct DESC;
+```
+Key patterns: call quality = `calling_status = 'Connected' AND sub_calling_status IN ('Hot', 'Warm')`. This is a student_remarks metric — join counsellors directly to student_remarks on counsellor_id. Do NOT route through the students table and do NOT use student conversion rate (current_student_status IN ('Admission','Enrolled')) as a substitute for call quality — they measure completely different things. No status = 'active' filter. No LIMIT.
+
+---
+
+Question: Show me monthly lead counts over the last 6 months broken down by source.
+
+```sql
+SELECT
+    DATE_TRUNC('month', s.created_at) AS month,
+    s.source,
+    COUNT(*) AS lead_count
+FROM students s
+WHERE s.created_at >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '5 months')
+GROUP BY DATE_TRUNC('month', s.created_at), s.source
+ORDER BY month DESC, lead_count DESC;
+```
+Key patterns: use COUNT(*) for lead counts — each student row is one lead, no DISTINCT needed. Use DATE_TRUNC for month bucketing — no 5h30m offset on DATE_TRUNC operations. Do NOT filter by current_student_status — "monthly lead count" means all students created in that period regardless of their current stage. No LIMIT.
+
+---
+
+Question: Show me students who are at the application, admission, or enrolled stage but have not had a remark in the last 7 days.
+
+```sql
+SELECT
+    s.student_name,
+    s.student_email,
+    s.student_phone,
+    c.counsellor_name,
+    csj.course_status,
+    MAX(sr.created_at) AS last_remark_date
+FROM students s
+JOIN course_status_journeys csj ON s.student_id = csj.student_id
+JOIN counsellors c ON s.assigned_counsellor_id = c.counsellor_id
+LEFT JOIN student_remarks sr ON s.student_id = sr.student_id
+WHERE csj.course_status IN ('Application', 'Admission', 'Enrolled')
+GROUP BY s.student_id, s.student_name, s.student_email, s.student_phone, c.counsellor_name, csj.course_status
+HAVING MAX(sr.created_at) < CURRENT_DATE - INTERVAL '7 days' OR MAX(sr.created_at) IS NULL
+ORDER BY last_remark_date ASC NULLS FIRST;
+```
+Key patterns: always include student_email, student_phone, counsellor_name in dormant/no-follow-up queries. For Application/Admission/Enrolled use course_status_journeys.course_status, NOT students.current_student_status. Use LEFT JOIN to student_remarks so students with zero remarks also appear. JOIN counsellors via assigned_counsellor_id. No timezone offset — CURRENT_DATE directly for 7-day threshold. No LIMIT.
+
+---
+
+Question: Show me which counsellors are above or below the team average for conversion rate, and by how much.
+
+```sql
+WITH counsellor_metrics AS (
+    SELECT
+        c.counsellor_id,
+        c.counsellor_name,
+        COUNT(DISTINCT s.student_id) AS total_students,
+        COUNT(DISTINCT CASE WHEN csj.course_status IN ('Admission','Enrolled') THEN csj.student_id END) AS conversions,
+        ROUND(
+            COUNT(DISTINCT CASE WHEN csj.course_status IN ('Admission','Enrolled') THEN csj.student_id END)::numeric
+            / NULLIF(COUNT(DISTINCT s.student_id), 0) * 100, 2
+        ) AS conversion_rate_pct
+    FROM counsellors c
+    JOIN students s ON c.counsellor_id = s.assigned_counsellor_id
+    LEFT JOIN course_status_journeys csj ON s.student_id = csj.student_id
+    GROUP BY c.counsellor_id, c.counsellor_name
+    HAVING COUNT(DISTINCT s.student_id) > 0
+),
+benchmark AS (
+    SELECT
+        ROUND(AVG(conversion_rate_pct), 2)   AS avg_conversion_rate,
+        ROUND(STDDEV(conversion_rate_pct), 2) AS stddev_conversion_rate
+    FROM counsellor_metrics
+)
+SELECT
+    cm.counsellor_name,
+    cm.total_students,
+    cm.conversions,
+    cm.conversion_rate_pct,
+    b.avg_conversion_rate AS team_avg_pct,
+    ROUND(cm.conversion_rate_pct - b.avg_conversion_rate, 2) AS diff_from_avg,
+    CASE
+        WHEN cm.conversion_rate_pct >= b.avg_conversion_rate + b.stddev_conversion_rate THEN 'Above Average'
+        WHEN cm.conversion_rate_pct <= b.avg_conversion_rate - b.stddev_conversion_rate THEN 'Below Average'
+        ELSE 'Average'
+    END AS performance_band
+FROM counsellor_metrics cm
+CROSS JOIN benchmark b
+ORDER BY cm.conversion_rate_pct DESC;
+```
+Key patterns: Step 1 CTE computes per-counsellor metrics. Step 2 CTE computes AVG + STDDEV across ALL counsellors (global benchmark — NOT a sub-team average). Final SELECT uses CROSS JOIN so every counsellor row gets the benchmark columns. Always output team_avg_pct and diff_from_avg as explicit columns. No LIMIT.
+
+---
+
+Question: For each degree type, which courses have the most student interest and how many students have shortlisted each one?
+
+```sql
+SELECT 
+    uc.degree_name,
+    uc.course_name,
+    COUNT(DISTINCT csj.student_id) AS interested_students,
+    COUNT(DISTINCT CASE WHEN lcs.is_shortlisted = true THEN lcs.student_id END) AS shortlisted_students,
+    ROUND(COUNT(DISTINCT CASE WHEN lcs.is_shortlisted = true THEN lcs.student_id END)::numeric * 100.0 / NULLIF(COUNT(DISTINCT csj.student_id), 0), 2) AS shortlist_rate_pct
+FROM university_courses uc
+LEFT JOIN course_status_journeys csj ON uc.course_id = csj.course_id
+LEFT JOIN latest_course_statuses lcs ON uc.course_id = lcs.course_id AND lcs.student_id = csj.student_id
+GROUP BY uc.degree_name, uc.course_name
+ORDER BY uc.degree_name, interested_students DESC;
+```
+Key patterns: "student interest" / "students interested in a course" = COUNT(DISTINCT student_id) from course_status_journeys — students who have taken action on this course. NEVER use students.preferred_course for interest metrics (that's only for self-stated preferences). NEVER use latest_course_statuses for general interest counts (it's ONLY for shortlisted and API status). For shortlisted count, use CASE WHEN with is_shortlisted = true from latest_course_statuses. Always join lcs with both course_id AND student_id to avoid duplication. No LIMIT unless asking for "top N".

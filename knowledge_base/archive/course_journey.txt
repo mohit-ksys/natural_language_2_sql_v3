@@ -1,0 +1,246 @@
+===========================================
+TABLE: course_status_journeys
+===========================================
+
+PURPOSE:
+Maintains complete historical record of all course status changes for each student. When a counsellor discusses courses with a student, all mentioned course preferences are recorded here. If a student mentions 3 colleges and 4 courses, this creates 12 entries (3×4 combinations). Unlike latest_course_statuses which stores only current status, this table preserves the entire journey/history of status changes.
+
+KEY BUSINESS RULES:
+- Maintains full historical audit trail of course status changes
+- Multiple entries per student-course combination (one per status change)
+- Records shortlisting decisions and all subsequent status updates
+- After form filling, continues to track all status progressions
+- Each status change creates a new timestamped record
+- Complements latest_course_statuses (history vs current state)
+
+===========================================
+TABLE SCHEMA
+===========================================
+
+CREATE TABLE public.course_status_journeys (
+  status_history_id integer NOT NULL DEFAULT nextval('course_status_journeys_status_history_id_seq'::regclass),
+  student_id character varying,
+  course_id character varying,
+  counsellor_id character varying,
+  course_status character varying,
+  deposit_amount numeric DEFAULT 0,
+  currency character varying DEFAULT 'INR',
+  exam_interview_date timestamp with time zone,
+  last_admission_date timestamp with time zone,
+  notes text,
+  created_at timestamp with time zone,
+  fee_type character varying,
+  enrollment_counsellor_id character varying,
+  CONSTRAINT course_status_journeys_pkey PRIMARY KEY (status_history_id),
+  CONSTRAINT course_status_journeys_course_id_fkey FOREIGN KEY (course_id) REFERENCES public.university_courses(course_id),
+  CONSTRAINT course_status_journeys_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(student_id)
+);
+
+===========================================
+COLUMN DEFINITIONS
+===========================================
+
+1. status_history_id (PRIMARY KEY)
+   - Type: integer
+   - Description: Unique identifier for each course status history entry
+   - Auto-generated using sequence
+   - Constraints: NOT NULL, PRIMARY KEY
+
+2. student_id
+   - Type: character varying
+   - Description: ID of the student
+   - Foreign Key: References students.student_id
+
+3. course_id
+   - Type: character varying
+   - Description: ID of the university course
+   - Foreign Key: References university_courses.course_id
+
+4. counsellor_id
+   - Type: character varying
+   - Description: ID of the counsellor who created this status entry
+
+5. course_status
+   - Type: character varying
+   - Description: Status of the student's course admission at this point in the journey
+   - Possible Values:
+     
+     INITIAL STAGE:
+     * "Shortlisted" - Course shortlisted for student
+     
+     FORM SUBMISSION STAGE:
+     * "Form Filled" - Admission form filled
+     * "Form Filled_Degreefyd" - Form filled via our platform
+     * "Form Filled_Partner website" - Form filled via partner website
+     * "Form Submitted – Portal Pending" - Form submitted, processing pending
+     * "Form Submitted – Completed" / "Form Submitted - Completed" - Form submission completed
+     
+     REGISTRATION STAGE:
+     * "Registration done" - Course registration completed
+     
+     PAYMENT STAGES:
+     * "Partially Paid" / "partial paid" - Partial fee payment
+     * "Semester Paid" / "Semester fee paid" - Semester fees paid
+     * "1st Year Fee Paid" / "one year fee paid" - First year fees paid
+     * "Full Fee Paid" / "full fee paid" - Complete fees paid
+     
+     FINAL STAGES:
+     * "Enrolled" - Enrollment completed
+     * "Active" - Student currently enrolled and active in course
+
+6. deposit_amount
+   - Type: numeric
+   - Description: Amount paid by student during admission
+   - Default: 0
+
+7. currency
+   - Type: character varying
+   - Description: Currency used for payment
+   - Default: 'INR'
+
+8. exam_interview_date
+   - Type: timestamp with time zone
+   - Description: Date of entrance exam or interview for the course
+
+9. last_admission_date
+   - Type: timestamp with time zone
+   - Description: Last date for completing the admission process
+
+10. notes
+    - Type: text
+    - Description: Additional information or remarks about the course application
+
+11. created_at
+    - Type: timestamp with time zone
+    - Description: When this status record was created (timestamp of status change)
+
+12. fee_type
+    - Type: character varying
+    - Description: Type of fee payment or structure
+    - Possible Values (from database):
+      * "Semester Paid" - Semester fee payment completed
+      * "Partially Paid" - Partial fee payment made
+      * "Full Fee Paid" - Complete course fee payment
+
+13. enrollment_counsellor_id
+    - Type: character varying
+    - Description: ID of the counsellor handling the enrollment process
+    - Foreign Key: References counsellors.counsellor_id
+
+===========================================
+RELATIONSHIPS
+===========================================
+
+FOREIGN KEYS (This table references):
+1. course_id → university_courses.course_id
+   - Links to the specific university course
+
+2. student_id → students.student_id
+   - Links to the student profile
+
+===========================================
+CONSTRAINTS & RULES
+===========================================
+
+PRIMARY KEY: status_history_id
+- Auto-incremented unique identifier
+
+FOREIGN KEY CONSTRAINTS:
+- Must reference valid course_id from university_courses
+- Must reference valid student_id from students
+
+ONE-TO-MANY RELATIONSHIPS:
+- One student can have many journey records (multiple courses)
+- One course can have many journey records (multiple students)
+- One student-course pair can have many journey records (status changes over time)
+
+BUSINESS RULES:
+- Maintains complete historical audit trail
+- Each status change creates a new record
+- Multiple entries per student-course combination allowed
+- Records course preferences discussed during counselling
+- If student mentions 3 colleges × 4 courses = 12 entries created
+- Continues tracking after form filling (unlike initial description)
+- Complements latest_course_statuses (history vs snapshot)
+
+===========================================
+COMMON QUERY PATTERNS
+===========================================
+
+1. Get complete journey for a student-course:
+   SELECT * FROM course_status_journeys 
+   WHERE student_id = 'STU123' AND course_id = 'CRS456'
+   ORDER BY created_at;
+
+2. Track all courses for a student:
+   SELECT csj.*, uc.university_name, uc.degree_name
+   FROM course_status_journeys csj
+   JOIN university_courses uc ON csj.course_id = uc.course_id
+   WHERE csj.student_id = 'STU123'
+   ORDER BY csj.created_at DESC;
+
+3. Find all status changes by counsellor:
+   SELECT * FROM course_status_journeys WHERE counsellor_id = 'COUN123';
+
+4. Get payment history:
+   SELECT * FROM course_status_journeys 
+   WHERE course_status LIKE '%Paid%'
+   ORDER BY created_at DESC;
+
+5. Track enrollment progression:
+   SELECT student_id, course_id, course_status, created_at
+   FROM course_status_journeys 
+   WHERE student_id = 'STU123'
+   ORDER BY created_at;
+
+6. Find courses with deposits:
+   SELECT * FROM course_status_journeys WHERE deposit_amount > 0;
+
+7. Get shortlisted courses:
+   SELECT * FROM course_status_journeys WHERE course_status = 'Shortlisted';
+
+8. Count status changes per student:
+   SELECT student_id, COUNT(*) as status_changes
+   FROM course_status_journeys GROUP BY student_id;
+
+9. Find courses with upcoming deadlines:
+   SELECT * FROM course_status_journeys 
+   WHERE last_admission_date >= CURRENT_DATE
+   ORDER BY last_admission_date;
+
+10. Get enrolled students:
+    SELECT DISTINCT student_id FROM course_status_journeys 
+    WHERE course_status = 'Enrolled';
+
+11. Track form submission timeline:
+    SELECT * FROM course_status_journeys 
+    WHERE course_status LIKE 'Form%'
+    ORDER BY created_at DESC;
+
+12. Analyze course popularity:
+    SELECT course_id, COUNT(DISTINCT student_id) as student_count
+    FROM course_status_journeys GROUP BY course_id
+    ORDER BY student_count DESC;
+
+13. Get latest status per student-course:
+    SELECT DISTINCT ON (student_id, course_id) *
+    FROM course_status_journeys
+    ORDER BY student_id, course_id, created_at DESC;
+
+===========================================
+BUSINESS CONTEXT
+===========================================
+
+- Historical audit trail of all course status changes
+- Tracks complete admission journey from shortlist to enrollment
+- Enables analysis of conversion funnel and drop-off points
+- Records all course preferences discussed during counselling
+- Multiple entries per student-course show progression over time
+- Used for reporting on admission timelines and bottlenecks
+- Complements latest_course_statuses (history vs current state)
+- Critical for understanding student decision-making process
+- Helps identify which courses students shortlist together
+- Supports payment tracking and financial reconciliation
+- Used for counsellor performance analysis
+- Enables time-based analytics on admission process duration
+

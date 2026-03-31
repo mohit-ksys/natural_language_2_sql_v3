@@ -1,0 +1,201 @@
+## TABLE RELATIONSHIPS
+students.assigned_counsellor_id        → counsellors.counsellor_id  [L2]
+students.assigned_counsellor_l3_id     → counsellors.counsellor_id  [L3]
+students.enrollment_counsellor_id      → counsellors.counsellor_id
+counsellors.assigned_to                → counsellors.counsellor_id  [manager]
+student_remarks.student_id             → students.student_id
+student_remarks.counsellor_id          → counsellors.counsellor_id
+latest_course_statuses.student_id      → students.student_id
+latest_course_statuses.course_id       → university_courses.course_id
+course_status_journeys.student_id      → students.student_id
+course_status_journeys.course_id       → university_courses.course_id
+student_lead_activities.student_id     → students.student_id
+
+---
+
+## TABLES
+
+### students  [USE: funnel stages, source attribution, conversion counts, contact lists]
+[NEVER USE FOR: city/region → use sla.ip_city | university student counts → join via lcs→uc | WP segmentation → use sla.working_professional]
+
+| Column | Type | Notes |
+|--------|------|-------|
+| student_id | VARCHAR PK | Always COUNT(DISTINCT student_id) |
+| student_name / student_email / student_phone | VARCHAR | All 3 required in dormant queries |
+| current_student_status | VARCHAR | THE funnel stage — Fresh / Pre Application / Initial Counselling Completed / Application / Admission / Enrolled / NotInterested |
+| assigned_counsellor_id | FK→counsellors | L2 — default FK for all general counsellor JOINs |
+| assigned_counsellor_l3_id | FK→counsellors | L3 — use ONLY for L3-specific queries |
+| enrollment_counsellor_id | FK→counsellors | Admission/enrollment phase queries only |
+| is_connected_yet | BOOLEAN | True = L2 ever successfully connected |
+| is_connected_yet_l3 | BOOLEAN | True = L3 ever successfully connected |
+| source | VARCHAR | Primary attributed source per student; use ILIKE. Values vary: Meta/FaceBook/Facebook/Google_Lead_Form |
+| created_at | TIMESTAMPTZ UTC | Lead creation timestamp |
+| remarks_count | INTEGER | Denormalized — do NOT use for metrics; use COUNT(sr.remark_id) |
+
+### counsellors  [USE: staff names, role hierarchy, team structure]
+
+| Column | Type | Notes |
+|--------|------|-------|
+| counsellor_id | VARCHAR PK | CNS-XXXX (staff) / PAR-XXXX (partners) |
+| counsellor_name | VARCHAR | ILIKE '%Name%' for filtering |
+| role | VARCHAR | 'l2' / 'l3' / 'to' / 'admission_to' / 'enrollment_counsellor' |
+| assigned_to | FK→self | Manager's counsellor_id — use for team structure |
+| status | VARCHAR | 'active'/'inactive'/'suspended' — filter ONLY when user says "active/inactive counsellors" |
+| is_partner | BOOLEAN | Filter ONLY when user says "partners" or "internal staff" |
+
+### student_remarks  [USE: call metrics, TAT, callbacks, hot/warm leads, first-remark analysis]
+[NEVER USE FOR: current student stage → use students.current_student_status]
+
+| Column | Type | Notes |
+|--------|------|-------|
+| remark_id | INTEGER PK | COUNT(remark_id) = call attempts |
+| student_id | FK→students | |
+| counsellor_id | FK→counsellors | Who made the call |
+| calling_status | VARCHAR | 'Connected' or 'Not Connected' |
+| sub_calling_status | VARCHAR | Connected: Hot/Warm/Cold. Not Connected: Ringing no response/Line Busy/Switched off/Invalid Number/Not Interested(CB not required) |
+| lead_status | VARCHAR | Stage AT TIME of call — historical snapshot, NOT current status |
+| callback_date | DATE | Overdue: < CURRENT_DATE. Upcoming: >= CURRENT_DATE. No timezone offset on DATE columns. |
+| feesAmount | INTEGER | Fees discussed in this call |
+| created_at | TIMESTAMPTZ UTC | Call timestamp |
+
+### university_courses  [USE: course catalog, fee analysis, stream/mode breakdown]
+
+| Column | Type | Notes |
+|--------|------|-------|
+| course_id | VARCHAR PK | |
+| university_name | VARCHAR | ILIKE '%name%' — spellings vary |
+| degree_name / specialization / stream | VARCHAR | stream = broadest: Management/Engineering/Commerce/IT/Science/Arts & Humanities |
+| level | VARCHAR | UG / PG / Diploma / Certificate |
+| study_mode | VARCHAR | 'Online'/'Regular'/'Hybrid' — CRITICAL: use for delivery mode, NOT students.mode |
+| total_fees / semester_fees / annual_fees | NUMERIC | |
+| status | VARCHAR | Filter = 'active' ONLY when user asks for available/active courses |
+
+### latest_course_statuses (lcs)  [USE: university student counts, form analysis, current course status]
+One record per student-course pair — snapshot, not history.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| student_id / course_id | FK | Join chain: students → lcs → university_courses for university-level counts |
+| latest_course_status | VARCHAR | Shortlisted → Form Filled → Form Submitted → Registration done → Paid stages → Enrolled. Also: Admission / Application / Repo Call Done / On Hold – Missing Docs |
+| is_shortlisted | BOOLEAN | Counsellor-confirmed shortlist |
+| created_at / updated_at | TIMESTAMPTZ UTC | |
+
+### course_status_journeys (csj)  [USE: payment history, deposit amounts, per-stage timeline]
+Multiple rows per student-course. 'Admission' is NOT a valid course_status in this table.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| student_id / course_id | FK | |
+| course_status | VARCHAR | Same as lcs EXCEPT 'Admission' does not exist here. Final stages: 'Enrolled' or 'Active'. |
+| deposit_amount | NUMERIC | > 0 for actual payment events |
+| fee_type | VARCHAR | Semester Paid / Partially Paid / Full Fee Paid |
+| created_at | TIMESTAMPTZ UTC | When this status change occurred |
+
+### student_lead_activities (sla)  [USE: campaigns, UTM attribution, city/geo, device/browser, WP segmentation]
+One student can have MANY activities. Never use for funnel stage counts.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | INTEGER PK | |
+| student_id | FK→students | |
+| source | VARCHAR | Per-activity source. Facebook: source ILIKE 'FaceBook%' |
+| utm_source / utm_medium / utm_campaign | VARCHAR | Campaign attribution — GROUP BY for ROI |
+| ip_city | VARCHAR | ONLY source for city/geo — use MAX(ip_city) per student to deduplicate |
+| device | VARCHAR | Mobile / Desktop |
+| working_professional | BOOLEAN | Use for WP segmentation (NOT students.current_profession) |
+| highest_qualification | VARCHAR | Use for qualification segmentation (NOT students.highest_degree) |
+| cta_name | VARCHAR | CTA button clicked |
+| created_at | TIMESTAMPTZ UTC | When activity was recorded |
+
+---
+
+## MANDATORY RULES
+
+RULE 1: NEVER add `status = 'active'` on counsellors for general queries.
+WRONG:  WHERE c.status = 'active'
+CORRECT: no filter
+
+RULE 2: NEVER add `is_partner = false` unless user says "internal staff" or "not partners".
+WRONG:  WHERE c.is_partner = false
+CORRECT: no filter
+
+RULE 3: NEVER add LIMIT unless user says "top N" or gives a specific number.
+WRONG:  ORDER BY total_students DESC LIMIT 10
+CORRECT: ORDER BY total_students DESC
+
+RULE 4: Stage breakdown = wide format (one column per stage), never long format (one row per status).
+WRONG:  GROUP BY s.current_student_status
+CORRECT: COUNT(DISTINCT CASE WHEN current_student_status = 'Pre Application' THEN student_id END) AS pre_application
+
+RULE 5: Dormant/no-follow-up queries MUST include student_email, student_phone, counsellor_name.
+WRONG:  SELECT student_id, student_name, current_student_status
+CORRECT: SELECT s.student_name, s.student_email, s.student_phone, c.counsellor_name, s.current_student_status, MAX(sr.created_at) AS last_remark_date
+
+RULE 6: Counsellor performance MUST include total_students column.
+WRONG:  SELECT counsellor_name, conversions
+CORRECT: SELECT counsellor_name, COUNT(DISTINCT s.student_id) AS total_students, conversions
+
+RULE 7: NEVER use course_status_journeys for TAT. Use student_remarks.
+WRONG:  FROM course_status_journeys  (for days-to-admission calculation)
+CORRECT: EXTRACT(EPOCH FROM (sr.created_at - s.created_at))/86400 via student_remarks WHERE lead_status IN ('Admission','Enrolled')
+
+RULE 8: University student counts require joining via latest_course_statuses → university_courses.
+WRONG:  FROM students s JOIN [any university table] ON ...  (no direct FK)
+CORRECT: FROM students s JOIN latest_course_statuses lcs ON s.student_id = lcs.student_id JOIN university_courses uc ON lcs.course_id = uc.course_id
+
+RULE 9: NEVER use student_lead_activities to count funnel stages or student totals.
+WRONG:  FROM student_lead_activities WHERE ...  (for counting admitted/enrolled students)
+CORRECT: FROM students WHERE current_student_status = 'Admission'
+
+RULE 10: NEVER use student_remarks.lead_status for current student stage.
+WRONG:  WHERE sr.lead_status = 'Application'  (for current status query)
+CORRECT: WHERE s.current_student_status = 'Application'
+
+RULE 11: "Form filled/submitted" queries use latest_course_statuses LIKE, NOT students.current_student_status.
+WRONG:  WHERE s.current_student_status = 'Application'  (for form filling query)
+CORRECT: WHERE lcs.latest_course_status LIKE '%Form Filled%'
+
+RULE 12: ALWAYS use COUNT(DISTINCT student_id) after any JOIN that multiplies rows.
+WRONG:  COUNT(s.student_id) after JOIN to student_remarks or lcs
+CORRECT: COUNT(DISTINCT s.student_id)
+
+RULE 13: University stage counts require a stage_rank CTE — one highest stage per student-university pair.
+WRONG:  GROUP BY university_name, s.current_student_status  (double-counts students across stages)
+CORRECT: CTE with MAX(CASE WHEN Enrolled→4, Admission→3, Application→2, Pre Application→1 END) per (student, university), then COUNT by final rank
+
+RULE 14: "Working professional" and "qualification" segmentation uses student_lead_activities, NOT students.
+WRONG:  WHERE s.current_profession = 'Working Professional'
+CORRECT: WHERE sla.working_professional = true
+
+RULE 15: TIMEZONE — two cases only. Rolling window: no offset. IST day boundary: use offset.
+WRONG (rolling with offset): created_at >= NOW() - INTERVAL '7 days' - interval '5 hours 30 minutes'
+CORRECT (rolling window):    created_at >= NOW() - INTERVAL '7 days'
+WRONG (IST today without offset): DATE(created_at) = CURRENT_DATE
+CORRECT (IST today):  created_at >= CURRENT_DATE - interval '5 hours 30 minutes' AND created_at < CURRENT_DATE + interval '1 day' - interval '5 hours 30 minutes'
+
+---
+
+## NL → SQL INTENT MAP
+
+| User says | SQL pattern |
+|-----------|-------------|
+| "applied" / "application count" | students.current_student_status = 'Application' |
+| "at least applied / ever applied" | current_student_status IN ('Application','Admission','Enrolled') |
+| "converted" / "conversion" | current_student_status IN ('Admission','Enrolled') |
+| "admitted" (specifically) | current_student_status = 'Admission' |
+| "enrolled" (specifically) | current_student_status = 'Enrolled' |
+| "connected call" | student_remarks.calling_status = 'Connected' |
+| "quality call" / "effective call" / "strong connection" | calling_status = 'Connected' AND sub_calling_status IN ('Hot','Warm') |
+| "hot lead" | student_remarks.sub_calling_status = 'Hot' |
+| "form filled" / "form filling" | latest_course_statuses.latest_course_status LIKE '%Form Filled%' |
+| "form submitted" | latest_course_statuses.latest_course_status LIKE '%Form Submitted%' |
+| "dormant" / "no follow-up in N days" | HAVING MAX(sr.created_at) < CURRENT_DATE - INTERVAL '7 days' OR MAX(sr.created_at) IS NULL |
+| "city" / "location" / "where are leads from" | student_lead_activities.ip_city; MAX(ip_city) per student to deduplicate |
+| "monthly leads" / "daily leads" / "lead trend over time" | DATE_TRUNC + COUNT(*) on students.created_at — NO status filter |
+| "first call" / "first contact" / "first remark" | ROW_NUMBER() OVER (PARTITION BY student_id ORDER BY created_at, remark_id) = 1 on student_remarks |
+| "TAT" / "time to convert" / "avg days to admission" | AVG(EXTRACT(EPOCH FROM (sr.created_at - s.created_at))/86400) via student_remarks WHERE lead_status IN ('Admission','Enrolled') |
+| "working professional" / "WP" | student_lead_activities.working_professional = true |
+| "team performance" / "manager's team" | self-join counsellors on assigned_to; aggregate by manager_name + member_role |
+| "above/below average" / "benchmark comparison" | CROSS JOIN per-entity metric CTE with overall AVG + STDDEV CTE |
+| "campaign performance" / "UTM" / "ad performance" | student_lead_activities GROUP BY utm_campaign or utm_source |
+| "source performance" / "which source converts best" | GROUP BY students.source; JOIN students → lcs → uc for conversion rates |

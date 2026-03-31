@@ -1,0 +1,261 @@
+===========================================
+TABLE: students
+===========================================
+
+PURPOSE:
+Primary storage for student leads and their application journey. Leads are potential students from various sources (Meta, Google, Website). They are assigned to L2 (Junior) and L3 (Senior) counsellors for follow-up.
+
+KEY BUSINESS RULES:
+- A 'Fresh' lead has current_student_status = 'Fresh' and usually zero remarks.
+- 'L2 Connected' = is_connected_yet = true. 'L3 Connected' = is_connected_yet_l3 = true.
+- To find leads by a specific source: source ILIKE '%Meta%' or source ILIKE '%Google%'.
+- Leads assigned to a counsellor: assigned_counsellor_id = 'CNS-XXXX' or assigned_counsellor_l3_id = 'CNS-XXXX'.
+
+===========================================
+TABLE SCHEMA
+===========================================
+
+CREATE TABLE public.students (
+  student_id character varying NOT NULL,
+  student_name character varying,
+  student_email character varying UNIQUE,
+  student_phone character varying UNIQUE,
+  current_student_status character varying DEFAULT 'Fresh',
+  assigned_counsellor_id character varying,
+  assigned_counsellor_l3_id character varying,
+  enrollment_counsellor_id character varying,
+  is_connected_yet boolean DEFAULT false,
+  is_connected_yet_l3 boolean DEFAULT false,
+  is_reactivity boolean DEFAULT false,
+  source character varying,
+  mode character varying DEFAULT 'Regular',
+  highest_degree character varying,
+  completion_year character varying,
+  current_profession character varying,
+  work_experience character varying,
+  student_age integer DEFAULT 0,
+  preferred_university ARRAY,
+  preferred_course ARRAY,
+  remarks_count integer DEFAULT 0,
+  created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT students_pkey PRIMARY KEY (student_id)
+);
+
+===========================================
+COLUMN DEFINITIONS
+===========================================
+
+1. student_id (PRIMARY KEY)
+   - Type: character varying
+   - Description: Unique lead ID (STD-XXXX)
+   - Constraints: NOT NULL, PRIMARY KEY
+   - Usage: Referenced by all other tables as foreign key
+
+2. student_name
+   - Type: character varying
+   - Description: Full name of the student
+
+3. student_email
+   - Type: character varying
+   - Description: Email address
+   - Constraints: UNIQUE (no duplicate emails allowed)
+
+4. student_phone
+   - Type: character varying
+   - Description: Primary phone number
+   - Constraints: UNIQUE (no duplicate phone numbers allowed)
+
+5. current_student_status
+   - Type: character varying
+   - Description: Current stage of the student in the admission process
+   - Default: 'Fresh'
+   - Possible Values :
+     * "Fresh" - New lead, not yet contacted
+     * "Pre Application" - Interest shown, application not started
+     * "Initial Counselling Completed" - First counselling session done
+     * "Application" - Application process started/submitted
+     * "Admission" - Admission fee paid, admission confirmed
+     * "Enrolled" - Successfully enrolled
+     * "NotInterested" - Student declined interest
+
+6. assigned_counsellor_id
+   - Type: character varying
+   - Description: ID of the L2 counsellor currently handling the lead
+
+7. assigned_counsellor_l3_id
+   - Type: character varying
+   - Description: ID of the L3 counsellor currently handling the lead
+
+8. enrollment_counsellor_id
+   - Type: character varying
+   - Description: ID of the counsellor handling the enrollment phase
+
+9. is_connected_yet
+   - Type: boolean
+   - Description: True if an L2 counsellor has ever successfully connected
+   - Default: false
+
+10. is_connected_yet_l3
+    - Type: boolean
+    - Description: True if an L3 counsellor has ever successfully connected
+    - Default: false
+
+11. is_reactivity
+    - Type: boolean
+    - Description: True if the lead is showing recent activity/interest
+    - Default: false
+
+12. source
+    - Type: character varying
+    - Description: Lead source (Meta Ads, Google Ads, Website)
+    - Possible Values:
+      * "Meta" - Meta/Facebook ads
+      * "Google" - Google ads
+      * "Website" - Direct website visits
+      * Other marketing channels
+
+13. mode
+    - Type: character varying
+    - Description: Study mode: 'Online' or 'Regular'
+    - Default: 'Regular'
+    - Possible Values:
+      * "Online" - Distance/online learning
+      * "Regular" - On-campus/offline learning
+
+14. highest_degree
+    - Type: character varying
+    - Description: Highest educational degree of the student
+    - Possible Values:
+      * "PhD" - Doctoral degree
+      * "Master" - Master's degree
+      * "Bachelor" - Bachelor's degree
+      * "Diploma" - Diploma certificate
+      * "12th" - Higher secondary education
+      * "10th" - Secondary education
+
+15. completion_year
+    - Type: character varying
+    - Description: Year of completion of the highest degree
+
+16. current_profession
+    - Type: character varying
+    - Description: Student's current job/profession
+    - Possible Values:
+      * "Working Professional" - Currently employed
+      * "Business Owner" - Runs own business
+      * "Looking for Job" - Unemployed, job seeking
+      * "Other-student" - Currently studying
+      * Other professions
+
+17. work_experience
+    - Type: character varying
+    - Description: Years of work experience
+
+18. student_age
+    - Type: integer
+    - Description: Age of the student
+    - Default: 0
+
+19. preferred_university
+    - Type: ARRAY
+    - Description: List of universities the student is interested in
+    - Example: ["Amity University", "Manipal University"]
+
+20. preferred_course
+    - Type: ARRAY
+    - Description: List of courses/degrees the student is interested in
+    - Example: ["MBA", "BBA", "MCA"]
+
+21. remarks_count
+    - Type: integer
+    - Description: Total number of remarks/calls for this student
+    - Default: 0
+
+22. created_at
+    - Type: timestamp with time zone
+    - Description: Timestamp when the lead was created (UTC)
+    - Default: CURRENT_TIMESTAMP
+
+===========================================
+RELATIONSHIPS
+===========================================
+
+REFERENCED BY (Other tables reference this table):
+1. student_remarks.student_id → students.student_id
+   - Links remarks/notes to students
+
+===========================================
+CONSTRAINTS & RULES
+===========================================
+
+PRIMARY KEY: student_id
+- Every student must have a unique identifier
+
+UNIQUE CONSTRAINTS:
+- student_email UNIQUE - No duplicate email addresses allowed
+- student_phone UNIQUE - No duplicate phone numbers allowed
+
+BUSINESS RULES:
+- A 'Fresh' lead has current_student_status = 'Fresh' and usually zero remarks
+- 'L2 Connected' = is_connected_yet = true. 'L3 Connected' = is_connected_yet_l3 = true
+- To find leads by a specific source: source ILIKE '%Meta%' or source ILIKE '%Google%'
+- Leads assigned to a counsellor: assigned_counsellor_id = 'CNS-XXXX' or assigned_counsellor_l3_id = 'CNS-XXXX'
+
+===========================================
+COMMON QUERY PATTERNS
+===========================================
+
+1. Find students by counsellor:
+   SELECT * FROM students WHERE assigned_counsellor_id = 'CNS123';
+
+2. Find new leads not yet contacted:
+   SELECT * FROM students WHERE is_connected_yet = false;
+
+3. Find students by status:
+   SELECT * FROM students WHERE current_student_status = 'Fresh';
+
+4. Find working professionals:
+   SELECT * FROM students WHERE current_profession = 'Working Professional';
+
+5. Find students by education level:
+   SELECT * FROM students WHERE highest_degree = 'Bachelor';
+
+6. Find reactive leads:
+   SELECT * FROM students WHERE is_reactivity = true;
+
+7. Find students by mode preference:
+   SELECT * FROM students WHERE mode = 'Online';
+
+8. Find students by lead source:
+   SELECT * FROM students WHERE source ILIKE '%Meta%';
+
+9. Get student with their counsellor details:
+   SELECT s.*, c.counsellor_name 
+   FROM students s
+   LEFT JOIN counsellors c ON s.assigned_counsellor_id = c.counsellor_id
+   WHERE s.student_id = 'STD123';
+
+10. Count students by status:
+    SELECT current_student_status, COUNT(*) 
+    FROM students 
+    GROUP BY current_student_status;
+
+11. Find students needing follow-up:
+    SELECT s.* FROM students s
+    LEFT JOIN student_remarks sr ON s.student_id = sr.student_id
+    WHERE sr.callback_date = CURRENT_DATE;
+
+12. Find students by age range:
+    SELECT * FROM students WHERE student_age BETWEEN 20 AND 25;
+
+===========================================
+BUSINESS CONTEXT
+===========================================
+
+- Primary storage for student leads and their application journey
+- Leads are potential students from various sources (Meta, Google, Website)
+- Assigned to L2 (Junior) and L3 (Senior) counsellors for follow-up
+- Tracks basic student information and preferences
+- Supports simplified funnel tracking with 5 key stages
+- Essential for lead management and conversion tracking
+- Used for reporting on lead sources and conversion rates 

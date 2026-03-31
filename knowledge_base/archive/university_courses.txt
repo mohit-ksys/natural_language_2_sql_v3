@@ -1,0 +1,251 @@
+===========================================
+TABLE: university_courses
+===========================================
+
+PURPOSE:
+Master reference table storing all university courses offered in the system. This table defines which universities offer which degree programs, including the academic stream and delivery mode (online/regular). Other tables reference this table via course_id to track student applications and admission progress.
+
+===========================================
+TABLE SCHEMA
+===========================================
+
+CREATE TABLE public.university_courses (
+  course_id character varying NOT NULL,
+  university_name character varying,
+  university_state character varying,
+  university_city character varying,
+  degree_name character varying,
+  specialization character varying,
+  stream character varying,
+  level character varying,
+  course_name character varying,
+  total_fees numeric,
+  semester_fees numeric,
+  annual_fees numeric,
+  study_mode character varying,
+  duration character varying,
+  duration_type character varying,
+  created_at timestamp with time zone,
+  updated_at timestamp with time zone,
+  status character varying(50) DEFAULT 'active',
+  brochure_url character varying,
+  usp text[] DEFAULT '{}',
+  eligibility text[] DEFAULT '{}',
+  CONSTRAINT university_courses_pkey PRIMARY KEY (course_id)
+);
+
+===========================================
+COLUMN DEFINITIONS
+===========================================
+
+1. course_id (PRIMARY KEY)
+   - Type: character varying
+   - Description: Unique identifier for each university course
+   - Constraints: NOT NULL, PRIMARY KEY
+   - Usage: Referenced by course_status_journeys, latest_course_statuses, student_college_credentials
+
+2. university_name
+   - Type: character varying
+   - Description: Name of the university offering the course
+   - Example Values: "Amity University", "Manipal University", "IGNOU"
+
+3. university_state
+   - Type: character varying
+   - Description: State where the university is located
+   - Example Values: "Maharashtra", "Karnataka", "Delhi"
+
+4. university_city
+   - Type: character varying
+   - Description: City where the university is located
+   - Example Values: "Mumbai", "Bangalore", "New Delhi"
+
+5. degree_name
+   - Type: character varying
+   - Description: Name of the degree program
+   - Example Values: "Bachelor of Business Administration", "Master of Computer Applications", "MBA"
+
+6. specialization
+   - Type: character varying
+   - Description: Specific specialization within the degree program
+   - Example Values: "Finance", "Marketing", "Human Resources", "Data Science"
+
+7. stream
+   - Type: character varying
+   - Description: Academic category or field of study
+   - Example Values: "Management", "Engineering", "Commerce", "Arts & Humanities", "Information Technology", "Science"
+
+8. level
+   - Type: character varying
+   - Description: Level of the degree program
+   - Possible Values: "UG" (Undergraduate), "PG" (Postgraduate), "Diploma", "Certificate"
+
+9. course_name
+   - Type: character varying
+   - Description: Full name of the course
+   - Example Values: "Online MBA in Finance", "BBA in Marketing"
+
+10. total_fees
+    - Type: numeric
+    - Description: Total fee for the entire course
+
+11. semester_fees
+    - Type: numeric
+    - Description: Fee per semester
+
+12. annual_fees
+    - Type: numeric
+    - Description: Fee per year
+
+13. study_mode
+    - Type: character varying
+    - Description: Mode of study/course delivery
+    - Possible Values:
+      * "Online" - Distance learning/online degree
+      * "Regular" - On-campus/offline degree requiring physical attendance
+      * "Hybrid" - Combination of online and offline
+
+14. duration
+    - Type: character varying
+    - Description: Duration of the course
+    - Example Values: "2", "3", "4"
+
+15. duration_type
+    - Type: character varying
+    - Description: Unit of duration
+    - Possible Values: "Years", "Months", "Semesters"
+
+16. status
+    - Type: character varying(50)
+    - Description: Current status of the course
+    - Default: 'active'
+    - Possible Values:
+      * "active" - Course is currently available for enrollment
+      * "inactive" - Course is not available for enrollment
+
+17. brochure_url
+    - Type: character varying
+    - Description: URL link to the course brochure/prospectus
+
+18. usp
+    - Type: text[]
+    - Description: Unique Selling Points of the course
+    - Default: Empty array {}
+    - Example: {"100% Placement Assistance", "Industry Expert Faculty", "Flexible Learning"}
+
+19. eligibility
+    - Type: text[]
+    - Description: Eligibility criteria for the course
+    - Default: Empty array {}
+    - Example: {"10+2 from recognized board", "Minimum 50% marks"}
+
+20. created_at
+    - Type: timestamp with time zone
+    - Description: Timestamp when the course record was created in the system
+
+21. updated_at
+    - Type: timestamp with time zone
+    - Description: Timestamp when the course record was last modified
+
+===========================================
+RELATIONSHIPS
+===========================================
+
+REFERENCED BY (Foreign Keys pointing to this table):
+1. course_status_journeys.course_id → university_courses.course_id
+   - Links course application history to specific courses
+
+2. latest_course_statuses.course_id → university_courses.course_id
+   - Links current course status to specific courses
+
+3. student_college_credentials.course_id → university_courses.course_id
+   - Links student credentials to the course they're enrolled in
+
+===========================================
+CONSTRAINTS & RULES
+===========================================
+
+PRIMARY KEY: course_id
+- Every course must have a unique identifier
+
+UNIQUE CONSTRAINTS: None
+- Multiple courses can belong to the same university
+- Multiple courses can have the same degree name
+- The combination of university + degree + stream + mode creates unique offerings
+
+===========================================
+COMMON QUERY PATTERNS
+===========================================
+
+1. Find all courses by university:
+   SELECT * FROM university_courses WHERE university_name = 'Amity University';
+
+2. Find courses by stream:
+   SELECT * FROM university_courses WHERE stream = 'Management';
+
+3. Find online courses only:
+   SELECT * FROM university_courses WHERE study_mode = 'Online';
+
+4. Find specific degree programs:
+   SELECT * FROM university_courses WHERE degree_name ILIKE '%MBA%';
+
+5. Find courses by location:
+   SELECT * FROM university_courses WHERE university_state = 'Maharashtra';
+   SELECT * FROM university_courses WHERE university_city = 'Mumbai';
+
+6. Find courses by level:
+   SELECT * FROM university_courses WHERE level = 'PG';
+
+7. Find courses by specialization:
+   SELECT * FROM university_courses WHERE specialization = 'Finance';
+
+8. Find courses within budget:
+   SELECT * FROM university_courses WHERE total_fees <= 100000;
+
+9. Find active courses:
+   SELECT * FROM university_courses WHERE status = 'active';
+
+10. Get course details with student count:
+    SELECT uc.*, COUNT(lcs.student_id) as student_count
+    FROM university_courses uc
+    LEFT JOIN latest_course_statuses lcs ON uc.course_id = lcs.course_id
+    GROUP BY uc.course_id;
+
+11. Find courses by multiple criteria:
+    SELECT * FROM university_courses 
+    WHERE stream = 'Engineering' AND study_mode = 'Online' AND level = 'UG';
+
+12. Search courses by eligibility:
+    SELECT * FROM university_courses 
+    WHERE '10+2' = ANY(eligibility);
+
+13. Find courses with specific USP:
+    SELECT * FROM university_courses 
+    WHERE 'Placement Assistance' = ANY(usp);
+
+14. Get courses by fee range:
+    SELECT * FROM university_courses 
+    WHERE total_fees BETWEEN 50000 AND 150000;
+
+15. Find courses by duration:
+    SELECT * FROM university_courses 
+    WHERE duration = '2' AND duration_type = 'Years';
+
+16. Get all courses in a state with fees:
+    SELECT university_name, course_name, total_fees, study_mode
+    FROM university_courses 
+    WHERE university_state = 'Karnataka' AND status = 'active'
+    ORDER BY total_fees;
+
+===========================================
+BUSINESS CONTEXT
+===========================================
+
+- This is the foundational table for the course catalog
+- All student course applications reference this table
+- Used by counsellors to shortlist courses for students
+- Helps match student preferences (from students table) with available courses
+- Critical for reporting on course popularity and university partnerships
+
+
+
+

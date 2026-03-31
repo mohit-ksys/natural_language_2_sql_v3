@@ -1,0 +1,76 @@
+===========================================
+DATABASE TABLES SUMMARY
+===========================================
+TABLE: students
+----------------
+Primary storage for student leads and their application journey from various sources (Meta, Google, Website).
+A column for finding the current stage of the student in the admission process (current_student_status)
+Enforces unique constraints on student_email and student_phone to prevent duplicate lead creation.
+Stores contact details, educational background (highest_degree, completion_year), career status (current_profession, work_experience), and course preferences (preferred_university, preferred_course arrays).
+Tracks two study modes: "Online" (distance/online learning) and "Regular" (on-campus/offline learning), default is Regular.
+Manages counsellor assignments with three fields: assigned_counsellor_id (L2), assigned_counsellor_l3_id (L3), enrollment_counsellor_id.
+Tracks connection status separately for L2 (is_connected_yet) and L3 (is_connected_yet_l3) counsellors.
+Captures current_student_status (Fresh, Pre Application, Initial Counselling Completed, Application, Admission, Enrolled, NotInterested).
+Records lead source, student age, reactivity flag (is_reactivity), and remarks_count for tracking engagement.
+Central table referenced by all other tables; critical for counsellor assignment, workload distribution, and reporting on lead sources and conversion rates.
+TABLE: student_remarks
+-----------------------
+Historical log of every call and interaction with a student, creating complete audit trail of communication attempts.
+Every counsellor-student interaction generates a new remark record with unique remark_id and timestamp.
+Tracks lead progression through funnel stages: Pre Application → Application → Admission → Enrolled (NotInterested also possible).
+Captures calling_status (Connected/Not Connected) and sub_calling_status indicating student intent (Hot/Warm/Cold) or call outcome (Ringing no response, Line Busy, Switched off, Invalid Number).
+Counsellors schedule follow-ups using callback_date field for lead nurturing and workload planning.
+Records feesAmount discussed during calls and free-text remarks from counsellor observations.
+To find latest status of a student: SELECT DISTINCT ON (student_id) * FROM student_remarks ORDER BY student_id, created_at DESC.
+Critical for counsellor performance metrics, lead status reporting, funnel analysis, identifying bottlenecks, and callback management.
+TABLE: student_lead_activities
+-------------------------------
+Tracks all lead generation activities and interactions with detailed marketing attribution data.
+One student can have multiple lead activities, with each representing a single interaction event.
+Captures complete UTM parameters (utm_source, utm_medium, utm_keyword, utm_campaign, utm_campaign_id, utm_adgroup_id, utm_creative_id) for marketing ROI analysis.
+Stores device/browser information, IP city, CTA clicked (e.g., Download PDF, Connect Now, Apply Now),  and source URL for UX optimization.
+Records IVR call details including call_sid, call_recording_url, call_duration, talk_duration, ivr_status, and destination/dial numbers.
+Tracks student background (highest_qualification, working_professional) and lead transfer status (is_transfered, is_transfer).
+Captures parent contact (parents_number, whatsapp) and student comments in JSONB format.
+Higher number of lead activities indicates higher student engagement and intent; critical for campaign optimization, conversion analysis, and marketing ROI tracking.
+TABLE: counsellors
+-------------------
+Stores information about staff, their roles, and hierarchy in the lead management system.
+Staff are divided into L2 (Juniors), L3 (Seniors), TO (Team Owners), admission_to (Admission Team Owners), and enrollment_counsellor roles.
+External partners identified with PAR- prefix (is_partner = true), while internal staff use CNS- prefix.
+Tracks workload metrics with total_leads (lifetime total) and current_lead_capacity (current handling capacity).
+Team management enabled through assigned_to field linking counsellors to their managers/supervisors.
+Status field tracks counsellor availability: active (can handle leads), inactive (cannot receive leads), or suspended.
+Critical for lead distribution, counsellor performance monitoring, team structure management, and access control.
+TABLE: course_status_journeys
+------------------------------
+Maintains complete historical audit trail of all course status changes for each student-course combination.
+When counsellors discuss courses with students, all mentioned preferences are recorded (e.g., 3 colleges × 4 courses = 12 entries).
+Unlike latest_course_statuses which stores only current status, this table preserves the entire journey with multiple timestamped records per student-course pair.
+Tracks progression from "Shortlisted" through form submission stages (Form Filled, Form Submitted), registration, payment stages (Partially Paid, Semester Paid, Full Fee Paid), to "Enrolled" and "Active".
+Records deposit amounts, currency, exam/interview dates, last admission dates, fee_type, and counsellor notes for each status change.
+Links to both counsellor_id (who created the status) and enrollment_counsellor_id for tracking counsellor involvement.
+Each status change creates a new record with created_at timestamp, enabling time-based analytics on admission process duration.
+Essential for analyzing conversion funnel, identifying drop-off points, understanding student decision-making process, and counsellor performance analysis.
+TABLE: latest_course_statuses
+------------------------------
+Stores the current/latest status of each course that a student has applied to or is interested in.
+One record per student-course combination representing the most recent status (snapshot, not history).
+Created when counsellor shortlists a course for student with default status "Shortlisted".
+Links to university API for data synchronization via college_api_sent_status field (Proceed, Success, Do Not Proceed, Failed due to Technical Issues).
+Includes is_shortlisted boolean flag and tracks created_by (counsellor who created the record).
+Complements course_status_journeys table which maintains full historical records of all status changes.
+Used by counsellors to monitor current application progress and for reporting on course popularity and enrollment rates.
+TABLE: university_courses
+--------------------------
+Master reference table storing all university courses offered in the system with unique course_id.
+Defines which universities offer which degree programs including university location (university_state, university_city), degree_name, and specialization.
+Tracks academic stream (Management, Engineering, Commerce, Arts & Humanities, IT, Science), level (UG/PG/Diploma/Certificate), and study_mode (Online/Regular/Hybrid).
+Stores fee structure (total_fees, semester_fees, annual_fees), course duration with duration_type (Years/Months/Semesters), and status (active/inactive).
+Contains course marketing data including brochure_url, usp array (unique selling points), and eligibility array (admission criteria).
+Referenced by course_status_journeys, latest_course_statuses, and student_college_credentials to track student applications and admission progress.
+Foundational table for course catalog used by counsellors to shortlist courses and match student preferences with available offerings.
+
+===========================================
+END OF SUMMARY
+===========================================

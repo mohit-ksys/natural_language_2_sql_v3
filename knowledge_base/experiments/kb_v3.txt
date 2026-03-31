@@ -1,0 +1,518 @@
+# STUDENT (LEADS) TABLE
+**Purpose:** Primary storage for student leads and their complete admission journey.
+**Context:** Leads come from sources like Meta, Google, Website. Assigned to L2 (Junior) and L3 (Senior) counsellors. `current_student_status` is the single source of truth for where a student is in the funnel right now.
+
+| Column | Meaning | Type | Query Hints |
+|--------|---------|------|-------------|
+| student_id | Unique lead ID (STD-XXXX). | VARCHAR (PK) | Use COUNT(DISTINCT student_id) for student counts |
+| student_name | Full name of the student. | VARCHAR | Filter with ILIKE for name searches |
+| student_email | Email address (unique). | VARCHAR | Use for contact lists, deduplication |
+| student_phone | Primary phone number (unique). | VARCHAR | Use for contact lists, deduplication |
+| current_student_status | Current funnel stage — see values below. | VARCHAR | CRITICAL: Use this for current state, NOT lead_status |
+| assigned_counsellor_id | L2 counsellor currently handling this lead. | VARCHAR (FK → counsellors) | JOIN counsellors for L2 performance queries |
+| assigned_counsellor_l3_id | L3 counsellor currently handling this lead. | VARCHAR (FK → counsellors) | JOIN counsellors for L3-specific queries |
+| enrollment_counsellor_id | Counsellor handling the enrollment phase. | VARCHAR (FK → counsellors) | Use for admission/enrollment phase queries |
+| is_connected_yet | True once any L2 counsellor successfully connected (first-time connection flag). | BOOLEAN | Filter = true for students ever contacted by L2 |
+| is_connected_yet_l3 | True once any L3 counsellor successfully connected (first-time connection flag). | BOOLEAN | Filter = true for students ever contacted by L3 |
+| is_reactivity | True if lead is showing recent activity or interest. | BOOLEAN | Filter = true for high-priority leads |
+| source | Primary attributed lead source (single value per student). | VARCHAR | Use ILIKE for source filtering (Meta, Google, etc.) |
+| mode | Study preference: 'Online' or 'Regular' (default). | VARCHAR | Filter for mode-specific analysis |
+| highest_degree | Highest education: 'PhD', 'Master', 'Bachelor', 'Diploma', '12th', '10th'. | VARCHAR | Group by for education level analysis |
+| completion_year | Year the highest degree was completed. | VARCHAR | Use for graduation year analysis |
+| current_profession | Job status: 'Working Professional', 'Business Owner', 'Looking for Job', 'Other-student'. | VARCHAR | Group by for profession segmentation |
+| work_experience | Years of work experience. | VARCHAR | Use for experience-based analysis |
+| student_age | Age of the student. | INTEGER | Use BETWEEN for age range queries |
+| preferred_university | Universities the student is interested in (array). | ARRAY | Search with 'University' = ANY(preferred_university) |
+| preferred_course | Courses/degrees the student wants (array). | ARRAY | Search with 'Course' = ANY(preferred_course) |
+| remarks_count | Total calls/remarks logged for this student. | INTEGER | Use for engagement level analysis |
+| created_at | When the lead was created in system (UTC). Use this for "students created" queries. Timestamps in UTC; CURRENT_DATE is IST — subtract `interval '5 hours 30 minutes'` from date boundaries when filtering. | TIMESTAMPTZ | Use DATE_TRUNC for time-based aggregation |
+
+**Status Funnel (ordered):** Fresh → Pre Application → Initial Counselling Completed → Application → Admission → Enrolled (exit: NotInterested)
+- **Fresh** — new lead, not yet contacted
+- **Pre Application** — interest shown, application not started
+- **Initial Counselling Completed** — first counselling session done
+- **Application** — student is in application stage (use this status from students table)
+  - NOTE: This is DIFFERENT from course-level form filling status in latest_course_statuses table
+- **Admission** — admission fee paid, seat confirmed (DISTINCT from Enrolled)
+- **Enrolled** — fully enrolled and active (DISTINCT from Admission)
+- **NotInterested** — dropped out of funnel
+
+**STATUS TERMINOLOGY CLARIFICATION:**
+- "Application" (students table) = Funnel stage where student is actively applying
+- "Form Filled" (latest_course_statuses table) = Course-level form completion status
+- "Admission" (students table) = Funnel stage after fee payment, before full enrollment
+- "Admission" (latest_course_statuses table) = Course-level admission confirmation
+- "Enrolled" (both tables) = Final stage - fully enrolled student
+
+## FOUR STATUS SYSTEMS - NEVER CONFUSE THESE
+
+| Status Type | Source Table | Purpose | Current State? | Example Values |
+|-------------|-------------|---------|----------------|---------------|
+| **Funnel Status** | `students.current_student_status` | Student's journey stage | ✅ YES - Use for current state | Fresh, Pre Application, Application, Admission, Enrolled |
+| **Course Status** | `latest_course_statuses.latest_course_status` | Course application progress | ✅ YES - Use for course state | Shortlisted, Form Filled, Form Submitted, Admission, Enrolled |
+| **Historical Status** | `student_remarks.lead_status` | Status at time of call | ❌ NO - Historical only | Any funnel status (at call time) |
+| **Journey Status** | `course_status_journeys.course_status` | Timeline of changes | ❌ NO - Historical only | Shortlisted, Form Filled, Paid, Enrolled, Active |
+
+**CRITICAL:** When user asks about "admission" or "got admission", filter by `current_student_status = 'Admission'`. When user asks about "enrollment" or "enrolled students", filter by `current_student_status = 'Enrolled'`. These are TWO SEPARATE stages.
+
+**Business Rules:**
+- `current_student_status` is always preferred over `lead_status` from student_remarks for current state.
+- CRITICAL: "Application count" or "students who applied" = `current_student_status = 'Application'` on the students table. Do NOT use `latest_course_statuses.latest_course_status` for this — that is a course-level status, not the funnel stage. Do NOT include Admission or Enrolled in this count unless the question explicitly says "at least applied".
+- CRITICAL: "Application stage" queries = filter `students.current_student_status = 'Application'`. "Form filling" queries = filter `latest_course_statuses.latest_course_status ILIKE 'Form%'`. These are DIFFERENT concepts.
+- CRITICAL: "Connected students" queries have 3 meanings:
+  * "Students ever connected by L2" = `students.is_connected_yet = true`
+  * "Students ever connected by L3" = `students.is_connected_yet_l3 = true`
+  * "Calls that were connected" = `student_remarks.calling_status = 'Connected'` (use this for call-level metrics)
+- CRITICAL: "Conversion" or "Converted leads" queries:
+  * If user asks "conversions" or "converted students" = use `current_student_status IN ('Admission', 'Enrolled')` (both stages combined)
+  * If user asks "admission conversions" specifically = use `current_student_status = 'Admission'` only
+  * If user asks "enrollment conversions" specifically = use `current_student_status = 'Enrolled'` only
+- L2 assignment: `assigned_counsellor_id`. L3 assignment: `assigned_counsellor_l3_id`. A student can have both.
+- TAT (Time-to-convert / average days to reach a stage):
+  ```
+  SELECT AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400)
+  FROM students
+  WHERE current_student_status IN ('Admission', 'Enrolled')
+  ```
+  Do NOT compute TAT via `course_status_journeys` — it adds unnecessary complexity and can produce wrong results. Always compute `(later_timestamp - earlier_timestamp)`: `updated_at - created_at`, never the reverse.
+- For university-specific student queries: join via `latest_course_statuses` → `university_courses`, not directly.
+- CRITICAL: "Source" has different meanings in different tables:
+  * `students.source` = primary attributed source (one per student) - use this for "leads from X source" queries
+  * `student_lead_activities.source` = per-activity source (multiple per student) - use this for "touchpoints from X source" queries
+  * Source values vary: use ILIKE (e.g., 'Meta Ads', 'Meta', 'FaceBook', 'Facebook' all mean Facebook)
+- `preferred_university` and `preferred_course` are PostgreSQL arrays; use `ANY()` to search inside them.
+- `is_reactivity = true` signals a lead worth prioritising for callbacks.
+- Always use `COUNT(DISTINCT student_id)` when counting students to avoid duplicates from multi-row joins.
+- "Recently followed up" or "no recent activity" threshold = 7 days. Use `HAVING MAX(sr.created_at) < CURRENT_DATE - INTERVAL '7 days' OR MAX(sr.created_at) IS NULL`. For actionability, always include `student_email`, `student_phone`, and `counsellor_name` in dormant-student queries.
+- "Forward movement" or "progress" queries (e.g., "students who moved ahead"): include Application, Admission, AND Enrolled in the filter: `current_student_status IN ('Application', 'Admission', 'Enrolled')`. Do NOT limit to just Admission+Enrolled — Application is valid forward movement.
+
+---
+
+# COUNSELLOR (STAFF) TABLE
+**Purpose:** Stores staff information, roles, and reporting hierarchy.
+**Context:** L2 (juniors) do initial outreach; L3 (seniors) handle deeper counselling; TO (Team Owner) manages a team; admission_to handles admissions; enrollment_counsellor handles final enrollment.
+
+| Column | Meaning | Type | Query Hints |
+|--------|---------|------|-------------|
+| counsellor_id | Unique ID — CNS-XXXX for staff, PAR-XXXX for partners. | VARCHAR (PK) | Use for JOIN conditions, NOT for name filtering |
+| counsellor_name | Full name of the staff member. | VARCHAR | Filter with ILIKE '%Name%' after JOIN |
+| role | Role: 'l2', 'l3', 'to', 'admission_to', 'enrollment_counsellor'. | VARCHAR | Filter role for hierarchy analysis |
+| assigned_to | counsellor_id of this person's manager/supervisor. | VARCHAR (FK → self) | Use for team structure queries |
+| status | Account state: 'active', 'inactive', 'suspended'. | VARCHAR | Add status = 'active' for performance reports |
+| is_partner | True for external partners (PAR- prefix). | BOOLEAN | Filter false for internal staff, true for partners |
+| total_leads | Lifetime leads ever assigned to this counsellor. | INTEGER | Use for workload analysis |
+| current_lead_capacity | How many leads this counsellor can handle now. | INTEGER | Use for capacity planning |
+
+## Counsellor FK Selection Rules - UNIFIED APPROACH
+- **ALL general counsellor performance queries** (lead handling, calls, funnel stage movement): 
+  → JOIN ON `students.assigned_counsellor_id` (L2 counsellor)
+- **L3 (senior) counsellor specific queries**: 
+  → JOIN ON `students.assigned_counsellor_l3_id`
+- **Admission/Enrollment phase counsellor**: 
+  → JOIN ON `students.enrollment_counsellor_id`
+- **NEVER use OR across counsellor FK columns** in a single JOIN — this duplicates rows.
+  - Wrong:  `ON c.counsellor_id = s.assigned_counsellor_id OR c.counsellor_id = s.assigned_counsellor_l3_id`
+  - Correct: Two separate queries, or determine L2 vs L3 context from the user question.
+- **DEFAULT**: When user says "counsellor" without specification, use `assigned_counsellor_id` (L2).
+
+**Business Rules:**
+- **Never filter by counsellor name directly** on any table. Always JOIN counsellors and use `counsellor_name ILIKE '%Name%'`.
+- **Team hierarchy**: Filter `assigned_to = 'Manager_counsellor_id'` to get a manager's team.
+- **Internal vs External**: `is_partner = false` (CNS- prefix) = internal staff; `is_partner = true` (PAR- prefix) = external partners.
+- **Active counsellor reports**: Always add `status = 'active'` filter.
+- **Role seniority chain**: l2 (junior) → l3 (senior) → to / admission_to (manager). 
+  - L2 and L3 report to a TO via `assigned_to`
+  - `enrollment_counsellor` is a separate functional role, NOT in the L2→L3→TO chain
+- **Dual assignment**: A student can have both L2 (`assigned_counsellor_id`) and L3 (`assigned_counsellor_l3_id`) simultaneously.
+
+---
+
+# STUDENT REMARKS (CALL LOGS) TABLE
+**Purpose:** Append-only log of every counsellor-student call interaction.
+**Context:** Each call attempt creates one remark. This is the activity/effort table — it records what happened during a call and schedules the next one. Multiple remarks exist per student. `lead_status` here is what the student's status was AT THE TIME of the call, not necessarily current.
+
+| Column | Meaning | Type | Query Hints |
+|--------|---------|------|-------------|
+| remark_id | Unique record ID (auto-incremented). | INTEGER (PK) | Use for DISTINCT ON operations |
+| student_id | Link to the student. | VARCHAR (FK → students) | JOIN students for student details |
+| counsellor_id | Counsellor who made this call. | VARCHAR (FK → counsellors) | JOIN counsellors for performance metrics |
+| calling_status | Call result: 'Connected' or 'Not Connected'. | VARCHAR | Filter = 'Connected' for successful calls |
+| sub_calling_status | Intent or outcome detail — see values below. | VARCHAR | Filter IN ('Hot', 'Warm') for quality calls |
+| lead_status | Student's funnel stage AT TIME of this call (historical). | VARCHAR | DO NOT use for current status analysis |
+| remarks | Free-text notes from the counsellor. | TEXT | Use ILIKE for text pattern searches |
+| callback_date | Date scheduled for next follow-up call. | DATE | Compare with CURRENT_DATE for overdue/upcoming |
+| feesAmount | Fees paid or discussed during this call. | INTEGER | SUM for payment tracking, >0 for payment events |
+| created_at | Timestamp of the call (UTC). Use this for "calls made" or "remarks created" queries. Timestamps in UTC; CURRENT_DATE is IST — subtract `interval '5 hours 30 minutes'` from date boundaries when filtering. | TIMESTAMPTZ | Use EXTRACT(HOUR) for time-based analysis |
+
+**sub_calling_status values:**
+- Intent (when Connected): 'Hot' (high priority), 'Warm' (needs nurturing), 'Cold' (low interest)
+- Outcome (when Not Connected): 'Ringing no response', 'Line Busy', 'Switched off', 'Invalid Number', 'Not Interested(CB not required)'
+
+**Business Rules:**
+- **Status vs Current Status**: `lead_status` in remarks = historical stage AT TIME of call. `current_student_status` in students = current funnel stage. Use students table for current state analysis.
+- **Counsellor performance metrics**: 
+  - Effort = COUNT(remarks) 
+  - Quality = COUNT(connected calls) 
+  - Pipeline strength = COUNT('Hot' calls)
+- **Connection quality definitions**:
+  - "Quality call" / "effective call" / "strong connection" = `calling_status = 'Connected' AND sub_calling_status IN ('Hot', 'Warm')`
+  - "Connected call" (no quality qualifier) = `calling_status = 'Connected'` only
+  - Plain Connected + 'Cold' = connected but NOT quality
+- **First interaction pattern**: Use `ROW_NUMBER() OVER (PARTITION BY student_id ORDER BY created_at ASC, remark_id ASC) = 1` wrapped in CTE called `first_remark`.
+- **Callback management**: 
+  - Overdue = `callback_date < CURRENT_DATE`
+  - Upcoming = `callback_date >= CURRENT_DATE`
+- **Latest remark per student**: Use `DISTINCT ON (student_id)` ordered by `created_at DESC`.
+- **Payment tracking**: `feesAmount` tracks fees discussed in each call — SUM for totals, >0 for payment events.
+- **Multi-counsellor calls**: One student can have remarks from multiple counsellors (L2, L3, etc.).
+
+---
+
+# UNIVERSITY COURSES TABLE
+**Purpose:** Master catalog of all university programs offered in the system.
+**Context:** Reference table — all student course applications and statuses link back here. Used by counsellors to shortlist courses for students.
+
+| Column | Meaning | Type | Query Hints |
+|--------|---------|------|-------------|
+| course_id | Unique course identifier. | VARCHAR (PK) | Use for JOIN conditions with status tables |
+| university_name | Name of the university. | VARCHAR | Filter with ILIKE '%University%' for name matching |
+| university_state | State where the university is located. | VARCHAR | Group by for regional analysis |
+| university_city | City of the university. | VARCHAR | Group by for city-wise analysis |
+| degree_name | Full degree title (e.g., 'Master of Business Administration'). | VARCHAR | Filter ILIKE '%Degree%' for degree searches |
+| specialization | Specialization within degree (e.g., 'Finance', 'Marketing'). | VARCHAR | Group by for specialization popularity |
+| stream | Academic field: 'Management', 'Engineering', 'Commerce', 'Arts & Humanities', 'IT', 'Science'. | VARCHAR | Group by for stream-wise analysis |
+| level | Degree level: 'UG', 'PG', 'Diploma', 'Certificate'. | VARCHAR | Filter for level-specific queries |
+| course_name | Short course display name (e.g., 'Online MBA in Finance'). | VARCHAR | Use ILIKE for course name searches |
+| total_fees | Total fee for the entire course. | NUMERIC | Use BETWEEN for fee range queries |
+| semester_fees | Fee per semester. | NUMERIC | Use for semester-based fee analysis |
+| annual_fees | Fee per year. | NUMERIC | Use for annual fee comparisons |
+| study_mode | Delivery: 'Online', 'Regular', 'Hybrid'. | VARCHAR | CRITICAL: Use this for course mode, NOT students.mode |
+| duration | Duration value (e.g., '2', '3'). | VARCHAR | Convert to INTEGER for numeric analysis |
+| duration_type | Duration unit: 'Years', 'Months', 'Semesters'. | VARCHAR | Filter for duration type analysis |
+| status | Course availability: 'active' or 'inactive'. | VARCHAR | Add status = 'active' for available courses |
+| usp | Unique selling points (array). | TEXT[] | Search with 'Feature' = ANY(usp) |
+| eligibility | Admission eligibility criteria (array). | TEXT[] | Search with 'Criteria' = ANY(eligibility) |
+
+**Business Rules:**
+- **University name matching**: Always filter with ILIKE: `university_name ILIKE '%Amity%'` — spellings vary.
+- **CRITICAL: Study mode confusion**: 
+  - `university_courses.study_mode` = ACTUAL course delivery (Online/Regular/Hybrid) 
+  - `students.mode` = Student's PREFERENCE (may differ from actual)
+  - Use `uc.study_mode` for ALL course/university popularity queries
+- **University student counts**: Join chain: `students → latest_course_statuses → university_courses`
+- **Course availability**: Prefer `status = 'active'` unless query specifically needs all courses
+- **Array searches**: `usp` and `eligibility` are PostgreSQL arrays — use `'value' = ANY(usp)`
+- **Stream hierarchy**: Stream (broad) + Level (UG/PG) = Program type (e.g., Management + PG = MBA-level)
+
+---
+
+# LATEST COURSE STATUSES TABLE
+**Purpose:** Current-state snapshot — one record per student-course combination showing where the application stands today.
+**Context:** When a counsellor shortlists a course for a student, a record is created here. It is updated as the student progresses. Use this table for "how many students are at university X" or "who has applied to course Y" queries. Do NOT use this for historical/timeline analysis (use course_status_journeys for that).
+
+| Column | Meaning | Type | Query Hints |
+|--------|---------|------|-------------|
+| id | Auto-incremented unique record ID. | INTEGER (PK) | Use for DISTINCT operations |
+| student_id | Student this record belongs to. | VARCHAR (FK → students) | JOIN students for student details |
+| course_id | Course being applied to. | VARCHAR (FK → university_courses) | JOIN university_courses for course details |
+| created_by | Counsellor who created this record. | VARCHAR | JOIN counsellors for creator analysis |
+| latest_course_status | Current status of this student-course application. | VARCHAR | Filter LIKE '%Form%' for form stages |
+| is_shortlisted | True if this course has been shortlisted. | BOOLEAN | Filter = true for shortlisted courses |
+| college_api_sent_status | University API sync status. | VARCHAR | Filter = 'Success' for synced records |
+| created_at | When course was shortlisted (UTC). Use this for "courses shortlisted" queries. Timestamps in UTC; CURRENT_DATE is IST — subtract `interval '5 hours 30 minutes'` from date boundaries when filtering. | TIMESTAMPTZ | Use DATE_TRUNC for time-based analysis |
+| updated_at | When this record was last updated (UTC). | TIMESTAMPTZ | Use for last activity analysis |
+
+**latest_course_status progression (in order):**
+Shortlisted → Form Filled / Form Filled_Partner website → Form Submitted – Portal Pending → Form Submitted – Completed → Registration done → Admission → Partially Paid / Semester Paid / 1st Year Fee Paid / Full Fee Paid → Enrolled
+**Non-linear statuses**: 'Application', 'Repo Call Done', 'On Hold – Missing Docs'
+
+**Business Rules:**
+- **One record per student-course**: This is the snapshot, not historical timeline.
+- **University applications**: Join lcs → university_courses, filter by university_name.
+- **Form activity analysis** (4-column output pattern):
+  ```
+  forms_filled    = COUNT DISTINCT WHERE latest_course_status LIKE '%Form Filled%'
+  forms_submitted = COUNT DISTINCT WHERE latest_course_status LIKE '%Form Submitted%'
+  total_forms     = COUNT DISTINCT WHERE latest_course_status LIKE '%Form%'
+  completion_rate = forms_submitted / total_forms * 100
+  ```
+  **IMPORTANT**: Use `LIKE '%Form Filled%'` (contains), NOT `ILIKE 'Form%'` (starts with).
+- **University deduplication**: Students can appear in multiple stage buckets. Use CTE with MAX(stage_rank) to assign each student their HIGHEST stage first, then count.
+- **Admission levels**: 
+  - Course-level admission = `latest_course_status = 'Admission'`
+  - Funnel-level admission = `students.current_student_status = 'Admission'`
+- **Payment hierarchy**:
+  - "Any payment" = `latest_course_status ILIKE '%Paid%'`
+  - "Partial payment" = `latest_course_status = 'Partially Paid'`
+  - "Full payment" = `latest_course_status = 'Full Fee Paid'`
+  - Payment amounts = `course_status_journeys.deposit_amount > 0`
+- **API sync status**: `college_api_sent_status = 'Success'` = synced; other values need attention.
+
+---
+
+# COURSE STATUS JOURNEYS TABLE
+**Purpose:** Full historical audit trail of every course status change for every student.
+**Context:** Unlike latest_course_statuses (snapshot), this table keeps every status change as a new row. Use this for timeline analysis, funnel drop-off, how long stages take, and payment history. One student × one course can have many rows here.
+
+| Column | Meaning | Type | Query Hints |
+|--------|---------|------|-------------|
+| status_history_id | Unique record ID (auto-incremented). | INTEGER (PK) | Use for DISTINCT operations |
+| student_id | Student this record belongs to. | VARCHAR (FK → students) | JOIN students for student details |
+| course_id | The course in question. | VARCHAR (FK → university_courses) | JOIN university_courses for course details |
+| counsellor_id | Counsellor who created this status change. | VARCHAR | JOIN counsellors for performance analysis |
+| course_status | Status at this point in time — similar to latest_course_statuses but does NOT include 'Admission'. Final stages in this table are 'Enrolled' or 'Active'. | VARCHAR | Filter ILIKE '%Paid%' for payment stages |
+| deposit_amount | Amount paid at this stage (0 if not a payment event). | NUMERIC | SUM for total payments, >0 for payment events |
+| currency | Currency of payment (default: 'INR'). | VARCHAR | Filter for currency-specific analysis |
+| exam_interview_date | Date of entrance exam or interview, if applicable. | TIMESTAMPTZ | Compare with CURRENT_DATE for upcoming exams |
+| last_admission_date | Last date to complete admission for this course. | TIMESTAMPTZ | Use for deadline analysis |
+| notes | Counsellor notes for this status change. | TEXT | Use ILIKE for text pattern searches |
+| fee_type | Type of payment: 'Semester Paid', 'Partially Paid', 'Full Fee Paid'. | VARCHAR | Group by for payment type analysis |
+| enrollment_counsellor_id | Counsellor handling enrollment at this stage. | VARCHAR | JOIN counsellors for enrollment analysis |
+| created_at | Timestamp when status change occurred (UTC). Use this for "status changed" queries. Timestamps in UTC; CURRENT_DATE is IST — subtract `interval '5 hours 30 minutes'` from date boundaries when filtering. | TIMESTAMPTZ | Use for timeline and TAT analysis |
+
+**Business Rules:**
+- **CRITICAL: 'Admission' status limitation**: 'Admission' is NOT a valid `course_status` value in this table. 
+  - For "admission" queries on journeys: join with `students WHERE current_student_status = 'Admission'` OR `latest_course_statuses WHERE latest_course_status = 'Admission'`
+  - For "enrolled at course level": use `course_status = 'Enrolled'` or `'Active'`
+- **Multiple rows per student-course**: Each row = one status change event.
+- **Latest journey status**: Use `DISTINCT ON (student_id, course_id)` ordered by `created_at DESC`.
+- **Payment tracking**: 
+  - Any payment stage = `course_status ILIKE '%Paid%'`
+  - Specific payments = filter exact values ('Partially Paid', 'Semester Paid', 'Full Fee Paid')
+  - Payment amounts = `deposit_amount > 0`
+- **Timeline analysis**: Use self-join or window functions on `student_id, course_id, created_at` for time-between-stages.
+- **Deadline management**: `last_admission_date >= CURRENT_DATE` (upcoming) or `< CURRENT_DATE` (expired).
+- **Complementary relationship**: 
+  - Use journeys for "how did we get here" (historical)
+  - Use latest_course_statuses for "where are we now" (current)
+
+---
+
+# STUDENT LEAD ACTIVITIES TABLE
+**Purpose:** Tracks every marketing interaction and form submission — the entry point of a lead into the system.
+**Context:** Each form fill, ad click, or IVR call creates one activity record. One student can have many activities (multiple touchpoints). This table is rich with marketing attribution (UTM) and device data. Use for campaign analysis, source quality, and engagement depth.
+
+| Column | Meaning | Type | Query Hints |
+|--------|---------|------|-------------|
+| id | Unique activity record ID. | INTEGER (PK) | Use for DISTINCT operations |
+| student_id | Link to the student record. | VARCHAR (FK → students) | JOIN students for student details |
+| student_name | Name captured in this form submission. | VARCHAR | Use ILIKE for name pattern matching |
+| student_email | Email captured in this form. | VARCHAR | Use for contact list generation |
+| student_phone | Phone captured in this form. | VARCHAR | Use for contact list generation |
+| parents_number | Parent contact number if provided. | VARCHAR | Use for family contact analysis |
+| cta_name | Call-to-action clicked (e.g., 'Apply Now', 'Download PDF', 'Connect Now'). | VARCHAR | Group by for CTA performance analysis |
+| form_name | Name of the form that was submitted. | VARCHAR | Group by for form performance analysis |
+| source | Lead origin for THIS specific activity (can differ from students.source). | VARCHAR | Use ILIKE '%Source%' for source filtering |
+| source_url | Full URL where the form was filled. | TEXT | Use ILIKE for URL pattern matching |
+| utm_source | UTM tracking: ad platform (e.g., 'facebook', 'google'). | VARCHAR | Group by for platform performance |
+| utm_medium | UTM tracking: channel type (e.g., 'cpc', 'social'). | VARCHAR | Group by for channel analysis |
+| utm_keyword | UTM tracking: keyword that triggered the ad. | VARCHAR | Use for keyword performance analysis |
+| utm_campaign | UTM tracking: campaign name. | VARCHAR | Group by for campaign ROI analysis |
+| utm_campaign_id | UTM tracking: campaign ID. | VARCHAR | Use for campaign-specific analysis |
+| utm_adgroup_id | UTM tracking: ad group ID. | VARCHAR | Use for ad group performance |
+| utm_creative_id | UTM tracking: specific ad creative ID. | VARCHAR | Use for creative performance |
+| ip_city | City detected from IP address. | VARCHAR | Group by for geographic analysis |
+| browser | Browser used. | VARCHAR | Group by for browser usage stats |
+| device | Device type used. | VARCHAR | Group by for device usage analysis |
+| student_comment | Student's comments submitted with form (JSONB). | JSONB | Use for sentiment analysis |
+| highest_qualification | Education level captured in this activity. | VARCHAR | Group by for qualification analysis |
+| working_professional | True if student indicated they are working. | BOOLEAN | Filter for professional vs student leads |
+| student_status | Activity-level status (default: 'new'). | VARCHAR | Use for activity status tracking |
+| call_duration | Total call duration (IVR calls). | VARCHAR | Convert to INTERVAL for duration analysis |
+| talk_duration | Actual talk time (IVR calls). | VARCHAR | Convert to INTERVAL for talk time analysis |
+| ivr_status | Status of IVR call. | VARCHAR | Group by for IVR performance |
+| call_recording_url | URL to call recording (IVR). | VARCHAR | Use for call audit analysis |
+| is_transfered | True if lead was transferred to another counsellor. | BOOLEAN | Filter for transfer analysis |
+| created_at | When this activity was recorded (UTC). Use this for "form submissions" or "touchpoint" queries. Timestamps in UTC; CURRENT_DATE is IST — subtract `interval '5 hours 30 minutes'` from date boundaries when filtering. | TIMESTAMPTZ | Use DATE_TRUNC for time-based analysis |
+
+**Source values (key ones):** 'FaceBook', 'FaceBook_P', 'FaceBook_University_Admit', 'Facebook', 'Google_Lead_Form', 'Google DSA', 'IVR', 'WhatsApp', 'Organic', 'Modal Form', 'Landing Page', 'Website Chat', 'CP_Ref', 'Counsellor', 'Student_Ref', 'AMP_Page'
+
+**Business Rules:**
+- **Engagement depth**: More activities per student = higher engagement and intent.
+- **Campaign analysis**: Group by `utm_campaign` or `utm_source` for ROI analysis.
+- **Source filtering patterns**:
+  - Facebook: `source ILIKE 'FaceBook%'` (covers FaceBook, FaceBook_P, FaceBook_University_Admit, Facebook)
+  - Organic/website: `source IN ('Organic', 'Modal Form', 'Website Chat', 'Landing Page')`
+- **Motivation analysis**: `cta_name` reveals what motivated the student — useful for conversion analysis.
+- **IVR-specific data**: Activities with call data have `call_duration`, `talk_duration`, `ivr_status` populated.
+- **CRITICAL: Source confusion**:
+  - `student_lead_activities.source` = Per-activity source (one student can have multiple sources)
+  - `students.source` = Single primary attributed source
+  - Use `students.source` for "leads from Facebook" queries
+  - Use `student_lead_activities.source` for "activities from Facebook" queries
+- **CRITICAL: Professional segmentation**:
+  - Use `student_lead_activities.working_professional` (BOOLEAN) and `student_lead_activities.highest_qualification`
+  - NOT `students.current_profession` and `students.highest_degree` (different fields, different results)
+- **Geographic analysis**: Use `ip_city`. For one city per student (avoid duplicates):
+  ```
+  SELECT student_id, MAX(ip_city) AS city
+  FROM student_lead_activities
+  WHERE ip_city IS NOT NULL AND ip_city != ''
+  GROUP BY student_id
+  ```
+  **Do NOT use any field from the `students` table for geographic analysis**.
+
+---
+
+## TABLE RELATIONSHIPS
+- `student_remarks.student_id` → `students.student_id`
+- `student_remarks.counsellor_id` → `counsellors.counsellor_id`
+- `students.assigned_counsellor_id` → `counsellors.counsellor_id` (L2)
+- `students.assigned_counsellor_l3_id` → `counsellors.counsellor_id` (L3)
+- `students.enrollment_counsellor_id` → `counsellors.counsellor_id`
+- `counsellors.assigned_to` → `counsellors.counsellor_id` (manager)
+- `latest_course_statuses.student_id` → `students.student_id`
+- `latest_course_statuses.course_id` → `university_courses.course_id`
+- `course_status_journeys.student_id` → `students.student_id`
+- `course_status_journeys.course_id` → `university_courses.course_id`
+- `student_lead_activities.student_id` → `students.student_id`
+
+---
+
+## COMPLEX QUERY PATTERNS - STANDARDIZED EXAMPLES
+
+### First Interaction Pattern
+```sql
+first_remark AS (
+    SELECT * FROM (
+        SELECT *, ROW_NUMBER() OVER (PARTITION BY student_id ORDER BY created_at, remark_id) AS rn
+        FROM student_remarks
+    ) x WHERE rn = 1
+)
+```
+
+### University Stage Deduplication Pattern
+```sql
+stage_priority AS (
+    SELECT 
+        university_name, 
+        student_id, 
+        MAX(stage_rank) AS final_stage_rank
+    FROM university_stage_mapping
+    GROUP BY university_name, student_id
+)
+```
+
+### Time-to-Convert (TAT) Pattern
+```sql
+SELECT AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400) as avg_days_to_convert
+FROM students
+WHERE current_student_status IN ('Admission', 'Enrolled')
+```
+
+### Benchmark Comparison Pattern
+```sql
+-- Step 1: Per-counsellor metrics
+step1_cte AS (
+    SELECT counsellor_id, counsellor_name, 
+           COUNT(*) as total_students,
+           COUNT(CASE WHEN current_student_status IN ('Admission', 'Enrolled') THEN 1 END) as converted
+    FROM students s
+    JOIN counsellors c ON s.assigned_counsellor_id = c.counsellor_id
+    GROUP BY counsellor_id, counsellor_name
+),
+-- Step 2: Overall benchmark
+step2_cte AS (
+    SELECT AVG(converted::float / NULLIF(total_students, 0)) as avg_conversion_rate,
+           STDDEV(converted::float / NULLIF(total_students, 0)) as stddev_conversion
+    FROM step1_cte
+)
+-- Final: Cross join for comparison
+SELECT s.*, b.avg_conversion_rate, b.stddev_conversion,
+       (s.converted::float / NULLIF(s.total_students, 0)) - b.avg_conversion_rate as variance_from_avg
+FROM step1_cte s
+CROSS JOIN step2_cte b
+```
+
+### Funnel Union All Pattern
+```sql
+SELECT 'Total Leads' as stage, COUNT(DISTINCT student_id) as count, 0 as stage_order
+FROM students
+UNION ALL
+SELECT 'Pre Application' as stage, COUNT(DISTINCT student_id) as count, 1 as stage_order
+FROM students
+WHERE current_student_status = 'Pre Application'
+UNION ALL
+SELECT 'Application' as stage, COUNT(DISTINCT student_id) as count, 2 as stage_order
+FROM students
+WHERE current_student_status = 'Application'
+-- ... continue for all stages
+ORDER BY stage_order
+```
+
+---
+
+## NATURAL LANGUAGE → SQL INTENT MAPPING
+
+Use this table to resolve ambiguous business language before writing SQL.
+
+### STATUS AND PROGRESS QUERIES
+| User says | SQL intent |
+|---|---|
+| "applied" / "application count" / "in application" | `students.current_student_status = 'Application'` — NOT `latest_course_statuses` form status |
+| "at least applied" / "ever applied or beyond" | `current_student_status IN ('Application', 'Admission', 'Enrolled')` |
+| "quality call" / "effective call" / "strong connection" | `calling_status = 'Connected' AND sub_calling_status IN ('Hot', 'Warm')` |
+| "connected call" (no quality qualifier) | `calling_status = 'Connected'` only |
+| "time to convert" / "TAT" / "how long to reach admission" | `AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400)` on students WHERE status IN ('Admission','Enrolled') |
+| "first call" / "first contact" / "first to speak" | `ROW_NUMBER() OVER (PARTITION BY student_id ORDER BY created_at, remark_id) = 1` on student_remarks |
+
+### COUNSELLOR AND PERFORMANCE QUERIES
+| User says | SQL intent |
+|---|---|
+| "counsellor performance" / "performing" (no other qualifier) | conversion rate = COUNT(Admission+Enrolled) / COUNT(all assigned students) via `assigned_counsellor_id` |
+| "above/below average" / "compare against team" | CROSS JOIN per-counsellor CTE with overall AVG+STDDEV CTE — NOT manager sub-team average |
+| "weak points" / "training needs" / "skill gaps" | below (AVG − STDDEV) on connection_rate → Communication; application_rate → Sales; conversion_rate → Conversion |
+| "active leads" in workload / capacity context | `latest_course_statuses.latest_course_status NOT IN ('Enrolled', 'Admission') AND latest_course_status IS NOT NULL` — NOT `is_reactivity = true` |
+| "near final outcome" / "close to converting" in a counsellor query | Show as a metric column — do NOT filter the student population to only those students |
+
+### SOURCE AND GEOGRAPHY QUERIES
+| User says | SQL intent |
+|---|---|
+| "city" / "location" / "region" / "where are leads from" | `student_lead_activities.ip_city` — NOT students table |
+| "lead count over time" / "monthly leads" / "daily leads" | COUNT by `created_at` bucket only — do NOT filter by `current_student_status` |
+| "behaviour" / "engagement signals" / "activity details" / "learner behaviour" | JOIN `student_lead_activities` — use `cta_name`, `device`, `working_professional`, COUNT(id) |
+
+### LEAD SCORING AND SEGMENTATION
+| User says | SQL intent |
+|---|---|
+| "lead score" / "priority score" (no weights given) | source×0.30 + course×0.25 + engagement×0.35 + activity×0.10; High ≥70, Medium ≥40, Low <40 |
+| "active leads" vs optimal (workload recommendation) | optimal = PERCENTILE_CONT(0.75); >1.2× → Overloaded; <0.8× → Underutilized; else → Optimal |
+
+---
+
+## CRITICAL RULES - FINAL AUTHORITY
+
+### UNIVERSAL RULES
+- **NEVER filter by counsellor name** on any table directly. Always JOIN counsellors and use `counsellor_name ILIKE '%Name%'`.
+- **ALWAYS use `COUNT(DISTINCT student_id)`** when counting students — joins can create duplicates.
+- **TIMEZONE HANDLING**: All `created_at` columns store UTC. `CURRENT_DATE` is IST (UTC+5:30). For any date boundary filter on TIMESTAMPTZ columns, adjust: `created_at >= CURRENT_DATE - interval '5 hours 30 minutes'`.
+
+### STATUS SYSTEM CLARIFICATION
+- **FOUR STATUS SYSTEMS** - Never confuse these:
+  * `students.current_student_status` = current funnel stage (Fresh/Pre Application/Application/Admission/Enrolled) - use for "current status of students"
+  * `student_remarks.lead_status` = historical status at time of call - DO NOT use for current status
+  * `latest_course_statuses.latest_course_status` = current course application status (Shortlisted/Form Filled/Paid/Enrolled) - use for "course status"
+  * `course_status_journeys.course_status` = historical course status changes - use for timeline/history queries
+- **Use `current_student_status`** from the `students` table for any "current state" query, not `lead_status` from `student_remarks`.
+
+### COUNSELLOR FK SELECTION
+- **DEFAULT**: When user says "counsellor" without specification, use `assigned_counsellor_id` (L2).
+- **L3 specific**: Use `assigned_counsellor_l3_id` only for L3-specific queries.
+- **Admission/Enrollment**: Use `enrollment_counsellor_id` only for admission/enrollment phase queries.
+- **NEVER use OR** across counsellor FK columns in a single JOIN — this duplicates rows.
+
+### QUERY PATTERNS
+- **LEAD COUNT OVER TIME**: For "monthly/weekly/daily lead count" queries, COUNT students by `created_at` date bucket only. Do NOT filter by `current_student_status`.
+- **BENCHMARK COMPARISON**: Use CROSS JOIN with overall AVG+STDDEV CTE — NOT manager sub-team average unless specified.
+- **FUNNEL UNION ALL**: Always include "Total Leads" as first row (stage_order=0). Never use `GROUP BY current_student_status` for a funnel.
+- **ABOVE AVERAGE OUTPUT**: Always include the benchmark value as an output column for direct comparison.
+
+### UNIVERSITY AND COURSE QUERIES
+- **UNIVERSITY STUDENT COUNTS**: Join chain: students → latest_course_statuses → university_courses.
+- **STUDY MODE**: Use `university_courses.study_mode` for course delivery analysis, NOT `students.mode` (student preference).
+- **GEOGRAPHIC ANALYSIS**: Use `student_lead_activities.ip_city` — NOT any field from the `students` table.
+
+### OUTPUT REQUIREMENTS
+- **Output ONLY raw PostgreSQL SQL** — no markdown fences, no comments, no explanation.
+- **TEAM-LEVEL AGGREGATION**: When question asks for "team performance", aggregate at team level — do NOT show individual member rows.
+- **SOURCE+COUNSELLOR SUCCESS**: Output actual student count per combination — NOT just conversion rate.

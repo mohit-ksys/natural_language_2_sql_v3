@@ -1,0 +1,150 @@
+===========================================
+TABLE: counsellors
+===========================================
+
+PURPOSE:
+Stores information about staff, their roles, and hierarchy in the lead management system. Staff are divided into L2 (Juniors), L3 (Seniors), and TO (Team Owners). Partners use the 'PAR-' prefix for their IDs.
+
+KEY BUSINESS RULES:
+- L2 counsellors are juniors; L3 are seniors. Team Owners (TO) manage teams.
+- To find a manager's team: assigned_to = 'Manager_ID'.
+- Active staff only: status = 'active'.
+- External partners identified with PAR- prefix and is_partner = true.
+
+===========================================
+TABLE SCHEMA
+===========================================
+
+CREATE TABLE public.counsellors (
+  counsellor_id character varying NOT NULL,
+  counsellor_name character varying,
+  role character varying,
+  assigned_to character varying,
+  status character varying DEFAULT 'active',
+  is_partner boolean DEFAULT false,
+  total_leads integer DEFAULT 0,
+  current_lead_capacity integer DEFAULT 0,
+  CONSTRAINT counsellors_pkey PRIMARY KEY (counsellor_id)
+);
+
+===========================================
+COLUMN DEFINITIONS
+===========================================
+
+1. counsellor_id (PRIMARY KEY)
+   - Type: character varying
+   - Description: Unique ID (CNS-XXXX for staff, PAR-XXXX for partners)
+   - Constraints: NOT NULL, PRIMARY KEY
+   - Usage: Referenced by students, student_remarks
+
+2. counsellor_name
+   - Type: character varying
+   - Description: Full name of the staff member
+
+3. role
+   - Type: character varying
+   - Description: Role in the system: 'l2', 'l3', 'to', 'admission_to', 'enrollment_counsellor'
+   - Possible Values:
+     * "l2" - Level 2 Counsellor (Junior)
+     * "l3" - Level 3 Counsellor (Senior)
+     * "to" - Team Owner (Manager)
+     * "admission_to" - Admission Team Owner
+     * "enrollment_counsellor" - Enrollment Counsellor
+
+4. assigned_to
+   - Type: character varying
+   - Description: The counsellor_id of the manager/supervisor they report to
+   - Default: NULL
+
+5. status
+   - Type: character varying
+   - Description: Account status: 'active', 'inactive', 'suspended'
+   - Default: 'active'
+   - Possible Values:
+     * "active" - Currently active, can handle leads
+     * "inactive" - Not active, cannot receive or handle leads
+     * "suspended" - Temporarily suspended
+
+6. is_partner
+   - Type: boolean
+   - Description: True if the user is an external partner (PAR- prefix)
+   - Default: false
+
+7. total_leads
+   - Type: integer
+   - Description: Lifetime total leads assigned to this counsellor
+   - Default: 0
+
+8. current_lead_capacity
+   - Type: integer
+   - Description: Number of leads this counsellor can currently handle
+   - Default: 0
+
+===========================================
+RELATIONSHIPS
+===========================================
+
+REFERENCED BY (Other tables reference this table):
+1. students.assigned_counsellor_id → counsellors.counsellor_id
+   - Links students to their assigned L2 counsellor
+
+2. students.assigned_counsellor_l3_id → counsellors.counsellor_id
+   - Links students to their assigned L3 counsellor
+
+3. student_remarks.counsellor_id → counsellors.counsellor_id
+   - Links remarks to the counsellor who created them
+
+===========================================
+CONSTRAINTS & RULES
+===========================================
+
+PRIMARY KEY: counsellor_id
+- Every counsellor must have a unique identifier
+
+BUSINESS RULES:
+- L2 counsellors are juniors; L3 are seniors. Team Owners (TO) manage teams
+- To find a manager's team: assigned_to = 'Manager_ID'
+- Active staff only: status = 'active'
+- External partners identified with PAR- prefix and is_partner = true
+
+===========================================
+COMMON QUERY PATTERNS
+===========================================
+
+1. Get all active counsellors:
+   SELECT * FROM counsellors WHERE status = 'active';
+
+2. Find L2 counsellors:
+   SELECT * FROM counsellors WHERE role = 'l2' AND status = 'active';
+
+3. Find L3 counsellors:
+   SELECT * FROM counsellors WHERE role = 'l3' AND status = 'active';
+
+4. Find team owners:
+   SELECT * FROM counsellors WHERE role = 'to';
+
+5. Get counsellors under a team owner:
+   SELECT * FROM counsellors WHERE assigned_to = 'CNS123';
+
+6. Find partners only:
+   SELECT * FROM counsellors WHERE is_partner = true;
+
+7. Find staff only (not partners):
+   SELECT * FROM counsellors WHERE is_partner = false;
+
+8. Get counsellor with their students:
+   SELECT c.counsellor_name, COUNT(s.student_id) as student_count
+   FROM counsellors c
+   LEFT JOIN students s ON c.counsellor_id = s.assigned_counsellor_id
+   GROUP BY c.counsellor_id, c.counsellor_name;
+
+===========================================
+BUSINESS CONTEXT
+===========================================
+
+- Manages counsellor hierarchy and role assignments
+- Distinguishes between internal staff (CNS- prefix) and external partners (PAR- prefix)
+- Supports team management through assigned_to relationships
+- Tracks basic workload metrics (total_leads, current_lead_capacity)
+- Used for reporting on counsellor performance and team structure
+- Essential for lead assignment and access control in the system

@@ -1,0 +1,1724 @@
+{
+  "tables": {
+    "counsellors": {
+      "name": "counsellors",
+      "file": "counsellor_system.txt",
+      "purpose": "",
+      "columns": [
+        "counsellor_id",
+        "counsellor_name",
+        "counsellor_email",
+        "counsellor_password",
+        "status",
+        "role",
+        "counsellor_preferred_mode",
+        "total_leads",
+        "current_lead_capacity",
+        "counsellor_last_login",
+        "is_logout",
+        "created_at",
+        "updated_at",
+        "assigned_to"
+      ]
+    },
+    "course_status_journeys": {
+      "name": "course_status_journeys",
+      "file": "course_journey_system.txt",
+      "purpose": "",
+      "columns": [
+        "status_history_id",
+        "student_id",
+        "course_id",
+        "counsellor_id",
+        "course_status",
+        "deposit_amount",
+        "currency",
+        "exam_interview_date",
+        "last_admission_date",
+        "notes",
+        "created_at"
+      ]
+    },
+    "latest_course_statuses": {
+      "name": "latest_course_statuses",
+      "file": "latest_course_system.txt",
+      "purpose": "",
+      "columns": [
+        "id",
+        "course_id",
+        "student_id",
+        "created_by",
+        "latest_course_status",
+        "is_shortlisted",
+        "created_at",
+        "college_api_sent_status",
+        "updated_at"
+      ]
+    },
+    "student_lead_activities": {
+      "name": "student_lead_activities",
+      "file": "student_lead_activity .txt",
+      "purpose": "",
+      "columns": [
+        "id",
+        "student_id",
+        "student_name",
+        "student_email",
+        "student_phone",
+        "parents_number",
+        "whatsapp",
+        "cta_name",
+        "form_name",
+        "source",
+        "source_url",
+        "utm_source",
+        "utm_medium",
+        "utm_keyword",
+        "utm_campaign",
+        "utm_campaign_id",
+        "utm_adgroup_id",
+        "utm_creative_id",
+        "ip_city",
+        "browser",
+        "device",
+        "student_comment",
+        "highest_qualification",
+        "working_professional",
+        "student_status",
+        "destination_number",
+        "dial_whom_number",
+        "call_duration",
+        "ivr_status",
+        "start_time",
+        "end_time",
+        "call_sid",
+        "call_recording_url",
+        "talk_duration",
+        "created_at",
+        "updated_at",
+        "is_transfered",
+        "is_transfer"
+      ]
+    },
+    "student_remarks": {
+      "name": "student_remarks",
+      "file": "student_remark_system.txt",
+      "purpose": "",
+      "columns": [
+        "remark_id",
+        "student_id",
+        "counsellor_id",
+        "lead_status",
+        "lead_sub_status",
+        "calling_status",
+        "sub_calling_status",
+        "remarks",
+        "callback_date",
+        "callback_time",
+        "updated_at",
+        "created_at",
+        "supervisor_id",
+        "isdisabled",
+        "feesamount",
+        "feesAmount",
+        "===========================================",
+        "COLUMN",
+        "===========================================",
+        "1.",
+        "-",
+        "-",
+        "-",
+        "-",
+        "2.",
+        "-",
+        "-",
+        "-",
+        "3.",
+        "-",
+        "-",
+        "-",
+        "4.",
+        "-",
+        "-",
+        "5.",
+        "-",
+        "-",
+        "-",
+        "*",
+        "*",
+        "*",
+        "*",
+        "*",
+        "6.",
+        "-",
+        "-",
+        "-",
+        "PRE-APPLICATION",
+        "*",
+        "*",
+        "APPLICATION",
+        "*",
+        "*",
+        "*",
+        "*",
+        "PAYMENT",
+        "*",
+        "*",
+        "*",
+        "*",
+        "*",
+        "ENROLLMENT",
+        "*",
+        "*",
+        "*",
+        "NOT",
+        "*",
+        "*",
+        "*",
+        "*",
+        "*",
+        "*",
+        "*",
+        "*",
+        "*",
+        "*",
+        "*",
+        "*",
+        "*",
+        "*",
+        "*",
+        "*",
+        "*",
+        "7.",
+        "-",
+        "-",
+        "-",
+        "*",
+        "*",
+        "*",
+        "8.",
+        "-",
+        "-",
+        "-",
+        "STUDENT",
+        "*",
+        "*",
+        "*",
+        "CALL",
+        "*",
+        "*",
+        "*",
+        "*",
+        "*",
+        "9.",
+        "-",
+        "-",
+        "-",
+        "10.",
+        "-",
+        "-",
+        "11.",
+        "-",
+        "-",
+        "12.",
+        "-",
+        "-",
+        "-",
+        "-",
+        "13.",
+        "-",
+        "-",
+        "-",
+        "14.",
+        "-",
+        "-",
+        "15.",
+        "-",
+        "-",
+        "===========================================",
+        "RELATIONSHIPS",
+        "===========================================",
+        "FOREIGN",
+        "1.",
+        "-",
+        "2.",
+        "-",
+        "3.",
+        "-",
+        "==========================================="
+      ]
+    },
+    "students": {
+      "name": "students",
+      "file": "student_system.txt",
+      "purpose": "",
+      "columns": [
+        "student_id",
+        "student_name",
+        "student_email",
+        "student_phone",
+        "parents_number",
+        "whatsapp",
+        "assigned_counsellor_id",
+        "assigned_counsellor_l3_id",
+        "mode",
+        "preferred_stream",
+        "preferred_budget",
+        "preferred_degree",
+        "preferred_level",
+        "preferred_specialization",
+        "preferred_city",
+        "preferred_state",
+        "source",
+        "first_source_url",
+        "student_secondary_email",
+        "student_current_city",
+        "student_current_state",
+        "is_connected_yet",
+        "number_of_unread_messages",
+        "remarks_count",
+        "is_connected_yet_l3",
+        "total_remarks_l3",
+        "is_reactivity",
+        "created_at",
+        "updated_at",
+        "preferred_university",
+        "highest_degree",
+        "completion_year",
+        "current_profession",
+        "current_role",
+        "work_experience",
+        "objective",
+        "student_age",
+        "reassigneddate",
+        "is_opened",
+        "is_transfered",
+        "is_edited",
+        "edited_by",
+        "enrollment_counsellor_id",
+        "enrollment_counsellor_id_date"
+      ]
+    },
+    "university_courses": {
+      "name": "university_courses",
+      "file": "university_course_system.txt",
+      "purpose": "",
+      "columns": [
+        "course_id",
+        "university_name",
+        "university_state",
+        "university_city",
+        "degree_name",
+        "specialization",
+        "stream",
+        "level",
+        "course_name",
+        "total_fees",
+        "semester_fees",
+        "annual_fees",
+        "study_mode",
+        "duration",
+        "duration_type",
+        "created_at",
+        "updated_at",
+        "status",
+        "brochure_url",
+        "usp",
+        "eligibility"
+      ]
+    }
+  },
+  "columns": {
+    "counsellor_id": {
+      "name": "counsellor_id",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "counsellor_name": {
+      "name": "counsellor_name",
+      "table": "counsellors",
+      "file": "counsellor_system.txt"
+    },
+    "counsellor_email": {
+      "name": "counsellor_email",
+      "table": "counsellors",
+      "file": "counsellor_system.txt"
+    },
+    "counsellor_password": {
+      "name": "counsellor_password",
+      "table": "counsellors",
+      "file": "counsellor_system.txt"
+    },
+    "status": {
+      "name": "status",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "role": {
+      "name": "role",
+      "table": "counsellors",
+      "file": "counsellor_system.txt"
+    },
+    "counsellor_preferred_mode": {
+      "name": "counsellor_preferred_mode",
+      "table": "counsellors",
+      "file": "counsellor_system.txt"
+    },
+    "total_leads": {
+      "name": "total_leads",
+      "table": "counsellors",
+      "file": "counsellor_system.txt"
+    },
+    "current_lead_capacity": {
+      "name": "current_lead_capacity",
+      "table": "counsellors",
+      "file": "counsellor_system.txt"
+    },
+    "counsellor_last_login": {
+      "name": "counsellor_last_login",
+      "table": "counsellors",
+      "file": "counsellor_system.txt"
+    },
+    "is_logout": {
+      "name": "is_logout",
+      "table": "counsellors",
+      "file": "counsellor_system.txt"
+    },
+    "created_at": {
+      "name": "created_at",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "updated_at": {
+      "name": "updated_at",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "assigned_to": {
+      "name": "assigned_to",
+      "table": "counsellors",
+      "file": "counsellor_system.txt"
+    },
+    "status_history_id": {
+      "name": "status_history_id",
+      "table": "course_status_journeys",
+      "file": "course_journey_system.txt"
+    },
+    "student_id": {
+      "name": "student_id",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "course_id": {
+      "name": "course_id",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "course_status": {
+      "name": "course_status",
+      "table": "course_status_journeys",
+      "file": "course_journey_system.txt"
+    },
+    "deposit_amount": {
+      "name": "deposit_amount",
+      "table": "course_status_journeys",
+      "file": "course_journey_system.txt"
+    },
+    "currency": {
+      "name": "currency",
+      "table": "course_status_journeys",
+      "file": "course_journey_system.txt"
+    },
+    "exam_interview_date": {
+      "name": "exam_interview_date",
+      "table": "course_status_journeys",
+      "file": "course_journey_system.txt"
+    },
+    "last_admission_date": {
+      "name": "last_admission_date",
+      "table": "course_status_journeys",
+      "file": "course_journey_system.txt"
+    },
+    "notes": {
+      "name": "notes",
+      "table": "course_status_journeys",
+      "file": "course_journey_system.txt"
+    },
+    "id": {
+      "name": "id",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "created_by": {
+      "name": "created_by",
+      "table": "latest_course_statuses",
+      "file": "latest_course_system.txt"
+    },
+    "latest_course_status": {
+      "name": "latest_course_status",
+      "table": "latest_course_statuses",
+      "file": "latest_course_system.txt"
+    },
+    "is_shortlisted": {
+      "name": "is_shortlisted",
+      "table": "latest_course_statuses",
+      "file": "latest_course_system.txt"
+    },
+    "college_api_sent_status": {
+      "name": "college_api_sent_status",
+      "table": "latest_course_statuses",
+      "file": "latest_course_system.txt"
+    },
+    "student_name": {
+      "name": "student_name",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "student_email": {
+      "name": "student_email",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "student_phone": {
+      "name": "student_phone",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "parents_number": {
+      "name": "parents_number",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "whatsapp": {
+      "name": "whatsapp",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "cta_name": {
+      "name": "cta_name",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "form_name": {
+      "name": "form_name",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "source": {
+      "name": "source",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "source_url": {
+      "name": "source_url",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "utm_source": {
+      "name": "utm_source",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "utm_medium": {
+      "name": "utm_medium",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "utm_keyword": {
+      "name": "utm_keyword",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "utm_campaign": {
+      "name": "utm_campaign",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "utm_campaign_id": {
+      "name": "utm_campaign_id",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "utm_adgroup_id": {
+      "name": "utm_adgroup_id",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "utm_creative_id": {
+      "name": "utm_creative_id",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "ip_city": {
+      "name": "ip_city",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "browser": {
+      "name": "browser",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "device": {
+      "name": "device",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "student_comment": {
+      "name": "student_comment",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "highest_qualification": {
+      "name": "highest_qualification",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "working_professional": {
+      "name": "working_professional",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "student_status": {
+      "name": "student_status",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "destination_number": {
+      "name": "destination_number",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "dial_whom_number": {
+      "name": "dial_whom_number",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "call_duration": {
+      "name": "call_duration",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "ivr_status": {
+      "name": "ivr_status",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "start_time": {
+      "name": "start_time",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "end_time": {
+      "name": "end_time",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "call_sid": {
+      "name": "call_sid",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "call_recording_url": {
+      "name": "call_recording_url",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "talk_duration": {
+      "name": "talk_duration",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "is_transfered": {
+      "name": "is_transfered",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "is_transfer": {
+      "name": "is_transfer",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "remark_id": {
+      "name": "remark_id",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "lead_status": {
+      "name": "lead_status",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "lead_sub_status": {
+      "name": "lead_sub_status",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "calling_status": {
+      "name": "calling_status",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "sub_calling_status": {
+      "name": "sub_calling_status",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "remarks": {
+      "name": "remarks",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "callback_date": {
+      "name": "callback_date",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "callback_time": {
+      "name": "callback_time",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "supervisor_id": {
+      "name": "supervisor_id",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "isdisabled": {
+      "name": "isdisabled",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "feesamount": {
+      "name": "feesAmount",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "===========================================": {
+      "name": "===========================================",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "column": {
+      "name": "COLUMN",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "1.": {
+      "name": "1.",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "-": {
+      "name": "-",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "2.": {
+      "name": "2.",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "3.": {
+      "name": "3.",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "4.": {
+      "name": "4.",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "5.": {
+      "name": "5.",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "*": {
+      "name": "*",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "6.": {
+      "name": "6.",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "pre-application": {
+      "name": "PRE-APPLICATION",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "application": {
+      "name": "APPLICATION",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "payment": {
+      "name": "PAYMENT",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "enrollment": {
+      "name": "ENROLLMENT",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "not": {
+      "name": "NOT",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "7.": {
+      "name": "7.",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "8.": {
+      "name": "8.",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "student": {
+      "name": "STUDENT",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "call": {
+      "name": "CALL",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "9.": {
+      "name": "9.",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "10.": {
+      "name": "10.",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "11.": {
+      "name": "11.",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "12.": {
+      "name": "12.",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "13.": {
+      "name": "13.",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "14.": {
+      "name": "14.",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "15.": {
+      "name": "15.",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "relationships": {
+      "name": "RELATIONSHIPS",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "foreign": {
+      "name": "FOREIGN",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "assigned_counsellor_id": {
+      "name": "assigned_counsellor_id",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "assigned_counsellor_l3_id": {
+      "name": "assigned_counsellor_l3_id",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "mode": {
+      "name": "mode",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "preferred_stream": {
+      "name": "preferred_stream",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "preferred_budget": {
+      "name": "preferred_budget",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "preferred_degree": {
+      "name": "preferred_degree",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "preferred_level": {
+      "name": "preferred_level",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "preferred_specialization": {
+      "name": "preferred_specialization",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "preferred_city": {
+      "name": "preferred_city",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "preferred_state": {
+      "name": "preferred_state",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "first_source_url": {
+      "name": "first_source_url",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "student_secondary_email": {
+      "name": "student_secondary_email",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "student_current_city": {
+      "name": "student_current_city",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "student_current_state": {
+      "name": "student_current_state",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "is_connected_yet": {
+      "name": "is_connected_yet",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "number_of_unread_messages": {
+      "name": "number_of_unread_messages",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "remarks_count": {
+      "name": "remarks_count",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "is_connected_yet_l3": {
+      "name": "is_connected_yet_l3",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "total_remarks_l3": {
+      "name": "total_remarks_l3",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "is_reactivity": {
+      "name": "is_reactivity",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "preferred_university": {
+      "name": "preferred_university",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "highest_degree": {
+      "name": "highest_degree",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "completion_year": {
+      "name": "completion_year",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "current_profession": {
+      "name": "current_profession",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "current_role": {
+      "name": "current_role",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "work_experience": {
+      "name": "work_experience",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "objective": {
+      "name": "objective",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "student_age": {
+      "name": "student_age",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "reassigneddate": {
+      "name": "reassigneddate",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "is_opened": {
+      "name": "is_opened",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "is_edited": {
+      "name": "is_edited",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "edited_by": {
+      "name": "edited_by",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "enrollment_counsellor_id": {
+      "name": "enrollment_counsellor_id",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "enrollment_counsellor_id_date": {
+      "name": "enrollment_counsellor_id_date",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "university_name": {
+      "name": "university_name",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "university_state": {
+      "name": "university_state",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "university_city": {
+      "name": "university_city",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "degree_name": {
+      "name": "degree_name",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "specialization": {
+      "name": "specialization",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "stream": {
+      "name": "stream",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "level": {
+      "name": "level",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "course_name": {
+      "name": "course_name",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "total_fees": {
+      "name": "total_fees",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "semester_fees": {
+      "name": "semester_fees",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "annual_fees": {
+      "name": "annual_fees",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "study_mode": {
+      "name": "study_mode",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "duration": {
+      "name": "duration",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "duration_type": {
+      "name": "duration_type",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "brochure_url": {
+      "name": "brochure_url",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "usp": {
+      "name": "usp",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "eligibility": {
+      "name": "eligibility",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    }
+  },
+  "values": {
+    "active": {
+      "value": "Active",
+      "table": "course_status_journeys",
+      "file": "course_journey_system.txt"
+    },
+    "inactive": {
+      "value": "inactive",
+      "table": "counsellors",
+      "file": "counsellor_system.txt"
+    },
+    "l2": {
+      "value": "l2",
+      "table": "counsellors",
+      "file": "counsellor_system.txt"
+    },
+    "l3": {
+      "value": "l3",
+      "table": "counsellors",
+      "file": "counsellor_system.txt"
+    },
+    "to": {
+      "value": "to",
+      "table": "counsellors",
+      "file": "counsellor_system.txt"
+    },
+    "regular": {
+      "value": "Regular",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "online": {
+      "value": "Online",
+      "table": "university_courses",
+      "file": "university_course_system.txt"
+    },
+    "shortlisted": {
+      "value": "Shortlisted",
+      "table": "latest_course_statuses",
+      "file": "latest_course_system.txt"
+    },
+    "form filled": {
+      "value": "Form Filled",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "form filled_degreefyd": {
+      "value": "Form Filled_Degreefyd",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "form filled_partner website": {
+      "value": "Form Filled_Partner website",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "form submitted – portal pending": {
+      "value": "Form Submitted – Portal Pending",
+      "table": "latest_course_statuses",
+      "file": "latest_course_system.txt"
+    },
+    "form submitted – completed": {
+      "value": "Form Submitted – Completed",
+      "table": "latest_course_statuses",
+      "file": "latest_course_system.txt"
+    },
+    "registration done": {
+      "value": "Registration Done",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "partially paid": {
+      "value": "Partially Paid",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "semester paid": {
+      "value": "Semester Paid",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "1st year fee paid": {
+      "value": "1st Year Fee Paid",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "full fee paid": {
+      "value": "Full Fee Paid",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "enrolled": {
+      "value": "Enrolled",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "proceed": {
+      "value": "Proceed",
+      "table": "latest_course_statuses",
+      "file": "latest_course_system.txt"
+    },
+    "success": {
+      "value": "Success",
+      "table": "latest_course_statuses",
+      "file": "latest_course_system.txt"
+    },
+    "do not proceed": {
+      "value": "Do Not Proceed",
+      "table": "latest_course_statuses",
+      "file": "latest_course_system.txt"
+    },
+    "failed due to technical issues": {
+      "value": "Failed due to Technical Issues",
+      "table": "latest_course_statuses",
+      "file": "latest_course_system.txt"
+    },
+    "download pdf": {
+      "value": "Download PDF",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "connect now": {
+      "value": "Connect Now",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "download college pdf": {
+      "value": "Download College PDF",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "download brochure": {
+      "value": "Download Brochure",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "cat result 2025 out": {
+      "value": "CAT Result 2025 Out",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "auto open cta": {
+      "value": "Auto Open CTA",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "user preferences": {
+      "value": "User Preferences",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "csir net city intimation slip": {
+      "value": "CSIR NET City Intimation Slip",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "apply for degreefyd scholarships": {
+      "value": "Apply for DegreeFYD Scholarships",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "exit popup": {
+      "value": "Exit Popup",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "sample papers": {
+      "value": "Sample Papers",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "download admit card": {
+      "value": "Download Admit Card",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "download answer key": {
+      "value": "Download Answer Key",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "apply now!": {
+      "value": "Apply now!",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "get exam notification": {
+      "value": "Get Exam Notification",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "auto popup": {
+      "value": "Auto Popup",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "download result": {
+      "value": "Download Result",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "view fee structure": {
+      "value": "View Fee Structure",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "download guide": {
+      "value": "Download Guide",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "download sample degree certificate": {
+      "value": "Download Sample Degree Certificate",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "start application": {
+      "value": "Start Application",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "contact us": {
+      "value": "Contact Us",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "start your journey": {
+      "value": "Start Your Journey",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "set alerts": {
+      "value": "Set Alerts",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "apply_now": {
+      "value": "apply_now",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "add lead": {
+      "value": "Add Lead",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "talk to expert": {
+      "value": "Talk to Expert",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "chrome": {
+      "value": "Chrome",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "firefox": {
+      "value": "Firefox",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "safari": {
+      "value": "Safari",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "opera": {
+      "value": "Opera",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "microsoft edge": {
+      "value": "Microsoft Edge",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "unknown": {
+      "value": "Unknown",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "mobile": {
+      "value": "Mobile",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "desktop": {
+      "value": "Desktop",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "ug": {
+      "value": "UG",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "12th": {
+      "value": "12th",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "bachelor's degree": {
+      "value": "Bachelor's Degree",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "new": {
+      "value": "new",
+      "table": "student_lead_activities",
+      "file": "student_lead_activity .txt"
+    },
+    "pre application": {
+      "value": "Pre Application",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "application": {
+      "value": "Application",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "admission": {
+      "value": "Admission",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "notinterested": {
+      "value": "NotInterested",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "initial counseling completed": {
+      "value": "Initial Counseling Completed",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "counselling yet to be done": {
+      "value": "Counselling Yet to be Done",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "ready to pay": {
+      "value": "Ready to Pay",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "already enrolled_np": {
+      "value": "Already Enrolled_NP",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "already enrolled_partner": {
+      "value": "Already Enrolled_Partner",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "budget issue": {
+      "value": "Budget issue",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "location issue": {
+      "value": "Location issue",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "language barrier": {
+      "value": "Language Barrier",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "course not available": {
+      "value": "Course Not Available",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "next year": {
+      "value": "Next Year",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "not eligible": {
+      "value": "Not Eligible",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "student reject": {
+      "value": "Student Reject",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "contact attempted – no response": {
+      "value": "Contact Attempted – No Response",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "multiple attempts made": {
+      "value": "Multiple Attempts made",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "invalid number / wrong number": {
+      "value": "Invalid number / Wrong Number",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "first call not interested": {
+      "value": "First call Not Interested",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "reason not shared": {
+      "value": "Reason not shared",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "not enquired": {
+      "value": "Not Enquired",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "only_online course": {
+      "value": "Only_Online course",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "only_regular course": {
+      "value": "Only_Regular course",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "dublicate_same student exists": {
+      "value": "Dublicate_Same student exists",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "repo call done": {
+      "value": "Repo Call Done",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "connected": {
+      "value": "Connected",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "not connected": {
+      "value": "Not Connected",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "icc": {
+      "value": "ICC",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "hot": {
+      "value": "Hot",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "warm": {
+      "value": "Warm",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "cold": {
+      "value": "Cold",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "invalid number": {
+      "value": "Invalid Number",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "line busy": {
+      "value": "Line Busy",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "ringing no response": {
+      "value": "Ringing no response",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "switched off": {
+      "value": "Switched off",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "not interested(cb not required)": {
+      "value": "Not Interested(CB not required)",
+      "table": "student_remarks",
+      "file": "student_remark_system.txt"
+    },
+    "phd": {
+      "value": "PhD",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "master": {
+      "value": "Master",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "bachelor": {
+      "value": "Bachelor",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "diploma": {
+      "value": "Diploma",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "10th": {
+      "value": "10th",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "working professional": {
+      "value": "Working Professional",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "business owner": {
+      "value": "Business Owner",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "looking for job": {
+      "value": "Looking for Job",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "government exam prep": {
+      "value": "Government Exam Prep",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "skill course": {
+      "value": "Skill Course",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "yes": {
+      "value": "yes",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "no": {
+      "value": "no",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "other-student": {
+      "value": "Other-student",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "other-unemployed": {
+      "value": "Other-unemployed",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "other-fresher": {
+      "value": "Other-fresher",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "other-vice principal": {
+      "value": "Other-Vice principal",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "other-government sector": {
+      "value": "Other-GOVERNMENT SECTOR",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "other-farming": {
+      "value": "Other-Farming",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "other-finance": {
+      "value": "Other-finance",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "other-army": {
+      "value": "Other-army",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "other-degree": {
+      "value": "Other-Degree",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "other-only for degree": {
+      "value": "Other-only for degree",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "other-ai": {
+      "value": "Other-ai",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "other-wife": {
+      "value": "Other-wife",
+      "table": "students",
+      "file": "student_system.txt"
+    },
+    "other-other": {
+      "value": "Other-other",
+      "table": "students",
+      "file": "student_system.txt"
+    }
+  },
+  "file_to_table": {
+    "counsellor_system.txt": "counsellors",
+    "course_journey_system.txt": "course_status_journeys",
+    "latest_course_system.txt": "latest_course_statuses",
+    "student_lead_activity .txt": "student_lead_activities",
+    "student_remark_system.txt": "student_remarks",
+    "student_system.txt": "students",
+    "university_course_system.txt": "university_courses"
+  }
+}

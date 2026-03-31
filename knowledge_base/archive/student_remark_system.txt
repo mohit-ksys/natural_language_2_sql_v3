@@ -1,0 +1,202 @@
+===========================================
+TABLE: student_remarks
+===========================================
+
+PURPOSE:
+Historical log of every call and interaction with a student. Every time a counsellor calls a student, a remark is created. This table defines the student's journey.
+
+KEY BUSINESS RULES:
+- A 'Connected Call' is calling_status = 'Connected'. Anything else is a 'Not Connected' attempt.
+- A 'Hot' lead is sub_calling_status = 'Hot'. These are high-priority leads.
+- An 'Admission' is confirmed when lead_status = 'Admission'.
+- To find the LATEST status of a student: SELECT DISTINCT ON (student_id) * FROM student_remarks ORDER BY student_id, created_at DESC.
+
+===========================================
+TABLE SCHEMA
+===========================================
+
+CREATE TABLE public.student_remarks (
+  remark_id integer NOT NULL DEFAULT nextval('student_remarks_remark_id_seq'::regclass),
+  student_id character varying,
+  counsellor_id character varying,
+  calling_status character varying,
+  sub_calling_status character varying,
+  lead_status character varying,
+  remarks text,
+  callback_date date,
+  feesAmount integer DEFAULT 0,
+  created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT student_remarks_pkey PRIMARY KEY (remark_id)
+);
+
+
+
+
+===========================================
+COLUMN DEFINITIONS
+===========================================
+
+1. remark_id (PRIMARY KEY)
+   - Type: integer
+   - Description: Unique record ID
+   - Auto-generated using sequence
+   - Constraints: NOT NULL, PRIMARY KEY
+
+2. student_id
+   - Type: character varying
+   - Description: Link to the student record
+   - Foreign Key: References students.student_id
+
+3. counsellor_id
+   - Type: character varying
+   - Description: Link to the counsellor who made the call
+   - Foreign Key: References counsellors.counsellor_id
+
+4. calling_status
+   - Type: character varying
+   - Description: Result of the call: 'Connected' or 'Not Connected'
+   - Possible Values:
+     * "Connected" - Successfully spoke with student
+     * "Not Connected" - Could not connect with student
+
+5. sub_calling_status
+   - Type: character varying
+   - Description: Call outcome: 'Hot', 'Warm', 'Cold', 'Line Busy', 'Switched Off', etc.
+   - Possible Values:
+     
+     STUDENT INTENT LEVELS:
+     * "Hot" - Very interested, high conversion probability
+     * "Warm" - Moderately interested, needs nurturing
+     * "Cold" - Low interest level
+     
+     CALL OUTCOMES:
+     * "Ringing no response" - Phone rang, no answer
+     * "Line Busy" - Phone line was busy
+     * "Switched off" - Phone switched off
+     * "Invalid Number" - Phone number incorrect
+     * "Not Interested(CB not required)" - Declined, no callback needed
+
+6. lead_status
+   - Type: character varying
+   - Description: Funnel stage at time of call: 'Pre Application', 'Application', 'Admission', 'Enrolled'
+   - Possible Values:
+     * "Pre Application" - Interest shown, application not started
+     * "Application" - Application process started/submitted
+     * "Admission" - Admission fee paid, admission confirmed
+     * "Enrolled" - Enrollment process completed
+
+7. remarks
+   - Type: text
+   - Description: Notes written by the counsellor during the call
+   - Contains counsellor's observations, student feedback, discussion summary
+
+8. callback_date
+   - Type: date
+   - Description: Scheduled date for the next follow-up call
+
+9. feesAmount
+   - Type: integer
+   - Description: Amount of fees paid or discussed
+   - Default: 0
+
+10. created_at
+    - Type: timestamp with time zone
+    - Description: Timestamp of the call interaction (UTC)
+    - Default: CURRENT_TIMESTAMP
+
+===========================================
+RELATIONSHIPS
+===========================================
+
+FOREIGN KEYS (This table references):
+1. student_id → students.student_id
+   - Links remark to student profile
+
+2. counsellor_id → counsellors.counsellor_id
+   - Links remark to counsellor who created it
+
+===========================================
+CONSTRAINTS & RULES
+===========================================
+
+PRIMARY KEY: remark_id
+- Auto-incremented unique identifier
+
+ONE-TO-MANY RELATIONSHIP:
+- One student can have many remarks
+- Each remark belongs to one student
+- Remarks create a chronological history of interactions
+
+BUSINESS RULES:
+- A 'Connected Call' is calling_status = 'Connected'. Anything else is a 'Not Connected' attempt
+- A 'Hot' lead is sub_calling_status = 'Hot'. These are high-priority leads
+- An 'Admission' is confirmed when lead_status = 'Admission'
+- To find the LATEST status of a student: SELECT DISTINCT ON (student_id) * FROM student_remarks ORDER BY student_id, created_at DESC
+
+===========================================
+COMMON QUERY PATTERNS
+===========================================
+
+1. Get all remarks for a student:
+   SELECT * FROM student_remarks WHERE student_id = 'STD123' ORDER BY created_at DESC;
+
+2. Find hot leads:
+   SELECT sr.*, s.student_name FROM student_remarks sr
+   JOIN students s ON sr.student_id = s.student_id
+   WHERE sr.sub_calling_status = 'Hot';
+
+3. Get callbacks due today:
+   SELECT * FROM student_remarks WHERE callback_date = CURRENT_DATE;
+
+4. Find students in specific lead stage:
+   SELECT DISTINCT student_id FROM student_remarks 
+   WHERE lead_status = 'Application';
+
+5. Count remarks by counsellor:
+   SELECT counsellor_id, COUNT(*) as total_remarks
+   FROM student_remarks GROUP BY counsellor_id;
+
+6. Find not connected leads:
+   SELECT * FROM student_remarks 
+   WHERE calling_status = 'Not Connected';
+
+7. Get latest remark for each student:
+   SELECT DISTINCT ON (student_id) * FROM student_remarks
+   ORDER BY student_id, created_at DESC;
+
+8. Find enrolled students:
+   SELECT sr.*, s.student_name FROM student_remarks sr
+   JOIN students s ON sr.student_id = s.student_id
+   WHERE sr.lead_status = 'Enrolled';
+
+9. Get remarks with callback scheduled:
+   SELECT * FROM student_remarks 
+   WHERE callback_date IS NOT NULL AND callback_date >= CURRENT_DATE;
+
+10. Find warm leads needing nurturing:
+    SELECT * FROM student_remarks 
+    WHERE sub_calling_status = 'Warm';
+
+11. Track lead progression for a student:
+    SELECT lead_status, sub_calling_status, created_at 
+    FROM student_remarks WHERE student_id = 'STD123' ORDER BY created_at;
+
+12. Count connected calls today:
+    SELECT COUNT(*) FROM student_remarks 
+    WHERE calling_status = 'Connected' 
+    AND created_at >= CURRENT_DATE;
+
+===========================================
+BUSINESS CONTEXT
+===========================================
+
+- Historical log of every call and interaction with a student
+- Every time a counsellor calls a student, a remark is created
+- This table defines the student's journey through the funnel
+- Creates audit trail of all communication attempts
+- Enables follow-up scheduling and lead nurturing
+- Tracks student intent and conversion probability
+- Critical for counsellor performance metrics
+- Used for lead status reporting and funnel analysis
+- Helps identify bottlenecks in admission process
+- Supports callback management and workload planning

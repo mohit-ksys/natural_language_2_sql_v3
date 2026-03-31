@@ -1,0 +1,492 @@
+===========================================
+TABLE: student_lead_activities
+===========================================
+
+PURPOSE:
+Tracks all lead generation activities and form submissions. Captures detailed information about how, when, and where students found and engaged with the platform. Stores marketing attribution data (UTM parameters), device/browser information, IVR call details, and student background. One student can have multiple lead activities, with each activity representing a form submission or interaction event.
+
+KEY BUSINESS RULES:
+- One student can have multiple lead activities (form fills, calls, etc.)
+- Tracks complete marketing attribution via UTM parameters
+- Captures device, browser, and location data for analytics
+- Stores IVR call recordings and duration
+- Number of lead activities indicates student engagement level
+- Tracks if lead was transferred between counsellors
+
+===========================================
+TABLE SCHEMA
+===========================================
+
+CREATE TABLE public.student_lead_activities (
+  id integer NOT NULL DEFAULT nextval('student_lead_activities_id_seq'::regclass),
+  student_id character varying,
+  student_name character varying DEFAULT ''::character varying,
+  student_email character varying DEFAULT ''::character varying,
+  student_phone character varying DEFAULT ''::character varying,
+  parents_number character varying DEFAULT ''::character varying,
+  whatsapp character varying DEFAULT ''::character varying,
+  cta_name character varying DEFAULT ''::character varying,
+  form_name character varying DEFAULT ''::character varying,
+  source character varying DEFAULT ''::character varying,
+  source_url text DEFAULT ''::text,
+  utm_source character varying DEFAULT ''::character varying,
+  utm_medium character varying DEFAULT ''::character varying,
+  utm_keyword character varying DEFAULT ''::character varying,
+  utm_campaign character varying DEFAULT ''::character varying,
+  utm_campaign_id character varying DEFAULT ''::character varying,
+  utm_adgroup_id character varying DEFAULT ''::character varying,
+  utm_creative_id character varying DEFAULT ''::character varying,
+  ip_city character varying DEFAULT ''::character varying,
+  browser character varying DEFAULT ''::character varying,
+  device character varying DEFAULT ''::character varying,
+  student_comment jsonb DEFAULT '[]'::jsonb,
+  highest_qualification character varying DEFAULT ''::character varying,
+  working_professional boolean DEFAULT false,
+  student_status character varying DEFAULT 'new'::character varying,
+  destination_number character varying DEFAULT ''::character varying,
+  dial_whom_number character varying DEFAULT ''::character varying,
+  call_duration character varying DEFAULT ''::character varying,
+  ivr_status character varying DEFAULT ''::character varying,
+  start_time character varying DEFAULT ''::character varying,
+  end_time character varying DEFAULT ''::character varying,
+  call_sid character varying DEFAULT ''::character varying,
+  call_recording_url character varying DEFAULT ''::character varying,
+  talk_duration character varying DEFAULT ''::character varying,
+  created_at timestamp with time zone,
+  updated_at timestamp with time zone,
+  is_transfered boolean DEFAULT false,
+  is_transfer boolean DEFAULT false,
+  CONSTRAINT student_lead_activities_pkey PRIMARY KEY (id),
+  CONSTRAINT student_lead_activities_student_id_fkey
+  FOREIGN KEY (student_id)
+  REFERENCES public.students(student_id)
+);
+
+===========================================
+COLUMN DEFINITIONS
+===========================================
+
+--- RECORD IDENTIFICATION ---
+
+1. id (PRIMARY KEY)
+   - Type: integer
+   - Description: Unique identifier for each lead activity record
+   - Auto-generated using sequence
+   - Constraints: NOT NULL, PRIMARY KEY
+
+2. student_id
+   - Type: character varying
+   - Description: ID linking to the student record
+   - Foreign Key: References students.student_id
+
+--- STUDENT BASIC INFORMATION ---
+
+3. student_name
+   - Type: character varying
+   - Description: Name of the student who submitted the form
+   - Default: Empty string
+
+4. student_email
+   - Type: character varying
+   - Description: Email address provided in the form
+   - Default: Empty string
+
+5. student_phone
+   - Type: character varying
+   - Description: Phone number provided in the form
+   - Default: Empty string
+
+6. parents_number
+   - Type: character varying
+   - Description: Parent's contact number
+   - Default: Empty string
+
+7. whatsapp
+   - Type: character varying
+   - Description: WhatsApp number provided
+   - Default: Empty string
+
+--- LEAD SOURCE & MARKETING ATTRIBUTION ---
+
+8. source
+   - Type: character varying
+   - Description: Platform where lead originated (Facebook, Google, Website, etc.)
+   - Default: Empty string
+   - Distinct Values in Database:
+     * "https://degreefyd.com/colleges/subharti-university-distance-education?gad_source=1&gad_campaignid=23349276370&gclid=Cj0KCQiA-NHLBhDSARIsAIhe9X1nJVpKKMLb-rZ9LnL5L4fTd_unJY4OpiqrSR8XiEWUU3AHyyvcUokaAiihEALw_wcB" - Direct URL referral with Google Ads tracking
+     * "CP_Ref" - Counsellor referral
+     * "FaceBook" - Facebook lead generation (primary source)
+     * "IVR" - Interactive Voice Response phone leads
+     * "Facebook" - Facebook lead generation (alternative spelling)
+     * "Google_Lead_Form" - Google lead form submissions
+     * "WhatsApp" - WhatsApp-based lead generation
+     * "Modal Form" - Website modal popup form submissions
+     * "Counsellor" - Direct counsellor-added leads
+     * "Website Chat" - Website chatbot leads
+     * "https://revamp-fe.degreefyd.com/" - Revamped frontend website direct visits
+     * "https://degreefyd.com/" - Main website direct visits
+     * "Organic" - Organic search/traffic
+     * "" (empty string) - Unspecified source
+     * "Google DSA" - Google Dynamic Search Ads
+     * "Organic1" - Alternative organic tracking
+     * "AMP_Page" - Accelerated Mobile Page leads
+     * "Landing Page" - Dedicated landing page submissions
+     * "Meta Messanger" - Meta Messenger leads
+     * "FaceBook_P" - Facebook Premium leads
+     * "FaceBook_University_Admit" - Facebook University Admission campaign
+     * "https://degreefyd.com/dashboard" - Dashboard page direct visits
+     * "Student_Ref" - Student referral program
+     * "https://degreefyd.com/courses/online-ba?gad_source=1&gad_campaignid=23463111599&gbraid=0AAAABCE6YVgOgxps0EDPLRDSF-gVLb2vK&gclid=Cj0KCQiA-NHLBhDSARIsAIhe9X3lhX7pFytmy0A20fQbTrYwULbv96ydLz_AisKH7an3hCa-eMrdZr4aAsRZEALw_wcB" - Direct course page with Google Ads tracking
+     * "Marketing" - Marketing team generated leads
+     * "student_ref" - Student referral (alternative spelling)
+     * "counsellor_ref" - Counsellor referral (alternative spelling)
+
+9. source_url
+   - Type: text
+   - Description: Complete URL of the webpage where student filled the form
+   - Default: Empty string
+
+10. utm_source
+    - Type: character varying
+    - Description: Marketing traffic source (e.g., facebook, google, email)
+    - Default: Empty string
+       - Distinct Values in Database:
+     * "ig" - Instagram traffic
+     * "LeadZam-India-31Dec2025" - LeadZam India campaign (Dec 31, 2025)
+     * "fb" - Facebook traffic
+     * "Landing Page" - Direct landing page visits
+     * "chatgpt.com" - ChatGPT referral traffic
+     * "LeadZam-India-OldCreatives-31Dec2025" - LeadZam India old creatives campaign
+     * "sms_cu" - SMS campaign for Chandigarh University
+     * "google" - Google search/ads traffic
+     * "amity_sms" - SMS campaign for Amity University
+     * "LeadZam-India-Masters-05Jan2026" - LeadZam India Masters campaign (Jan 5, 2026)
+
+11. utm_medium
+    - Type: character varying
+    - Description: Marketing channel type (e.g., cpc, organic, paid, social)
+    - Default: Empty string
+
+12. utm_keyword
+    - Type: character varying
+    - Description: Keyword used in the advertisement campaign
+    - Default: Empty string
+
+13. utm_campaign
+    - Type: character varying
+    - Description: Name of the marketing campaign
+    - Default: Empty string
+    - Distinct Values in Database:
+    
+14. utm_campaign_id
+    - Type: character varying
+    - Description: Unique campaign ID from advertising platform
+    - Default: Empty string
+
+15. utm_adgroup_id
+    - Type: character varying
+    - Description: ID of the ad group within the campaign
+    - Default: Empty string
+
+16. utm_creative_id
+    - Type: character varying
+    - Description: ID of the specific ad creative used
+    - Default: Empty string
+
+--- FORM INTERACTION ---
+
+17. cta_name
+    - Type: character varying
+    - Description: Call-to-action button clicked by student
+    - Default: Empty string
+    - Possible Values:
+      * "Download PDF" - Downloaded PDF document
+      * "Connect Now" - Clicked to connect with counsellor
+      * "Download College PDF" - Downloaded college info PDF
+      * "Download Brochure" - Downloaded university brochure
+      * "CAT Result 2025 Out" - Clicked CAT exam result notification
+      * "Auto Open CTA" - Auto-popup form
+      * "User Preferences" - Clicked preferences section
+      * "CSIR NET City Intimation Slip" - CSIR NET exam info
+      * "Apply for DegreeFYD Scholarships" - Scholarship application
+      * "Exit Popup" - Exit intent popup
+      * "Sample Papers" - Downloaded sample papers
+      * "Download Admit Card" - Downloaded admit card
+      * "Download Answer Key" - Downloaded answer key
+      * "Apply now!" - Apply now button
+      * "Get Exam Notification" - Subscribed to notifications
+      * "Auto Popup" - Automatic popup
+      * "Download Result" - Downloaded exam result
+      * "View Fee Structure" / "View Fees Structure" - Checked fees
+      * "Download Guide" - Downloaded guide
+      * "Download Sample Degree Certificate" - Downloaded sample certificate
+      * "Start Application" - Started application form
+      * "Contact Us" - Contact form
+      * "Start Your Journey" - Marketing CTA
+      * "Set Alerts" - Subscribed to alerts
+      * "apply_now" / "Apply Now" - Apply button
+      * "Add Lead" - Manually added lead
+      * "Talk to Expert" - Requested counsellor call
+      * Empty - No CTA recorded
+
+18. form_name
+    - Type: character varying
+    - Description: Name of the form submitted by student
+    - Default: Empty string
+
+--- DEVICE & LOCATION INFORMATION ---
+
+19. browser
+    - Type: character varying
+    - Description: Web browser used to submit the form
+    - Default: Empty string
+    - Possible Values:
+      * "Chrome" - Google Chrome
+      * "Firefox" - Mozilla Firefox
+      * "Safari" - Safari browser
+      * "Opera" - Opera browser
+      * "Microsoft Edge" - Microsoft Edge
+      * "Unknown" - Could not be detected
+      * Empty - Not captured
+
+20. device
+    - Type: character varying
+    - Description: Device type used to submit form
+    - Default: Empty string
+    - Possible Values:
+      * "Mobile" - Mobile phone
+      * "Desktop" - Desktop/laptop computer
+      * Empty - Not captured
+
+21. ip_city
+    - Type: character varying
+    - Description: City detected from student's IP address
+    - Default: Empty string
+
+--- STUDENT BACKGROUND ---
+
+22. highest_qualification
+    - Type: character varying
+    - Description: Highest education level at time of lead creation
+    - Default: Empty string
+    - Possible Values:
+      * "UG" - Undergraduate (pursuing or completed)
+      * "12th" - Higher secondary education
+      * "Bachelor's Degree" - Bachelor's degree completed
+      * Empty - Not provided
+
+23. working_professional
+    - Type: boolean
+    - Description: Whether student is currently working
+    - Default: false
+
+24. student_comment
+    - Type: jsonb
+    - Description: Additional comments or notes in JSON format
+    - Default: Empty JSON array []
+
+25. student_status
+    - Type: character varying
+    - Description: Status of the student lead
+    - Default: 'new'
+    - Possible Values:
+      * "new" - New lead
+
+--- IVR CALL INFORMATION ---
+
+26. destination_number
+    - Type: character varying
+    - Description: Phone number that was dialed/called
+    - Default: Empty string
+
+27. dial_whom_number
+    - Type: character varying
+    - Description: Phone number that received the call
+    - Default: Empty string
+
+28. call_duration
+    - Type: character varying
+    - Description: Total duration of the call
+    - Default: Empty string
+
+29. ivr_status
+    - Type: character varying
+    - Description: IVR call status (answered, missed, etc.)
+    - Default: Empty string
+
+30. start_time
+    - Type: character varying
+    - Description: Call start timestamp
+    - Default: Empty string
+
+31. end_time
+    - Type: character varying
+    - Description: Call end timestamp
+    - Default: Empty string
+
+32. call_sid
+    - Type: character varying
+    - Description: Unique identifier for the phone call
+    - Default: Empty string
+
+33. call_recording_url
+    - Type: character varying
+    - Description: URL link to the call recording
+    - Default: Empty string
+
+34. talk_duration
+    - Type: character varying
+    - Description: Actual talk time during the call
+    - Default: Empty string
+
+--- LEAD TRANSFER STATUS ---
+
+35. is_transfered / is_transfer
+    - Type: boolean
+    - Description: Whether lead was transferred to another counsellor
+    - Default: false
+    - Note: Two columns exist (legacy reasons)
+
+--- SYSTEM TIMESTAMPS ---
+
+36. created_at
+    - Type: timestamp with time zone
+    - Description: When the lead activity was created
+
+37. updated_at
+    - Type: timestamp with time zone
+    - Description: When the record was last updated
+
+===========================================
+RELATIONSHIPS
+===========================================
+
+FOREIGN KEYS (This table references):
+1. student_id → students.student_id
+   - Links lead activity to the main student record
+
+===========================================
+CONSTRAINTS & RULES
+===========================================
+
+PRIMARY KEY: id
+- Auto-incremented unique identifier for each activity
+
+ONE-TO-MANY RELATIONSHIP:
+- One student can have many lead activities
+- Each activity represents a form submission or interaction event
+- Multiple activities indicate high engagement
+
+BUSINESS RULES:
+- Higher number of lead activities = higher student intent
+- UTM parameters track marketing campaign effectiveness
+- Device and browser data used for UX optimization
+- IVR call data tracks phone-based lead generation
+- Transfer flags indicate lead reassignment
+
+===========================================
+COMMON QUERY PATTERNS
+===========================================
+
+1. Get all activities for a student:
+   SELECT * FROM student_lead_activities WHERE student_id = 'STU123' ORDER BY created_at DESC;
+
+2. Find leads from specific source:
+   SELECT * FROM student_lead_activities WHERE source = 'Facebook';
+
+3. Track campaign performance:
+   SELECT utm_campaign, COUNT(*) as lead_count
+   FROM student_lead_activities GROUP BY utm_campaign;
+
+4. Find mobile vs desktop leads:
+   SELECT device, COUNT(*) as count
+   FROM student_lead_activities GROUP BY device;
+
+5. Get leads by CTA:
+   SELECT cta_name, COUNT(*) as clicks
+   FROM student_lead_activities GROUP BY cta_name ORDER BY clicks DESC;
+
+6. Find leads from specific city:
+   SELECT * FROM student_lead_activities WHERE ip_city = 'Mumbai';
+
+7. Get working professionals:
+   SELECT * FROM student_lead_activities WHERE working_professional = true;
+
+8. Track browser usage:
+   SELECT browser, COUNT(*) FROM student_lead_activities GROUP BY browser;
+
+9. Find leads with IVR calls:
+   SELECT * FROM student_lead_activities WHERE call_sid != '';
+
+10. Get recent lead activities:
+    SELECT * FROM student_lead_activities 
+    WHERE created_at >= CURRENT_DATE - INTERVAL '7 days';
+
+11. Find high-engagement students:
+    SELECT student_id, COUNT(*) as activity_count
+    FROM student_lead_activities 
+    GROUP BY student_id 
+    HAVING COUNT(*) > 1
+    ORDER BY activity_count DESC;
+
+12. Track UTM source performance:
+    SELECT utm_source, utm_medium, COUNT(*) as leads
+    FROM student_lead_activities 
+    GROUP BY utm_source, utm_medium;
+
+13. Find transferred leads:
+    SELECT * FROM student_lead_activities WHERE is_transfered = true;
+
+14. Get leads by qualification level:
+    SELECT highest_qualification, COUNT(*) 
+    FROM student_lead_activities 
+    GROUP BY highest_qualification;
+
+
+===========================================
+SAMPLE REPORT 
+===========================================
+
+CAMPAIGN PERFORMANCE CONVERSION FUNNEL REPORT - SAMPLE OUTPUT:
+-------------------------------------------------------------
+
+| Campaign Identity                                      | Leads | Attempted | Connected | ICC | Forms | Adm. |
+|--------------------------------------------------------|-------|-----------|-----------|-----|-------|------|
+| F_UA01_{UG All Colleges V02}{INT01}_C02                | 70    | 70        | 66        | 15  | 0     | 0    |
+| F_UA01_{UG All Colleges V02}{INT01}_C05                | 40    | 40        | 31        | 4   | 0     | 0    |
+| F_UA1_All Colleges_MBA_Aryan (INT 01)_1.4              | 66    | 66        | 60        | 26  | 1     | 0    |
+| F_UA1_All Colleges_MBA_Aryan (INT 03)_1.3              | 31    | 31        | 27        | 8   | 0     | 0    |
+| F_UA1_All Colleges_MBA_Aryan (INT 03)_1.4              | 16    | 16        | 16        | 6   | 0     | 0    |
+| F_UA1_All Colleges_MBA_Aryan V1.3 (INT 01)_1.1         | 75    | 75        | 65        | 21  | 2     | 2    |
+| F_UA1_All Colleges_MBA_Aryan V1.3 (INT 01)_1.4         | 72    | 72        | 62        | 16  | 1     | 1    |
+| F_UA1_FEB_MBA_Aryan (INT 01)_1.1                       | 64    | 64        | 59        | 18  | 2     | 1    |
+| F_UA1_FEB_MBA_Aryan v1.5 C1.2                          | 3     | 3         | 3         | 1   | 0     | 0    |
+| F_UA1_FEB_MBA_Aryan v1.5 C1.3                          | 63    | 63        | 58        | 17  | 2     | 2    |
+| F_UA1_MBADeadline_Aryan v1.5 C01                       | 19    | 19        | 15        | 4   | 1     | 1    |
+| LAL_UA01_(All Colleges UG)_INT01_C01                  | 54    | 54        | 50        | 3   | 1     | 0    |
+| NA                                                     | 1     | 1         | 1         | 1   | 0     | 0    |
+| **TOTAL**                                              | 574   | 574       | 513       | 140 | 10    | 7    |
+
+Expected Output Format:
+- Column names in uppercase with underscores
+- Campaign names left-aligned, full width display
+- Numeric columns center-aligned
+- Sorted by TOTAL_STUDENTS descending
+- Shows conversion funnel from total → attempted → connected → form filled → admitted
+
+===========================================
+BUSINESS CONTEXT
+===========================================
+
+- Tracks complete lead generation funnel
+- Critical for marketing ROI analysis and campaign optimization
+- UTM parameters enable attribution tracking across channels
+- Device/browser data helps optimize website UX
+- IVR integration tracks phone-based lead capture
+- Multiple activities per student indicate higher intent
+- Used for lead source reporting and conversion analysis
+- Helps identify most effective CTAs and landing pages
+- Supports A/B testing and marketing experiments
+- Essential for understanding customer acquisition costs
+
+
