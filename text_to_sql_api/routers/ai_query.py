@@ -1,21 +1,28 @@
 import logging
 import time
 import traceback
+import uuid
 
 from fastapi import APIRouter, HTTPException
 
 from config.database import execute_sql
 from models.schemas import (
+    DisambiguateRequest,
+    DisambiguateResponse,
+    EnhancedFeedbackRequest,
     ExecuteRequest,
     ExecuteResponse,
     HistoryResponse,
+    MCQAnswerRequest,
+    MCQOption,
+    MCQQuestion,
     ModelSwitchRequest,
     ModelSwitchResponse,
     QueryRequest,
     QueryResponse,
     SessionsResponse,
 )
-from services import llm_service, memory_service
+from services import llm_service, mcq_service, memory_service
 
 log = logging.getLogger("text2sql")
 
@@ -295,3 +302,247 @@ def get_latest_students():
     except Exception as e:
         log.error("Failed to fetch latest students: %s", str(e))
         raise HTTPException(status_code=500, detail=f"Failed to fetch students: {str(e)}")
+
+
+# ─────────────────────────── MCQ DISAMBIGUATION ──────────────────────────────
+
+
+def _validate_model(model: str | None) -> str:
+    """Return resolved model name or raise 400."""
+    req_model = model or llm_service.get_active_model()
+    if model and model not in llm_service.ALLOWED_MODELS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid model. Allowed: {llm_service.ALLOWED_MODELS}",
+        )
+    return req_model
+
+
+def _generate_and_respond(
+    user_query: str,
+    session_id: str,
+    chat_id: str,
+    extra_context: str,
+    req_model: str,
+    execute: bool,
+    start_time: float,
+) -> QueryResponse:
+    """Shared logic: generate SQL (with optional extra context), validate, execute, return."""
+    session_history = memory_service.format_session_for_prompt(session_id)
+    session = memory_service.get_session(session_id)
+    turns_count = len(session.get("turns", []))
+    should_show_context_alert = turns_count >= 5
+
+    # Inject extra MCQ / feedback context between session history and the query
+    combined_history = session_history
+    if extra_context:
+        combined_history = session_history + "\n" + extra_context
+
+    try:
+        generated_sql, thoughts, sql_usage = llm_service.generate_sql(
+            user_query=user_query,
+            session_history=combined_history,
+            learned_rules="",
+            model=req_model,
+        )
+        log.debug("MCQ-enhanced SQL: %s", generated_sql[:200])
+    except Exception as e:
+        traceback.print_exc()
+        log.error("SQL generation failed: %s", str(e))
+        fid = memory_service.save_feedback(
+            session_id=session_id,
+            user_query=user_query,
+            error_message=f"SQL generation failed: {str(e)}",
+            chat_id=chat_id,
+        )
+        _emsg = str(e)
+        if "429" in _emsg or "RESOURCE_EXHAUSTED" in _emsg:
+            raise HTTPException(status_code=429, detail="LLM quota exhausted. Please wait and retry.")
+        raise HTTPException(status_code=500, detail=f"Failed to generate SQL: {str(e)}")
+
+    if not llm_service.validate_sql(generated_sql):
+        fid = memory_service.save_feedback(
+            session_id=session_id,
+            user_query=user_query,
+            generated_sql=generated_sql,
+            error_message="Security block: non-read-only SQL generated.",
+            chat_id=chat_id,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={"message": "Generated SQL is not read-only. Operation blocked.",
+                    "sql": generated_sql, "feedback_id": fid},
+        )
+
+    execution_time = round(time.time() - start_time, 3)
+    fid = memory_service.save_feedback(
+        session_id=session_id,
+        user_query=user_query,
+        generated_sql=generated_sql,
+        execution_time=execution_time,
+        chat_id=chat_id,
+    )
+
+    if not execute:
+        _token_usage = {'model': req_model, **sql_usage} if sql_usage else None
+        return QueryResponse(
+            feedback_id=fid, session_id=session_id, sql=generated_sql,
+            execution_time=execution_time, cached=False, executed=False,
+            session_context_alert="\u26a0\ufe0f Session context limited to last 5 queries" if should_show_context_alert else None,
+            token_usage=_token_usage,
+        )
+
+    # Execute
+    results = []
+    try:
+        results = execute_sql(generated_sql)
+    except Exception as sql_err:
+        fixed_sql = llm_service.auto_fix_sql(user_query, generated_sql, str(sql_err), model=req_model)
+        if fixed_sql and llm_service.validate_sql(fixed_sql):
+            generated_sql = fixed_sql
+            try:
+                results = execute_sql(generated_sql)
+            except Exception as e2:
+                memory_service.save_feedback(session_id=session_id, user_query=user_query,
+                                            generated_sql=generated_sql, error_message=str(e2), chat_id=chat_id)
+                traceback.print_exc()
+                raise HTTPException(status_code=500, detail=f"SQL execution failed after auto-fix: {str(e2)}")
+        else:
+            traceback.print_exc()
+            memory_service.save_feedback(session_id=session_id, user_query=user_query,
+                                        generated_sql=generated_sql, error_message=str(sql_err), chat_id=chat_id)
+            raise HTTPException(status_code=500, detail=f"SQL execution failed: {str(sql_err)}")
+
+    ans_usage = {}
+    try:
+        answer, chart_type, ans_usage = llm_service.generate_answer(user_query, results, model=req_model)
+    except Exception:
+        answer = f"Query returned {len(results)} rows."
+        chart_type = "Table"
+
+    _total_input = sql_usage.get('input_tokens', 0) + ans_usage.get('input_tokens', 0)
+    _total_output = sql_usage.get('output_tokens', 0) + ans_usage.get('output_tokens', 0)
+    _token_usage = {'model': req_model, 'input_tokens': _total_input, 'output_tokens': _total_output}
+    memory_service.update_session_turn(session_id, fid, generated_sql, answer)
+
+    return QueryResponse(
+        feedback_id=fid, session_id=session_id, sql=generated_sql,
+        answer=answer, chart_type=chart_type, data=results,
+        execution_time=round(time.time() - start_time, 3), cached=False, executed=True,
+        session_context_alert="\u26a0\ufe0f Session context limited to last 5 queries" if should_show_context_alert else None,
+        token_usage=_token_usage,
+    )
+
+
+@router.post("/disambiguate", response_model=DisambiguateResponse)
+def disambiguate_query(req: DisambiguateRequest):
+    """Generate 3 MCQ clarifying questions for an ambiguous query."""
+    if not req.user_query.strip():
+        raise HTTPException(status_code=400, detail="user_query is required.")
+
+    _enforce_query_rate_limit(req.session_id)
+    req_model = _validate_model(req.model)
+
+    log.info("DISAMBIGUATE session=%s query=%r model=%s", req.session_id, req.user_query[:100], req_model)
+
+    session_history = memory_service.format_session_for_prompt(req.session_id)
+    questions, error = mcq_service.generate_mcqs(req.user_query, session_history, model=req_model)
+
+    if error or not questions:
+        raise HTTPException(status_code=500, detail=f"Failed to generate MCQs: {error or 'empty response'}")
+
+    query_id = str(uuid.uuid4())
+    memory_service.store_query_context(query_id, {
+        "original_query": req.user_query,
+        "questions": questions,
+        "session_id": req.session_id,
+        "chat_id": req.chat_id or "",
+    })
+
+    return DisambiguateResponse(
+        query_id=query_id,
+        session_id=req.session_id,
+        questions=[
+            MCQQuestion(
+                question_id=q["question_id"],
+                question_text=q["question_text"],
+                options=[MCQOption(label=o["label"], text=o["text"]) for o in q["options"]],
+            )
+            for q in questions
+        ],
+        original_query=req.user_query,
+    )
+
+
+@router.post("/answer-mcq", response_model=QueryResponse)
+def answer_mcq(req: MCQAnswerRequest):
+    """Process query after user answers the MCQ clarifying questions."""
+    start_time = time.time()
+
+    ctx = memory_service.get_query_context(req.query_id)
+    if not ctx:
+        raise HTTPException(status_code=404, detail="Query context not found or expired. Please start a new query.")
+
+    questions = ctx["questions"]
+    original_query = ctx["original_query"]
+    session_id = ctx["session_id"]
+    chat_id = req.chat_id or ctx.get("chat_id", "")
+
+    if len(req.answers) != len(questions):
+        raise HTTPException(status_code=400, detail=f"Expected {len(questions)} answers, got {len(req.answers)}.")
+
+    _enforce_query_rate_limit(session_id)
+    req_model = _validate_model(req.model)
+
+    # Save answers into context so /english-feedback can reuse them
+    memory_service.update_query_context(req.query_id, {"answers": req.answers})
+
+    enhanced_context = mcq_service.build_enhanced_context(original_query, questions, req.answers)
+    log.info("ANSWER-MCQ query_id=%s session=%s model=%s", req.query_id[:8], session_id, req_model)
+
+    return _generate_and_respond(
+        user_query=original_query,
+        session_id=session_id,
+        chat_id=chat_id,
+        extra_context=enhanced_context,
+        req_model=req_model,
+        execute=req.execute,
+        start_time=start_time,
+    )
+
+
+@router.post("/english-feedback", response_model=QueryResponse)
+def english_feedback(req: EnhancedFeedbackRequest):
+    """Refine SQL using English feedback, optionally combined with prior MCQ context."""
+    start_time = time.time()
+
+    ctx = memory_service.get_query_context(req.query_id)
+    if not ctx:
+        raise HTTPException(status_code=404, detail="Query context not found or expired. Please start a new query.")
+
+    if not req.feedback.strip():
+        raise HTTPException(status_code=400, detail="feedback text is required.")
+
+    original_query = ctx["original_query"]
+    session_id = ctx["session_id"]
+    chat_id = req.chat_id or ctx.get("chat_id", "")
+    questions = ctx.get("questions")
+    answers = ctx.get("answers")  # May be None if user skipped MCQs
+
+    _enforce_query_rate_limit(session_id)
+    req_model = _validate_model(req.model)
+
+    feedback_context = mcq_service.build_feedback_context(
+        original_query, questions, answers, req.feedback,
+    )
+    log.info("ENGLISH-FEEDBACK query_id=%s session=%s model=%s", req.query_id[:8], session_id, req_model)
+
+    return _generate_and_respond(
+        user_query=original_query,
+        session_id=session_id,
+        chat_id=chat_id,
+        extra_context=feedback_context,
+        req_model=req_model,
+        execute=req.execute,
+        start_time=start_time,
+    )

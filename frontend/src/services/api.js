@@ -154,3 +154,88 @@ export async function saveChatsToBackend(chats, lastChatId) {
 export async function switchModel(modelId) {
   return { ok: true, model: modelId };
 }
+
+/**
+ * Request MCQ clarifying questions for an ambiguous query
+ */
+export async function requestMCQs(sessionId, userQuery, model = 'gemini-3.1-flash-lite-preview', chatId = '') {
+  try {
+    const res = await fetch(`${API_BASE}/disambiguate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_query: userQuery,
+        session_id: sessionId,
+        chat_id: chatId,
+        model,
+      }),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json();
+      throw new Error(errData.detail || 'Failed to generate MCQs');
+    }
+
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Submit MCQ answers and get SQL result
+ */
+export async function submitMCQAnswers(queryId, sessionId, answers, model = 'gemini-3.1-flash-lite-preview', execute = true, chatId = '') {
+  try {
+    const res = await fetch(`${API_BASE}/answer-mcq`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query_id: queryId,
+        session_id: sessionId,
+        chat_id: chatId,
+        answers,
+        model,
+        execute,
+      }),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json();
+      throw new Error(errData.detail || 'Failed to process MCQ answers');
+    }
+
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Submit English feedback for query refinement (with optional MCQ context)
+ */
+export async function submitEnglishFeedback(queryId, sessionId, feedback, model = 'gemini-3.1-flash-lite-preview', execute = true, chatId = '') {
+  try {
+    const res = await fetch(`${API_BASE}/english-feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query_id: queryId,
+        session_id: sessionId,
+        chat_id: chatId,
+        feedback,
+        model,
+        execute,
+      }),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json();
+      throw new Error(errData.detail || 'Failed to process feedback');
+    }
+
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-export default function InputDock({ onSendMessage, model, setModel, thinkOn, setThinkOn, chatStarted }) {
+export default function InputDock({ onSendMessage, model, setModel, thinkOn, setThinkOn, mcqEnabled, setMcqEnabled, chatStarted }) {
   const [inputVal, setInputVal] = useState('');
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
@@ -111,6 +111,14 @@ export default function InputDock({ onSendMessage, model, setModel, thinkOn, set
                 )}
 
               </div>
+              <button
+                className={`mcq-toggle-pill ${mcqEnabled ? 'active' : ''}`}
+                onClick={() => setMcqEnabled(!mcqEnabled)}
+                title={mcqEnabled ? 'MCQ clarification ON — click to disable' : 'MCQ clarification OFF — click to enable'}
+              >
+                <span className="mcq-toggle-icon">{mcqEnabled ? '?' : '?'}</span>
+                <span className="mcq-toggle-label">MCQ</span>
+              </button>
               <button className="send-btn" onClick={handleSend}>
                 <span className="send-icon">↑</span>
               </button>

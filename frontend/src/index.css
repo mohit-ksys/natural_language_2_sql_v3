@@ -514,3 +514,40 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 [data-theme="light"] .rail{background:rgba(255,255,255,0.97)}
 [data-theme="light"] .rail-chat-btn.active{background:rgba(5,150,105,0.1);border-color:rgba(5,150,105,0.35);color:var(--green)}
 [data-theme="light"] .rename-input{background:rgba(5,150,105,0.04)}
+
+/* ─── MCQ MESSAGE ─────────────────────────────────────────────────────────── */
+.mcq-message{padding-bottom:8px}
+.mcq-badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:600;letter-spacing:.06em;background:rgba(0,255,178,0.1);color:var(--green);border:1px solid rgba(0,255,178,0.25);margin-left:6px}
+.mcq-intro{padding:12px 0 4px;font-size:13.5px;color:var(--text-dim);line-height:1.5}
+.mcq-questions{display:flex;flex-direction:column;gap:16px;padding:10px 0}
+.mcq-question{border:1px solid var(--border);border-radius:10px;padding:14px 16px;background:rgba(255,255,255,0.015);transition:border-color .2s}
+.mcq-question:hover{border-color:var(--border2)}
+.mcq-question.locked{opacity:.75;pointer-events:none}
+.mcq-question-header{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.mcq-number{font-size:16px;color:var(--green);line-height:1;flex-shrink:0}
+.mcq-question-text{font-size:13px;font-weight:500;color:var(--text);line-height:1.4}
+.mcq-options{display:flex;flex-direction:column;gap:4px}
+.mcq-option{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;border:1px solid transparent;background:rgba(255,255,255,0.02);cursor:pointer;transition:all .18s ease;font-family:'Inter',sans-serif;font-size:12.5px;color:var(--text-dim);text-align:left;width:100%}
+.mcq-option:hover:not(.disabled){background:rgba(0,255,178,0.04);border-color:rgba(0,255,178,0.15);color:var(--text)}
+.mcq-option.selected{background:rgba(0,255,178,0.08);border-color:rgba(0,255,178,0.35);color:var(--green)}
+.mcq-option.disabled{cursor:default}
+.mcq-radio{font-size:14px;flex-shrink:0;width:16px;text-align:center;transition:color .15s}
+.mcq-radio.checked{color:var(--green)}
+.mcq-option-label{font-weight:600;flex-shrink:0;color:var(--text-muted);font-size:11px;min-width:16px}
+.mcq-option-text{flex:1}
+.mcq-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:8px 0 4px}
+.mcq-skip-btn{padding:8px 18px;border-radius:8px;border:1px solid var(--border2);background:transparent;color:var(--text-muted);font-size:12.5px;font-family:'Inter',sans-serif;cursor:pointer;transition:all .18s ease}
+.mcq-skip-btn:hover:not(:disabled){border-color:var(--text-muted);color:var(--text);background:rgba(255,255,255,0.03)}
+.mcq-skip-btn:disabled{opacity:.4;cursor:default}
+.mcq-submit-btn{padding:8px 22px;border-radius:8px;border:1px solid var(--border2);background:rgba(255,255,255,0.03);color:var(--text-muted);font-size:12.5px;font-family:'Inter',sans-serif;font-weight:500;cursor:pointer;transition:all .22s ease}
+.mcq-submit-btn.ready{border-color:rgba(0,255,178,0.5);background:rgba(0,255,178,0.08);color:var(--green);box-shadow:0 0 12px rgba(0,255,178,0.1)}
+.mcq-submit-btn.ready:hover{background:rgba(0,255,178,0.15);border-color:rgba(0,255,178,0.7);box-shadow:0 0 20px rgba(0,255,178,0.18)}
+.mcq-submit-btn:disabled{opacity:.4;cursor:default}
+
+/* ─── MCQ TOGGLE PILL (InputDock) ─────────────────────────────────────────── */
+.mcq-toggle-pill{display:flex;align-items:center;gap:4px;padding:5px 10px;border-radius:8px;border:1px solid var(--border2);background:rgba(255,255,255,0.02);color:var(--text-muted);font-size:11.5px;font-family:'Inter',sans-serif;font-weight:500;cursor:pointer;transition:all .2s ease;flex-shrink:0}
+.mcq-toggle-pill:hover{border-color:rgba(0,255,178,0.3);color:var(--text);background:rgba(255,255,255,0.04)}
+.mcq-toggle-pill.active{border-color:rgba(0,255,178,0.4);background:rgba(0,255,178,0.08);color:var(--green)}
+.mcq-toggle-pill.active:hover{background:rgba(0,255,178,0.14);border-color:rgba(0,255,178,0.6)}
+.mcq-toggle-icon{font-size:12px;font-weight:700;line-height:1}
+.mcq-toggle-label{font-size:11px;letter-spacing:.02em}

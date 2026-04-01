@@ -134,7 +134,8 @@ function execBarStyle(secs) {
 
 export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
   const { id, model, isRegen, sql: apiSql, answer: apiAnswer, chart_type, data, execution_time,
-          session_context_alert, sessionId, userQuery, feedbackId: msgFeedbackId, token_usage, timestamp } = msg;
+          session_context_alert, sessionId, userQuery, feedbackId: msgFeedbackId, token_usage, timestamp,
+          query_id: mcqQueryId } = msg;
 
   const tokenCost = token_usage
     ? calcCost(token_usage.model || model, token_usage.input_tokens, token_usage.output_tokens)
@@ -216,7 +217,7 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
     if (!fixText.trim()) return;
     setSavingFix(true);
     setTimeout(() => {
-      onFix(id, fixText);
+      onFix(id, fixText, mcqQueryId);
       setFixPanelOpen(false);
     }, 1300);
   };

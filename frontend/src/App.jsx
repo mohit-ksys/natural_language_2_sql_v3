@@ -4,7 +4,7 @@ import Hero from './components/Hero';
 import Thread from './components/Thread';
 import InputDock from './components/InputDock';
 import SettingsModal from './components/SettingsModal';
-import { sendQuery, formatUtcTimestamp, checkHealth, loadChatsFromBackend, saveChatsToBackend } from './services/api';
+import { sendQuery, formatUtcTimestamp, checkHealth, loadChatsFromBackend, saveChatsToBackend, requestMCQs, submitMCQAnswers } from './services/api';
 
 export default function App() {
   const [messages, setMessages] = useState([]);
@@ -22,6 +22,7 @@ export default function App() {
 
   const [model, setModel] = useState('gemini-3.1-flash-lite-preview');
   const [thinkOn, setThinkOn] = useState(false);
+  const [mcqEnabled, setMcqEnabled] = useState(true);
 
   const [toastMsg, setToastMsg] = useState('');
   const [showToast, setShowToast] = useState(false);
@@ -155,13 +156,9 @@ export default function App() {
     return (lastSpace > 20 ? cut.slice(0, lastSpace) : cut) + '…';
   };
 
-  const handleSendMessage = async (text, isFix = false) => {
-    if (!chatStarted) setChatStarted(true);
-
+  const _ensureChat = (text) => {
     let chatIdToUse = currentChatId;
     let isFirstQuery = false;
-
-    // Create new chat if needed
     if (!currentChatId) {
       isFirstQuery = true;
       chatIdToUse = `chat-${Date.now()}`;
@@ -176,6 +173,24 @@ export default function App() {
       setChats(prev => [newChat, ...prev]);
       setCurrentChatId(chatIdToUse);
     }
+    return { chatIdToUse, isFirstQuery };
+  };
+
+  const _updateTitleOnFirst = (isFirstQuery, chatIdToUse, text) => {
+    if (isFirstQuery) {
+      const newTitle = generateChatTitle(text);
+      setChats(prev => {
+        const updated = prev.map(c => c.id === chatIdToUse ? { ...c, title: newTitle } : c);
+        saveChatsToBackendAsync(updated, chatIdToUse);
+        return updated;
+      });
+    }
+  };
+
+  const handleSendMessage = async (text, isFix = false) => {
+    if (!chatStarted) setChatStarted(true);
+
+    const { chatIdToUse, isFirstQuery } = _ensureChat(text);
 
     // Add user message
     setMsgCounter(prev => prev + 1);
@@ -184,72 +199,182 @@ export default function App() {
     const newMsgs = [...messages, { id: userMsgId, type: 'user', text, isFix, timestamp: new Date().toISOString() }];
     setMessages(newMsgs);
 
-    // Use same session ID for entire chat (convert chat ID to session ID)
     const sessionId = chatIdToUse.replace('chat-', 'session-');
 
-    // Call backend API (use autoRunQuery setting)
-    setTimeout(async () => {
-      try {
-        const res = await sendQuery(sessionId, text, model, settings.autoRunQuery, chatIdToUse);
-
-        if (res.ok) {
-          const { sql, answer, chart_type, data, execution_time, session_context_alert } = res.data;
-
-          // Update chat title after first query executes
-          if (isFirstQuery) {
-            const newTitle = generateChatTitle(text);
-            setChats(prev => {
-              const updated = prev.map(c => c.id === chatIdToUse ? { ...c, title: newTitle } : c);
-              saveChatsToBackendAsync(updated, chatIdToUse);
-              return updated;
-            });
+    // MCQ path: request clarifying questions instead of direct SQL
+    if (mcqEnabled && !isFix) {
+      setTimeout(async () => {
+        try {
+          const res = await requestMCQs(sessionId, text, model, chatIdToUse);
+          if (res.ok) {
+            _updateTitleOnFirst(isFirstQuery, chatIdToUse, text);
+            setMsgCounter(prev => prev + 1);
+            setMessages(prev => [
+              ...prev,
+              {
+                id: `mcq-${userMsgCounter + 1}`,
+                type: 'mcq',
+                model: model,
+                query_id: res.data.query_id,
+                questions: res.data.questions,
+                original_query: res.data.original_query,
+                sessionId,
+                chatId: chatIdToUse,
+                timestamp: new Date().toISOString(),
+              }
+            ]);
+          } else {
+            // Fallback to direct query if MCQ fails
+            console.warn('MCQ failed, falling back to direct query:', res.error);
+            _directQuery(sessionId, text, chatIdToUse, isFirstQuery, userMsgCounter);
           }
-
-          setMsgCounter(prev => prev + 1);
-          setMessages(prev => [
-            ...prev,
-            {
-              id: `ai-${userMsgCounter + 1}`,
-              type: 'ai',
-              model: model,
-              isRegen: false,
-              sql,
-              answer,
-              chart_type,
-              data,
-              execution_time,
-              session_context_alert,
-              sessionId,
-              userQuery: text,
-              feedbackId: '',
-              token_usage: res.data.token_usage || null,
-              timestamp: new Date().toISOString(),
-            }
-          ]);
-
-          if (session_context_alert) {
-            addToast(session_context_alert, 3000);
-          }
-        } else {
-          addToast(`❌ Error: ${res.error}`);
-          setMsgCounter(prev => prev + 1);
-          setMessages(prev => [
-            ...prev,
-            {
-              id: `ai-${userMsgCounter + 1}`,
-              type: 'ai-error',
-              error: res.error,
-            }
-          ]);
+        } catch (err) {
+          console.error('MCQ Error:', err);
+          _directQuery(sessionId, text, chatIdToUse, isFirstQuery, userMsgCounter);
         }
-      } catch (err) {
-        console.error('Error:', err);
-        addToast('❌ Failed to generate query');
-      }
+      }, 700);
+      return;
+    }
+
+    // Direct path (MCQ disabled or fix)
+    setTimeout(async () => {
+      _directQuery(sessionId, text, chatIdToUse, isFirstQuery, userMsgCounter);
     }, 700);
   };
 
-  const handleFix = (aiMsgId, fixText) => {
+  const _directQuery = async (sessionId, text, chatIdToUse, isFirstQuery, userMsgCounter) => {
+    try {
+      const res = await sendQuery(sessionId, text, model, settings.autoRunQuery, chatIdToUse);
+
+      if (res.ok) {
+        const { sql, answer, chart_type, data, execution_time, session_context_alert } = res.data;
+        _updateTitleOnFirst(isFirstQuery, chatIdToUse, text);
+
+        setMsgCounter(prev => prev + 1);
+        setMessages(prev => [
+          ...prev,
+          {
+            id: `ai-${userMsgCounter + 1}`,
+            type: 'ai',
+            model: model,
+            isRegen: false,
+            sql,
+            answer,
+            chart_type,
+            data,
+            execution_time,
+            session_context_alert,
+            sessionId,
+            userQuery: text,
+            feedbackId: '',
+            token_usage: res.data.token_usage || null,
+            timestamp: new Date().toISOString(),
+          }
+        ]);
+
+        if (session_context_alert) {
+          addToast(session_context_alert, 3000);
+        }
+      } else {
+        addToast(`❌ Error: ${res.error}`);
+        setMsgCounter(prev => prev + 1);
+        setMessages(prev => [
+          ...prev,
+          {
+            id: `ai-${userMsgCounter + 1}`,
+            type: 'ai-error',
+            error: res.error,
+          }
+        ]);
+      }
+    } catch (err) {
+      console.error('Error:', err);
+      addToast('❌ Failed to generate query');
+    }
+  };
+
+  const handleSubmitMCQAnswers = async (queryId, answers) => {
+    const sessionId = currentChatId?.replace('chat-', 'session-');
+    if (!sessionId) return;
+
+    try {
+      const res = await submitMCQAnswers(queryId, sessionId, answers, model, settings.autoRunQuery, currentChatId);
+      if (res.ok) {
+        const { sql, answer, chart_type, data, execution_time, session_context_alert } = res.data;
+        setMsgCounter(prev => prev + 1);
+        setMessages(prev => [
+          ...prev,
+          {
+            id: `ai-${msgCounter + 1}`,
+            type: 'ai',
+            model: model,
+            isRegen: false,
+            sql,
+            answer,
+            chart_type,
+            data,
+            execution_time,
+            session_context_alert,
+            sessionId,
+            userQuery: prev.find(m => m.type === 'mcq' && m.query_id === queryId)?.original_query || '',
+            feedbackId: res.data.feedback_id || '',
+            query_id: queryId,
+            token_usage: res.data.token_usage || null,
+            timestamp: new Date().toISOString(),
+          }
+        ]);
+        if (session_context_alert) addToast(session_context_alert, 3000);
+      } else {
+        addToast(`❌ Error: ${res.error}`);
+        setMsgCounter(prev => prev + 1);
+        setMessages(prev => [...prev, { id: `ai-err-${msgCounter + 1}`, type: 'ai-error', error: res.error }]);
+      }
+    } catch (err) {
+      console.error('MCQ submit error:', err);
+      addToast('❌ Failed to process MCQ answers');
+    }
+  };
+
+  const handleSkipMCQ = async (queryId, originalQuery) => {
+    const sessionId = currentChatId?.replace('chat-', 'session-');
+    if (!sessionId || !originalQuery) return;
+
+    try {
+      const res = await sendQuery(sessionId, originalQuery, model, settings.autoRunQuery, currentChatId);
+      if (res.ok) {
+        const { sql, answer, chart_type, data, execution_time, session_context_alert } = res.data;
+        setMsgCounter(prev => prev + 1);
+        setMessages(prev => [
+          ...prev,
+          {
+            id: `ai-${msgCounter + 1}`,
+            type: 'ai',
+            model: model,
+            isRegen: false,
+            sql,
+            answer,
+            chart_type,
+            data,
+            execution_time,
+            session_context_alert,
+            sessionId,
+            userQuery: originalQuery,
+            feedbackId: '',
+            token_usage: res.data.token_usage || null,
+            timestamp: new Date().toISOString(),
+          }
+        ]);
+        if (session_context_alert) addToast(session_context_alert, 3000);
+      } else {
+        addToast(`❌ Error: ${res.error}`);
+      }
+    } catch (err) {
+      console.error('Skip MCQ error:', err);
+      addToast('❌ Failed to generate query');
+    }
+  };
+
+  const handleFix = (aiMsgId, fixText, mcqQueryId) => {
     // Add fix request as user message
     setMsgCounter(prev => prev + 1);
     const fixMsgCounter = msgCounter + 1;
@@ -258,10 +383,16 @@ export default function App() {
       { id: `u-${fixMsgCounter}`, type: 'user', text: fixText, isFix: true }
     ]);
 
-    // Request new SQL with fix context (same session)
     const sessionId = currentChatId.replace('chat-', 'session-');
     setTimeout(async () => {
-      const res = await sendQuery(sessionId, fixText, model, true, currentChatId);
+      let res;
+      if (mcqQueryId) {
+        // Use /english-feedback to preserve MCQ context
+        const { submitEnglishFeedback } = await import('./services/api');
+        res = await submitEnglishFeedback(mcqQueryId, sessionId, fixText, model, settings.autoRunQuery, currentChatId);
+      } else {
+        res = await sendQuery(sessionId, fixText, model, true, currentChatId);
+      }
       if (res.ok) {
         const { sql, answer, chart_type, data, execution_time } = res.data;
         setMsgCounter(prev => prev + 1);
@@ -280,6 +411,7 @@ export default function App() {
             sessionId,
             userQuery: fixText,
             feedbackId: '',
+            query_id: mcqQueryId || undefined,
           }
         ]);
       } else {
@@ -460,6 +592,8 @@ export default function App() {
           addToast={addToast}
           onFix={handleFix}
           onRegen={handleRegen}
+          onSubmitMCQAnswers={handleSubmitMCQAnswers}
+          onSkipMCQ={handleSkipMCQ}
           settings={settings}
         />
 
@@ -469,6 +603,8 @@ export default function App() {
           setModel={setModel}
           thinkOn={thinkOn}
           setThinkOn={setThinkOn}
+          mcqEnabled={mcqEnabled}
+          setMcqEnabled={setMcqEnabled}
           chatStarted={chatStarted}
         />
       </main>

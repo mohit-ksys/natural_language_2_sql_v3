@@ -946,3 +946,30 @@ EXTRACT(HOUR FROM (created_at + INTERVAL '5 hours 30 minutes'))
 **RULE TZ2.** NEVER alter the user's specified time interval value. If the user asks for "last 6 months", write `INTERVAL '6 months'` exactly. Do NOT subtract timezone offset hours from a duration to compensate for UTC vs IST (e.g. do NOT write `INTERVAL '5 months 24 days'` instead of `INTERVAL '6 months'`). Rolling intervals (`NOW() - INTERVAL 'N ...'`) require zero timezone correction — see Case 2.
 
 **RULE TZ3.** In PostgreSQL, a column alias defined in the SELECT clause cannot be used inside expressions, functions, or CASE statements in the ORDER BY clause. It can only be used directly.This limitation applies specifically when the alias is derived (computed via CASE, functions, etc.), not a physical column.If your ORDER BY logic becomes complex, using a subquery or CTE is the most maintainable and scalable approach.Relying on alias reuse in complex queries can lead to unexpected failures during migrations (e.g., MySQL → PostgreSQL), so avoid it in production-grade SQL.
+
+---
+
+# SECTION 7 — COMMON QUERY AMBIGUITIES (for MCQ disambiguation)
+
+When generating clarifying questions for ambiguous queries, consider these patterns:
+
+## Time Ambiguity (no date mentioned)
+- Options: Today, This week, This month, This year, All time
+
+## Counsellor Scope (mentions "counsellor" without qualifier)
+- Options: All counsellors, Active counsellors only, L2 counsellors, L3 counsellors
+
+## Student Funnel Stage (mentions "students" without stage)
+- Options: All stages, Fresh leads only, Application+, Enrolled only
+
+## Metric Type (mentions "performance" / "stats" / "report")
+- Options: Count, Conversion rate, Average, Total sum
+
+## Grouping (aggregation query without explicit GROUP BY)
+- Options: Per counsellor, Per source, Per date, Per university, Total only
+
+## NI Sub-status (mentions "not interested" without specifics)
+- Options: All NI reasons, Budget issue, Not eligible, Already enrolled, Other reasons
+
+## University / Course Scope
+- Options: All universities, Specific university, Top universities by enrollment, Partner universities only

@@ -85,3 +85,46 @@ class SessionsResponse(BaseModel):
     sessions: dict[str, Any]  # session_id -> {created_at, turns: [...]}
 
 
+# ─── MCQ Disambiguation Models ───────────────────────────────────────────────
+
+class MCQOption(BaseModel):
+    label: str          # "A", "B", "C", "D"
+    text: str           # "This month"
+
+
+class MCQQuestion(BaseModel):
+    question_id: str    # "q1", "q2", "q3"
+    question_text: str
+    options: list[MCQOption]
+
+
+class DisambiguateRequest(BaseModel):
+    user_query: str
+    session_id: str
+    chat_id: Optional[str] = None
+    model: Optional[str] = None
+
+
+class DisambiguateResponse(BaseModel):
+    query_id: str
+    session_id: str
+    questions: list[MCQQuestion]
+    original_query: str
+
+
+class MCQAnswerRequest(BaseModel):
+    query_id: str
+    session_id: str
+    chat_id: Optional[str] = None
+    answers: list[int]              # Selected option index per question (0-based)
+    model: Optional[str] = None
+    execute: bool = False
+
+
+class EnhancedFeedbackRequest(BaseModel):
+    query_id: str
+    session_id: str
+    chat_id: Optional[str] = None
+    feedback: str
+    model: Optional[str] = None
+    execute: bool = False
