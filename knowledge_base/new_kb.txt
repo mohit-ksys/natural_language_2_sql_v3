@@ -867,6 +867,18 @@ ORDER BY success_rate DESC;
 
 **RULE S12.** When asked about total ICC / total initial counselling calls / ICC count — in any form — ALWAYS use `"first_Icc_Date"` from `students` (double-quoted for case sensitivity). Count as `COUNT(DISTINCT student_id) WHERE "first_Icc_Date" IS NOT NULL`. Do NOT use `current_student_status = 'Initial Counselling Completed'` for this metric.
 
+**RULE S13.** Date field selection for filtering and time-based queries:
+- When filtering data from `students` or `current_student_status` table → ALWAYS use `updated_at` (this reflects when the student's status was last modified).
+- When filtering data from `course_status_journeys` or `course_status` → ALWAYS use `created_at` (this table creates a new row for every status change, so created_at is the event timestamp).
+- Rationale: `students.updated_at` tracks the latest modification to the student record. `course_status_journeys.created_at` tracks when each status change event occurred (append-only log).
+
+**RULE S14.** Standard ICC count query — ALWAYS use this exact pattern for counting ICC:
+```sql
+SELECT COUNT(*) FROM students 
+WHERE "first_Icc_Date" IS NOT NULL
+```
+This is the canonical way to count total ICC. Never use `COUNT(DISTINCT student_id)` for this specific query pattern unless joining other tables.
+
 **RULE S5.** ALWAYS use `COUNT(DISTINCT student_id)` when counting students — never `COUNT(*)` after a JOIN.
 
 **RULE S6.** "Form filled" / "form fills" → `course_status = 'Application'` on `course_status_journeys`. Do NOT use `latest_course_statuses` for form fill queries.

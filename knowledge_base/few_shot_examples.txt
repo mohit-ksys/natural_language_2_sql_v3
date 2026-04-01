@@ -255,3 +255,69 @@ GROUP BY uc.degree_name, uc.course_name
 ORDER BY uc.degree_name, interested_students DESC;
 ```
 Key patterns: "student interest" / "students interested in a course" = COUNT(DISTINCT student_id) from course_status_journeys — students who have taken action on this course. NEVER use students.preferred_course for interest metrics (that's only for self-stated preferences). NEVER use latest_course_statuses for general interest counts (it's ONLY for shortlisted and API status). For shortlisted count, use CASE WHEN with is_shortlisted = true from latest_course_statuses. Always join lcs with both course_id AND student_id to avoid duplication. No LIMIT unless asking for "top N".
+
+---
+
+Question: Show me a detailed fee breakdown by university for admitted students, including how many paid each fee type and the amounts collected.
+
+```sql
+SELECT
+    uc.university_name,
+    COUNT(DISTINCT csj.student_id) AS admitted_students,
+    SUM(uc.total_fees) AS total_course_worth,
+    SUM(csj.deposit_amount) AS total_deposit_collected,
+    SUM(uc.total_fees) - SUM(csj.deposit_amount) AS remaining_fee_balance,
+
+    -- 1st Year Fee Paid
+    COUNT(DISTINCT CASE WHEN csj.fee_type ILIKE '%1st Year Fee Paid%' THEN csj.student_id END) AS first_year_fee_paid_students,
+    SUM(CASE WHEN csj.fee_type ILIKE '%1st Year Fee Paid%' THEN csj.deposit_amount ELSE 0 END) AS first_year_fee_paid_amount,
+
+    -- Annual Paid
+    COUNT(DISTINCT CASE WHEN csj.fee_type ILIKE '%Annual Paid%' THEN csj.student_id END) AS annual_paid_students,
+    SUM(CASE WHEN csj.fee_type ILIKE '%Annual Paid%' THEN csj.deposit_amount ELSE 0 END) AS annual_paid_amount,
+
+    -- Full Fee Paid (covers both "full fee paid" and "Full Fee Paid")
+    COUNT(DISTINCT CASE WHEN csj.fee_type ILIKE '%Full Fee Paid%' THEN csj.student_id END) AS full_fee_paid_students,
+    SUM(CASE WHEN csj.fee_type ILIKE '%Full Fee Paid%' THEN csj.deposit_amount ELSE 0 END) AS full_fee_paid_amount,
+
+    -- Partially Paid (covers "Partially Paid" and "partial paid")
+    COUNT(DISTINCT CASE WHEN csj.fee_type ILIKE '%partial%paid%' OR csj.fee_type ILIKE '%partially%paid%' THEN csj.student_id END) AS partially_paid_students,
+    SUM(CASE WHEN csj.fee_type ILIKE '%partial%paid%' OR csj.fee_type ILIKE '%partially%paid%' THEN csj.deposit_amount ELSE 0 END) AS partially_paid_amount,
+
+    -- Registration Done
+    COUNT(DISTINCT CASE WHEN csj.fee_type ILIKE '%Registration done%' THEN csj.student_id END) AS registration_done_students,
+    SUM(CASE WHEN csj.fee_type ILIKE '%Registration done%' THEN csj.deposit_amount ELSE 0 END) AS registration_done_amount,
+
+    -- Semester Fee Paid (covers "Semester fee paid" and "Semester Paid")
+    COUNT(DISTINCT CASE WHEN csj.fee_type ILIKE '%Semester%Paid%' OR csj.fee_type ILIKE '%Semester%fee%paid%' THEN csj.student_id END) AS semester_paid_students,
+    SUM(CASE WHEN csj.fee_type ILIKE '%Semester%Paid%' OR csj.fee_type ILIKE '%Semester%fee%paid%' THEN csj.deposit_amount ELSE 0 END) AS semester_paid_amount
+
+FROM university_courses uc
+JOIN course_status_journeys csj ON uc.course_id = csj.course_id
+WHERE csj.course_status = 'Admission'
+AND csj.student_id IN (SELECT student_id FROM students)
+GROUP BY uc.university_name
+ORDER BY total_deposit_collected DESC;
+```
+Key patterns: For fee breakdown queries with Admission stage, join university_courses → course_status_journeys with WHERE course_status = 'Admission'. Use SUM(uc.total_fees) for total course worth (catalog price), SUM(csj.deposit_amount) for actual collected amount. For fee_type breakdowns, use ILIKE with wildcards to handle case variations. Always validate student_id against students table. Use CASE WHEN for both student counts and amount sums per fee type. remaining_fee_balance = total_course_worth - total_deposit_collected.
+
+---
+
+Question: Show me a summary of admitted students by university with total fees, deposits collected, and what fee types were paid.
+
+```sql
+SELECT
+    uc.university_name,
+    COUNT(DISTINCT csj.student_id) AS total_students_in_admission,
+    SUM(uc.total_fees) AS total_course_worth,
+    SUM(csj.deposit_amount) AS total_deposit_collected,
+    SUM(uc.total_fees) - SUM(csj.deposit_amount) AS total_fee_remaining,
+    STRING_AGG(DISTINCT csj.fee_type, ', ') AS fee_types
+FROM course_status_journeys csj
+JOIN university_courses uc ON csj.course_id = uc.course_id
+WHERE csj.course_status = 'Admission'
+AND csj.student_id IN (SELECT student_id FROM students)
+GROUP BY uc.university_name
+ORDER BY total_deposit_collected DESC;
+```
+Key patterns: For aggregated fee summaries, use STRING_AGG(DISTINCT fee_type, ', ') to show all unique fee types paid at each university. Join course_status_journeys → university_courses. Filter by course_status = 'Admission' and validate student_id. Use SUM(uc.total_fees) for catalog price, SUM(csj.deposit_amount) for collected amount. total_fee_remaining = total_course_worth - total_deposit_collected. No LIMIT unless asking for "top N".
