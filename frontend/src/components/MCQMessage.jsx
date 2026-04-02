@@ -5,10 +5,15 @@ export default function MCQMessage({ msg, onSubmitAnswers, onSkip }) {
   const [selectedAnswers, setSelectedAnswers] = useState(
     Array(questions?.length || 3).fill(null)
   );
+  const [freeTexts, setFreeTexts] = useState(
+    Array(questions?.length || 3).fill('')
+  );
   const [submitted, setSubmitted] = useState(false);
   const [skipping, setSkipping] = useState(false);
 
-  const allAnswered = selectedAnswers.every(a => a !== null);
+  const allAnswered = selectedAnswers.every((a, i) =>
+    a !== null || freeTexts[i].trim() !== ''
+  );
 
   const handleSelect = (qIdx, optIdx) => {
     if (submitted) return;
@@ -17,12 +22,35 @@ export default function MCQMessage({ msg, onSubmitAnswers, onSkip }) {
       next[qIdx] = optIdx;
       return next;
     });
+    // Clear free text if a radio option is picked
+    setFreeTexts(prev => {
+      const next = [...prev];
+      next[qIdx] = '';
+      return next;
+    });
+  };
+
+  const handleFreeTextChange = (qIdx, val) => {
+    // Deselect radio when user types
+    setSelectedAnswers(prev => {
+      const next = [...prev];
+      next[qIdx] = null;
+      return next;
+    });
+    setFreeTexts(prev => {
+      const next = [...prev];
+      next[qIdx] = val;
+      return next;
+    });
   };
 
   const handleSubmit = () => {
     if (!allAnswered || submitted) return;
     setSubmitted(true);
-    onSubmitAnswers(query_id, selectedAnswers);
+    const finalAnswers = selectedAnswers.map((a, i) =>
+      a === null ? freeTexts[i].trim() : a
+    );
+    onSubmitAnswers(query_id, finalAnswers);
   };
 
   const handleSkip = () => {
@@ -79,6 +107,21 @@ export default function MCQMessage({ msg, onSubmitAnswers, onSkip }) {
                   </button>
                 );
               })}
+              {/* Free text as 4th option */}
+              <div className={`mcq-option mcq-option-text-wrap ${freeTexts[qIdx] ? 'selected' : ''} ${submitted ? 'disabled' : ''}`}>
+                <span className={`mcq-radio ${freeTexts[qIdx] ? 'checked' : ''}`}>
+                  {freeTexts[qIdx] ? '●' : '○'}
+                </span>
+                <span className="mcq-option-label">D.</span>
+                <input
+                  className="mcq-free-text-inline"
+                  type="text"
+                  placeholder="Other — type your own answer"
+                  value={freeTexts[qIdx]}
+                  onChange={e => handleFreeTextChange(qIdx, e.target.value)}
+                  disabled={submitted}
+                />
+              </div>
             </div>
           </div>
         ))}

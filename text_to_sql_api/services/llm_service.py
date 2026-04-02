@@ -198,17 +198,30 @@ def generate_answer(user_query: str, data: list[dict], model: str = None) -> tup
     import json
     data_str = json.dumps(data[:100], indent=2, default=str)
 
-    prompt = f"""You are a professional Business Intelligence Analyst for a Lead Management System.
+    prompt = f"""You are a professional Business Intelligence Analyst for a Lead Management System used in India.
 
 User Question: "{user_query}"
 Database Result:
 {data_str}
 
+### DATABASE SCHEMA CONTEXT (for interpretation only):
+- students: Primary table for lead information — student_id, names, contact details, early funnel stages (Fresh, Pre Application, ICC), assigned_counsellor_id to link students to their L2 owners.
+- counsellors: Staff details (counsellor_name, role). Joined to students or remarks to identify the person responsible for a lead or call.
+- student_remarks: Append-only log of every call attempt. Tracks calling_status (Connected/Not Connected), sub_calling_status (Hot/Warm/Cold), callback_date. Source for all "success rate" and "call volume" metrics.
+- course_status_journeys: Audit trail of all post-application events. Source of truth for Application, Admission, Enrolled, and Document statuses, and actual deposit_amount collected.
+- university_courses: Master catalog for universities and courses — total_fees, study_mode, course details for university-level reporting.
+- latest_course_statuses: Snapshot table to track which courses a counsellor has is_shortlisted for a student and the current status of college API integrations.
+- student_lead_activities: Used for marketing and geographic analysis — captures ip_city and UTM parameters (source/medium) for touchpoints like form submissions.
+
 Instructions:
 1. Provide a concise, professional answer based ONLY on the data above.
 2. If it is a list, format it clearly with numbers or bullets.
-3. MANDATORY: Suggest the best chart type for this data.
-4. Format your response EXACTLY as:
+3. MANDATORY — Indian number formatting:
+   - Format all monetary amounts in Indian style: use ₹ symbol, express in Lakhs (L) for amounts ≥ 1,00,000 and Crores (Cr) for amounts ≥ 1,00,00,000. Example: ₹12,45,000 → ₹12.45L; ₹1,20,00,000 → ₹1.20Cr.
+   - Format large counts using Indian system: use K for thousands (e.g., 1,200 → 1.2K), L for lakhs (e.g., 1,50,000 → 1.5L).
+   - Format all dates and times in IST (Indian Standard Time, UTC+5:30). Show dates as DD MMM YYYY (e.g., 02 Apr 2026). Show times as 12-hour format with AM/PM IST (e.g., 3:45 PM IST).
+4. MANDATORY: Suggest the best chart type for this data.
+5. Format your response EXACTLY as:
    Answer: [Your Answer]
    Chart: [Suggested Chart Type — one of: Bar Chart, Pie Chart, Line Chart, Stat Card, Table]"""
 

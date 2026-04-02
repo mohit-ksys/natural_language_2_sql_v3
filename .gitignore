@@ -1,60 +1,127 @@
-# Environment files
+# ─── Environment ──────────────────────────────────────────────────────────────
 .env
 .env.*
+.env.local
+.env.*.local
 *.env.local
 
-# IDE and editor files
+# ─── IDE & Editor Tools ───────────────────────────────────────────────────────
 .claude/
+.qoder/
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 .sublime-*
+*.iml
+.project
+.classpath
+.settings/
 
-# Streamlit - only ignore secrets, not config
+# ─── Streamlit ────────────────────────────────────────────────────────────────
 .streamlit/secrets.toml
 
-# Virtual environments
+# ─── Virtual Environments ─────────────────────────────────────────────────────
 01_env/
 venv/
 env/
 .venv/
+ENV/
+venv.bak/
+.virtualenv/
+text_to_sql_api/01_clean/
 
-# Python cache and files
+# ─── Python Cache & Build Artifacts ──────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.pdb
 .Python
 *.so
-.coverage
-.pytest_cache/
+*.egg
 *.egg-info/
 dist/
 build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+lib/
+lib64/
+pip-wheel-metadata/
+pip-log.txt
+pip-delete-this-directory.txt
+MANIFEST
 
-# Application data and logs
+# ─── Python Testing & Coverage ────────────────────────────────────────────────
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
+.hypothesis/
+nosetests.xml
+*.cover
+
+# ─── Python Type Checkers ─────────────────────────────────────────────────────
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+pyrightconfig.json
+
+# ─── Application Data & Logs ──────────────────────────────────────────────────
 text_to_sql_api/data/
 text_to_sql_api/logs/
 *.log
 *.log.*
 
-# Node.js
+# ─── Node.js / React Frontend ─────────────────────────────────────────────────
 node_modules/
 package-lock.json
 yarn.lock
+pnpm-lock.yaml
+.pnp
+.pnp.js
+frontend/dist/
+frontend/build/
+frontend/.cache/
+frontend/.parcel-cache/
+*.tsbuildinfo
+.eslintcache
+.stylelintcache
+.next/
+.nuxt/
+.svelte-kit/
 
-# OS files
+# ─── OS Files ─────────────────────────────────────────────────────────────────
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
 Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+desktop.ini
+$RECYCLE.BIN/
+*.lnk
 
-# Database files
+# ─── Database Files ───────────────────────────────────────────────────────────
 *.db
 *.sqlite
 *.sqlite3
 
-# Temporary files
+# ─── Temporary Files ──────────────────────────────────────────────────────────
 *.tmp
 *.temp
+*.bak
+*.swp
+*.orig
 .tmp/
+tmp/

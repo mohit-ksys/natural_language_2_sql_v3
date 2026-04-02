@@ -134,21 +134,25 @@ Analyze the user's natural-language database query and generate exactly 3 multip
 def build_enhanced_context(
     original_query: str,
     questions: list[dict],
-    answers: list[int],
+    answers: list,
 ) -> str:
     """
     Convert MCQ answers into a structured context block for SQL generation prompt.
-    answers = list of 0-based option indices matching each question.
+    answers = list of 0-based option indices or free-text strings (for "Other").
     """
     lines = ["### QUERY CLARIFICATION (from user MCQ answers):"]
 
-    for q, ans_idx in zip(questions, answers):
-        opts = q.get("options", [])
-        if 0 <= ans_idx < len(opts):
-            selected = opts[ans_idx]
-            text = selected.get("text", selected) if isinstance(selected, dict) else str(selected)
+    for q, ans in zip(questions, answers):
+        if isinstance(ans, str):
+            # Free-text "Other" answer
+            text = ans if ans.strip() else "(skipped)"
         else:
-            text = "(skipped)"
+            opts = q.get("options", [])
+            if isinstance(ans, int) and 0 <= ans < len(opts):
+                selected = opts[ans]
+                text = selected.get("text", selected) if isinstance(selected, dict) else str(selected)
+            else:
+                text = "(skipped)"
         lines.append(f"- {q['question_text']} → {text}")
 
     lines.append("")
@@ -162,7 +166,7 @@ def build_enhanced_context(
 def build_feedback_context(
     original_query: str,
     questions: list[dict] | None,
-    answers: list[int] | None,
+    answers: list | None,
     feedback: str,
 ) -> str:
     """

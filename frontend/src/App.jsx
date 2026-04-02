@@ -17,12 +17,12 @@ export default function App() {
   const [settings, setSettings] = useState({
     datahubConnected: false,
     autoRunQuery: false,
-    hideQuery: false
+    hideQuery: false,
+    mcqEnabled: false,
   });
 
   const [model, setModel] = useState('gemini-3.1-flash-lite-preview');
   const [thinkOn, setThinkOn] = useState(false);
-  const [mcqEnabled, setMcqEnabled] = useState(true);
 
   const [toastMsg, setToastMsg] = useState('');
   const [showToast, setShowToast] = useState(false);
@@ -202,7 +202,7 @@ export default function App() {
     const sessionId = chatIdToUse.replace('chat-', 'session-');
 
     // MCQ path: request clarifying questions instead of direct SQL
-    if (mcqEnabled && !isFix) {
+    if (settings.mcqEnabled && !isFix) {
       setTimeout(async () => {
         try {
           const res = await requestMCQs(sessionId, text, model, chatIdToUse);
@@ -603,8 +603,6 @@ export default function App() {
           setModel={setModel}
           thinkOn={thinkOn}
           setThinkOn={setThinkOn}
-          mcqEnabled={mcqEnabled}
-          setMcqEnabled={setMcqEnabled}
           chatStarted={chatStarted}
         />
       </main>

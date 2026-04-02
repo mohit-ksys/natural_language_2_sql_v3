@@ -326,6 +326,8 @@ def _generate_and_respond(
     req_model: str,
     execute: bool,
     start_time: float,
+    mcq_questions: list = None,
+    mcq_answers: list = None,
 ) -> QueryResponse:
     """Shared logic: generate SQL (with optional extra context), validate, execute, return."""
     session_history = memory_service.format_session_for_prompt(session_id)
@@ -354,6 +356,8 @@ def _generate_and_respond(
             user_query=user_query,
             error_message=f"SQL generation failed: {str(e)}",
             chat_id=chat_id,
+            mcq_questions=mcq_questions,
+            mcq_answers=mcq_answers,
         )
         _emsg = str(e)
         if "429" in _emsg or "RESOURCE_EXHAUSTED" in _emsg:
@@ -367,6 +371,8 @@ def _generate_and_respond(
             generated_sql=generated_sql,
             error_message="Security block: non-read-only SQL generated.",
             chat_id=chat_id,
+            mcq_questions=mcq_questions,
+            mcq_answers=mcq_answers,
         )
         raise HTTPException(
             status_code=403,
@@ -381,6 +387,8 @@ def _generate_and_respond(
         generated_sql=generated_sql,
         execution_time=execution_time,
         chat_id=chat_id,
+        mcq_questions=mcq_questions,
+        mcq_answers=mcq_answers,
     )
 
     if not execute:
@@ -508,6 +516,8 @@ def answer_mcq(req: MCQAnswerRequest):
         req_model=req_model,
         execute=req.execute,
         start_time=start_time,
+        mcq_questions=questions,
+        mcq_answers=req.answers,
     )
 
 

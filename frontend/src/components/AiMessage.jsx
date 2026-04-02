@@ -1,10 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { executeSql } from '../services/api';
 import { calcCost, formatCost, formatTokens } from '../services/tokenCost';
-import {
-  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
-} from 'recharts';
 
 // Star labels and per-score action options
 const STAR_NAMES=['','Wrong — bad query','Partially correct','Mostly right — small fix','Good — minor tweak','Perfect ✦'];
@@ -20,9 +16,6 @@ const STAR_OPTS={
   5:[{icon:'✎',name:'Any improvements?',sub:'Share feedback',act:'fix'},
      {icon:'↺',name:'Regenerate',sub:'Try again',act:'regen'}]
 };
-
-// Chart palette
-const CHART_COLORS = ['#00FFB2', '#ffb347', '#4285f4', '#ff4f4f', '#c084fc', '#34a853'];
 
 // Render a markdown string into an array of React-renderable segments
 function renderAnswer(text) {
@@ -72,8 +65,9 @@ function renderAnswer(text) {
 }
 
 function isNumeric(val) {
-  if (val === null || val === undefined) return false;
-  const n = parseFloat(val);
+  if (val === null || val === undefined || val === '') return false;
+  if (typeof val === 'string' && val.trim() === '') return false;
+  const n = Number(val);
   return !isNaN(n) && isFinite(n);
 }
 
@@ -82,11 +76,32 @@ function isDate(val) {
   return /^\d{4}-\d{2}-\d{2}/.test(val) || /^\d{4}\/\d{2}\/\d{2}/.test(val);
 }
 
+// Formats a number in Indian style: 1,00,000 / 12,34,567.89
+function formatIndianNumber(num) {
+  const isNeg = num < 0;
+  const abs = Math.abs(num);
+  const [intPart, decPart] = abs.toFixed(
+    Number.isInteger(abs) ? 0 : Math.min(4, (abs.toString().split('.')[1] || '').length)
+  ).split('.');
+
+  // Indian grouping: last 3 digits, then groups of 2
+  let result = '';
+  if (intPart.length <= 3) {
+    result = intPart;
+  } else {
+    const last3 = intPart.slice(-3);
+    const rest = intPart.slice(0, -3);
+    const restGrouped = rest.replace(/\B(?=(\d{2})+(?!\d))/g, ',');
+    result = restGrouped + ',' + last3;
+  }
+  if (decPart) result += '.' + decPart;
+  return (isNeg ? '-' : '') + result;
+}
+
 function formatNumber(val) {
   if (!isNumeric(val)) return val;
   const num = parseFloat(val);
-  if (Number.isInteger(num)) return num.toLocaleString('en-US');
-  return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  return formatIndianNumber(num);
 }
 
 // SQL syntax highlighter — returns line-numbered HTML
@@ -171,10 +186,6 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
   // Table sorting
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
-
-  // Chart toggle
-  const hasChart = !!(chart_type && chart_type !== 'table');
-  const [showChart, setShowChart] = useState(hasChart);
 
   const fixInputRef = useRef(null);
   const editAreaRef = useRef(null);
@@ -281,15 +292,6 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
       return sortDir === 'asc' ? as.localeCompare(bs) : bs.localeCompare(as);
     });
   }, [resultData, sortCol, sortDir]);
-
-  // Chart data prep
-  const chartData = React.useMemo(() => {
-    if (!resultData || resultData.length === 0) return [];
-    const cols = Object.keys(resultData[0]);
-    const xCol = cols.find(c => !isNumeric(resultData[0][c])) || cols[0];
-    const yCol = cols.find(c => c !== xCol && isNumeric(resultData[0][c])) || cols[1];
-    return { data: resultData.map(r => ({ ...r, _x: r[xCol], _y: parseFloat(r[yCol]) || 0 })), xCol, yCol };
-  }, [resultData]);
 
   const execBar = resultExecTime ? execBarStyle(resultExecTime) : null;
   const displayData = sortedData || resultData;
@@ -447,12 +449,6 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
               </div>
             )}
 
-            {hasChart && (
-              <button className="show-all-btn" onClick={() => setShowChart(v => !v)}>
-                {showChart ? '📋 Table' : '📊 Chart'}
-              </button>
-            )}
-
             {displayData.length > 5 && !showAllData && (
               <button className="show-all-btn" onClick={() => setShowAllData(true)}>
                 Show All ({displayData.length})
@@ -465,44 +461,8 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
             )}
           </div>
 
-          {/* CHART VIEW */}
-          {showChart && hasChart && chartData.data?.length > 0 && (
-            <div className="chart-container">
-              <ResponsiveContainer width="100%" height={220}>
-                {chart_type === 'pie' ? (
-                  <PieChart>
-                    <Pie data={chartData.data} dataKey="_y" nameKey="_x" cx="50%" cy="50%" outerRadius={80} label={({name}) => name}>
-                      {chartData.data.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
-                    </Pie>
-                    <Tooltip contentStyle={{ background: '#0a0a0a', border: '1px solid #333', fontSize: 12 }} />
-                    <Legend wrapperStyle={{ fontSize: 11, color: '#94a3b8' }} />
-                  </PieChart>
-                ) : chart_type === 'line' ? (
-                  <LineChart data={chartData.data} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
-                    <XAxis dataKey="_x" tick={{ fontSize: 10, fill: '#94a3b8' }} />
-                    <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} />
-                    <Tooltip contentStyle={{ background: '#0a0a0a', border: '1px solid #333', fontSize: 12 }} />
-                    <Line type="monotone" dataKey="_y" stroke="#00FFB2" strokeWidth={2} dot={{ fill: '#00FFB2', r: 3 }} />
-                  </LineChart>
-                ) : (
-                  <BarChart data={chartData.data} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
-                    <XAxis dataKey="_x" tick={{ fontSize: 10, fill: '#94a3b8' }} />
-                    <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} />
-                    <Tooltip contentStyle={{ background: '#0a0a0a', border: '1px solid #333', fontSize: 12 }} />
-                    <Bar dataKey="_y" fill="#00FFB2" radius={[3, 3, 0, 0]}>
-                      {chartData.data.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
-                    </Bar>
-                  </BarChart>
-                )}
-              </ResponsiveContainer>
-            </div>
-          )}
-
           {/* TABLE VIEW */}
-          {!showChart && (
-            <div className="data-table">
+          <div className="data-table">
               <table>
                 <thead>
                   <tr>
@@ -543,8 +503,7 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
                   <button onClick={() => setShowAllData(true)} style={{ background: 'none', border: 'none', color: 'var(--green)', cursor: 'pointer', textDecoration: 'underline' }}>load all</button>
                 </div>
               )}
-            </div>
-          )}
+          </div>
         </div>
       )}
 

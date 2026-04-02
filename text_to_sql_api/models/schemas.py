@@ -116,7 +116,7 @@ class MCQAnswerRequest(BaseModel):
     query_id: str
     session_id: str
     chat_id: Optional[str] = None
-    answers: list[int]              # Selected option index per question (0-based)
+    answers: list[int | str]        # Selected option index (0-based) or free-text string for "Other"
     model: Optional[str] = None
     execute: bool = False
 

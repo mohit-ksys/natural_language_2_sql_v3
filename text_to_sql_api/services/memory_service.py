@@ -118,6 +118,8 @@ def save_feedback(
     execution_time: float = 0.0,
     error_message: str = "",
     chat_id: str = "",
+    mcq_questions: list = None,
+    mcq_answers: list = None,
 ) -> str:
     """Save a query/response pair to unified conversational log."""
     feedback_id = str(uuid.uuid4())
@@ -133,6 +135,25 @@ def save_feedback(
         "execution_time": execution_time,
         "error_message": error_message,
     }
+
+    if mcq_questions and mcq_answers is not None:
+        mcq_log = []
+        for i, q in enumerate(mcq_questions):
+            ans = mcq_answers[i] if i < len(mcq_answers) else None
+            if isinstance(ans, str):
+                selected_text = ans  # free-text "Other" answer
+            elif isinstance(ans, int):
+                opts = q.get("options", [])
+                selected_text = opts[ans].get("text") if 0 <= ans < len(opts) else None
+            else:
+                selected_text = None
+            mcq_log.append({
+                "question_id": q.get("question_id"),
+                "question_text": q.get("question_text"),
+                "selected_answer": ans,
+                "selected_text": selected_text,
+            })
+        log_entry["mcq"] = {"questions": mcq_log}
 
     with _log_lock:
         with open(CONVERSATIONAL_LOG, "a", encoding="utf-8") as f:
