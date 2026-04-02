@@ -49,6 +49,48 @@ DATA_DIR = pathlib.Path(settings.DATA_DIR)
 CONVERSATIONAL_LOG = DATA_DIR / "conversational_log.jsonl"
 SESSIONS_JSON = DATA_DIR / "sessions.json"
 
+# ─────────────────────────── MCQ QUERY CONTEXT (in-memory) ────────────────────
+# Short-lived store for MCQ disambiguation flow.  Keyed by query_id (UUID).
+# Entries auto-expire after _CTX_MAX_AGE seconds.
+
+import time as _time
+
+_query_contexts: dict[str, dict] = {}
+_query_ctx_lock = threading.Lock()
+_CTX_MAX_AGE = 600  # 10 minutes
+
+
+def store_query_context(query_id: str, context: dict):
+    """Store a query context dict for later retrieval by /answer-mcq or /english-feedback."""
+    with _query_ctx_lock:
+        _cleanup_stale_contexts()
+        context["_created_at"] = _time.time()
+        _query_contexts[query_id] = context
+
+
+def get_query_context(query_id: str) -> Optional[dict]:
+    """Retrieve a stored query context.  Returns None if expired or missing."""
+    with _query_ctx_lock:
+        _cleanup_stale_contexts()
+        return _query_contexts.get(query_id)
+
+
+def update_query_context(query_id: str, updates: dict):
+    """Merge updates into an existing query context."""
+    with _query_ctx_lock:
+        ctx = _query_contexts.get(query_id)
+        if ctx is not None:
+            ctx.update(updates)
+
+
+def _cleanup_stale_contexts():
+    """Remove contexts older than _CTX_MAX_AGE.  Must be called under lock."""
+    now = _time.time()
+    expired = [qid for qid, ctx in _query_contexts.items()
+               if now - ctx.get("_created_at", 0) > _CTX_MAX_AGE]
+    for qid in expired:
+        del _query_contexts[qid]
+
 
 def _ensure_files():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -76,6 +118,8 @@ def save_feedback(
     execution_time: float = 0.0,
     error_message: str = "",
     chat_id: str = "",
+    mcq_questions: list = None,
+    mcq_answers: list = None,
 ) -> str:
     """Save a query/response pair to unified conversational log."""
     feedback_id = str(uuid.uuid4())
@@ -91,6 +135,25 @@ def save_feedback(
         "execution_time": execution_time,
         "error_message": error_message,
     }
+
+    if mcq_questions and mcq_answers is not None:
+        mcq_log = []
+        for i, q in enumerate(mcq_questions):
+            ans = mcq_answers[i] if i < len(mcq_answers) else None
+            if isinstance(ans, str):
+                selected_text = ans  # free-text "Other" answer
+            elif isinstance(ans, int):
+                opts = q.get("options", [])
+                selected_text = opts[ans].get("text") if 0 <= ans < len(opts) else None
+            else:
+                selected_text = None
+            mcq_log.append({
+                "question_id": q.get("question_id"),
+                "question_text": q.get("question_text"),
+                "selected_answer": ans,
+                "selected_text": selected_text,
+            })
+        log_entry["mcq"] = {"questions": mcq_log}
 
     with _log_lock:
         with open(CONVERSATIONAL_LOG, "a", encoding="utf-8") as f:

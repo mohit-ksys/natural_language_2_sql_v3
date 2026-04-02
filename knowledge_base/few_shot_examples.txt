@@ -255,3 +255,6 @@ GROUP BY uc.degree_name, uc.course_name
 ORDER BY uc.degree_name, interested_students DESC;
 ```
 Key patterns: "student interest" / "students interested in a course" = COUNT(DISTINCT student_id) from course_status_journeys — students who have taken action on this course. NEVER use students.preferred_course for interest metrics (that's only for self-stated preferences). NEVER use latest_course_statuses for general interest counts (it's ONLY for shortlisted and API status). For shortlisted count, use CASE WHEN with is_shortlisted = true from latest_course_statuses. Always join lcs with both course_id AND student_id to avoid duplication. No LIMIT unless asking for "top N".
+
+---
+

@@ -1,3 +1,9 @@
+
+git push -u origin main --force
+git push -u origin feature/mcq-query-refinement
+
+
+
 Great question! Let me explain the Git workflow and how to navigate between your original code and the new MCQ feature branch.
 
 ## Understanding the Git Workflow

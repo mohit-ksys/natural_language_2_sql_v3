@@ -55,3 +55,42 @@ git checkout main  # Back to original clean code
 # Return to MCQ work:
 git checkout feature/mcq-query-refinement
 
+
+
+No, it will **not** commit to main. Here's why:
+
+When you run `git checkout -b feature/mcq-query-refinement`, you've switched to the new branch. Any commits you make after that point go to `feature/mcq-query-refinement` only.
+
+Think of it like this:
+
+```
+main
+  └── Initial commit  ← stays here, untouched
+
+feature/mcq-query-refinement  ← you are HERE
+  └── Initial commit (inherited)
+  └── your new MCQ commits go here
+```
+
+So your workflow is safe:
+
+```bash
+git checkout -b feature/mcq-query-refinement
+
+# make your changes...
+
+git add .
+git commit -m "Add MCQ query refinement"   # ← goes to feature branch ONLY
+
+git checkout main   # main is still clean, no MCQ changes here
+```
+
+Main only gets your MCQ changes if you explicitly merge or rebase, like:
+
+```bash
+git checkout main
+git merge feature/mcq-query-refinement   # only then does main get the changes
+```
+
+Until you do that merge, your branches are completely independent.
+

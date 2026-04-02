@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import AiMessage from './AiMessage';
+import MCQMessage from './MCQMessage';
 
 const SQL_HINTS = [
   'SELECT ...', 'JOIN tables ...', 'GROUP BY ...', 'WHERE ...', 'WITH cte AS (...)', 'ORDER BY ...', 'HAVING COUNT(...)',
 ];
 
-export default function Thread({ messages, addToast, onFix, onRegen, settings }) {
+export default function Thread({ messages, addToast, onFix, onRegen, onSubmitMCQAnswers, onSkipMCQ, settings }) {
   const endRef = useRef(null);
   const convRef = useRef(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -83,6 +84,16 @@ export default function Thread({ messages, addToast, onFix, onRegen, settings })
                   </div>
                 )}
               </div>
+            );
+          }
+          if (m.type === 'mcq') {
+            return (
+              <MCQMessage
+                key={m.id || i}
+                msg={m}
+                onSubmitAnswers={onSubmitMCQAnswers}
+                onSkip={onSkipMCQ}
+              />
             );
           }
           if (m.type === 'ai-error') {

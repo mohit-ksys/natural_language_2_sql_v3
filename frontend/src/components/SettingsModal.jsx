@@ -71,6 +71,15 @@ export default function SettingsModal({ isOpen, onClose, settings, setSettings, 
                 <div className="knob-mod"></div>
               </div>
             </div>
+            <div className="toggle-row" onClick={() => handleToggle('mcqEnabled')}>
+              <div className="toggle-info">
+                <h4>MCQ clarification</h4>
+                <p>Ask clarifying questions before generating SQL</p>
+              </div>
+              <div className={`switch-mod ${settings.mcqEnabled ? 'on' : ''}`}>
+                <div className="knob-mod"></div>
+              </div>
+            </div>
           </div>
 
         </div>
