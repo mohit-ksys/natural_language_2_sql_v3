@@ -300,25 +300,15 @@ course_status_journeys.course_id  → university_courses.course_id
 | "quality call rate", "hot/warm rate" | student_remarks | `COUNT(Connected AND sub_status IN ('Hot','Warm')) / COUNT(all)` |
 | "best/worst time slot", "peak performance hour" | student_remarks | `COUNT(calling_status='Connected') / COUNT(*)` by hour — NOT quality call rate |
 
-**WRONG — what the model defaults to (DO NOT DO THIS):**
+**Example: "What is the success rate of each counsellor?"**
 ```sql
--- Question: "What is the success rate of each counsellor?"
-SELECT c.counsellor_name,
-       COUNT(DISTINCT CASE WHEN s.current_student_status IN ('Admission','Enrolled') THEN s.student_id END)
-       / NULLIF(COUNT(DISTINCT s.student_id),0) * 100 AS success_rate
-FROM counsellors c JOIN students s ON ...   -- ❌ WRONG TABLE
-```
-
-**CORRECT:**
-```sql
--- Question: "What is the success rate of each counsellor?"
 SELECT c.counsellor_name,
        COUNT(sr.remark_id) AS total_calls,
        COUNT(CASE WHEN sr.calling_status = 'Connected' THEN 1 END) AS connected_calls,
        ROUND(COUNT(CASE WHEN sr.calling_status = 'Connected' THEN 1 END) * 100.0
              / NULLIF(COUNT(sr.remark_id), 0), 2) AS success_rate
 FROM counsellors c
-LEFT JOIN student_remarks sr ON c.counsellor_id = sr.counsellor_id  -- ✅ CORRECT TABLE
+LEFT JOIN student_remarks sr ON c.counsellor_id = sr.counsellor_id
 GROUP BY c.counsellor_id, c.counsellor_name
 ORDER BY success_rate DESC;
 ```
@@ -732,24 +722,6 @@ SELECT
     ROUND(COUNT(CASE WHEN sr.calling_status = 'Connected' THEN 1 END) * 100.0
           / NULLIF(COUNT(sr.remark_id), 0), 2) AS success_rate
 FROM counsellors manager
-LEFT JOIN counsellors team_member ON manager.counsellor_id = team_member.assigned_to
-LEFT JOIN student_remarks sr ON team_member.counsellor_id = sr.counsellor_id
-WHERE manager.role = 'to'
-GROUP BY manager.counsellor_id, manager.counsellor_name,
-         team_member.counsellor_id, team_member.counsellor_name
-ORDER BY manager.counsellor_name, connected_calls DESC;
-```
-
-**WRONG patterns — never do these:**
-- Do NOT join `students` for team call performance — use `student_remarks` only.
-- Do NOT omit `WHERE manager.role = 'to'` — this is always required.
-- Do NOT group by manager only when the question asks for distribution or per-member breakdown.
-
----
-
-### PATTERN 5 — TAT (time-to-convert)
-
-
 ---
 
 ### PATTERN 6 — Benchmark / above-average comparison
@@ -971,10 +943,10 @@ ORDER BY success_rate DESC;
 - "Deposit" / "deposit amount" / "amount paid" / "payment collected" / "fees received" → `course_status_journeys.deposit_amount` (actual payment made by student).
 - `university_courses` also has `semester_fees` (per semester) and `annual_fees` (per year) — use these when the user asks specifically for per-semester or per-year fee breakdowns.
 
-**RULE T12.** ALWAYS validate `student_id` against the `students` table when querying any child table (`student_remarks`, `course_status_journeys`, `latest_course_statuses`, `student_lead_activities`). Test leads may have been deleted from `students` but their records persist in child tables as orphaned rows. These orphaned records must NEVER be counted or returned.
+**RULE T12.** **Validation Check.** You **MUST** ensure every query filters for valid students. Test leads may have been deleted from `students` but their records persist in child tables (`student_remarks`, `course_status_journeys`, `latest_course_statuses`, `student_lead_activities`) as orphaned rows. These orphaned records must NEVER be counted or returned.
 - When the child table is already JOINed to `students` (directly or via a chain), no extra filter is needed.
-- When querying a child table standalone (no JOIN to `students`), add: `WHERE student_id IN (SELECT student_id FROM students)`
-- This applies to ALL queries — counts, lists, aggregations, subqueries, and CTEs.
+- If the `students` table is not explicitly JOINed, you **MUST** add: `WHERE student_id IN (SELECT student_id FROM students)`
+- This applies to **every single query** using child tables — counts, lists, aggregations, subqueries, and CTEs. No exceptions.
 
 ---
 
@@ -1002,15 +974,15 @@ WHERE "first_Icc_Date" IS NOT NULL
 ```
 This is the canonical way to count total ICC. Never use `COUNT(DISTINCT student_id)` for this specific query pattern unless joining other tables.
 
-**RULE S16.** Admission count exclusions on `course_status = 'Admission'`:
-- **Always exclude** partial-payment rows from admission counts: `AND fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done')`. These rows represent partial fee events recorded under Admission status, not confirmed admissions.
-- **Exclude `'Registration done'`** ONLY when the user explicitly says "remove registration done", "exclude registration done", or similar. Do NOT exclude it by default.
+**RULE S16.** **The Admission Stage is Dirty Data.** Any time you reference `course_status = 'Admission'` (whether for a **COUNT**, a **SUM**, a **List/Display**, or a **Join**), you **MUST** immediately append: `AND fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done')`. This is a global requirement for the Admission status. These rows represent partial fee events recorded under Admission status, not confirmed admissions.
+- **Do NOT apply this exclusion to any other status.** Specifically, `'Enrolled'` is a clean status and does NOT need the `fee_type` filter.
+- Exclude `'Registration done'` only when the user explicitly says "remove registration done", "exclude registration done", or similar. Do not exclude it by default.
 - Example default admission filter: `WHERE course_status = 'Admission' AND fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done')`
 - Example with registration excluded: `WHERE course_status = 'Admission' AND fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done', 'Registration done')`
 
-**RULE S15.** For ANY date-filtered query on `course_status_journeys` (Application, Admission, Document Pending, Document Submitted, Enrolled, NotInterested after application), ALWAYS use `MIN(created_at)` per student to get their first event date, then apply the date filter on that. NEVER filter directly on raw rows — a student may have multiple rows for the same `course_status` (re-triggers, duplicates), causing overcounting.
-- WRONG: `WHERE course_status = 'Admission' AND created_at >= CURRENT_DATE - interval '7 days' - interval '5 hours 30 minutes'`
-- CORRECT: Use PATTERN 11 — subquery with `MIN(created_at)` grouped by `student_id`, then filter on `first_event_date`.
+**RULE S15.** **TAT / Average Days Calculation.** For any query involving "average days," "how long," "time taken," or "TAT," it is **strictly forbidden** to join the raw `course_status_journeys` table directly. You **MUST** use a subquery or CTE with `MIN(created_at) GROUP BY student_id, course_id` to find the **first** time they reached that status before calculating the date difference. This prevents overcounting from status updates and re-triggers.
+
+For date-filtered queries on `course_status_journeys` (Application, Admission, Document Pending, Document Submitted, Enrolled, NotInterested after application), use `MIN(created_at)` per student to get their first event date, then apply the date filter on that. This ensures accurate counts by avoiding duplicate rows for the same `course_status` (re-triggers, duplicates). Use PATTERN 11 — subquery with `MIN(created_at)` grouped by `student_id`, then filter on `first_event_date`.
 
 **RULE S5.** ALWAYS use `COUNT(DISTINCT student_id)` when counting students — never `COUNT(*)` after a JOIN.
 
@@ -1022,27 +994,33 @@ This is the canonical way to count total ICC. Never use `COUNT(DISTINCT student_
 - Always include `HAVING COUNT(*) > 0`.
 - Add `LIMIT 1` when asking for a single best/worst slot.
 
-**RULE S9.** When a query must return BOTH a total count AND a filtered subset count for the same entity (e.g. total students AND admitted students per counsellor), ALWAYS use CASE WHEN inside COUNT — NEVER use a WHERE filter:
-- WRONG: `WHERE course_status = 'Admission'` — this drops all non-admitted rows, making total_students impossible.
-- CORRECT: `COUNT(DISTINCT csj.student_id) AS total_students, COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' THEN csj.student_id END) AS admissions, COUNT(DISTINCT CASE WHEN csj.course_status = 'Document Pending' THEN csj.student_id END) AS document_pending`
+**RULE S9.** When a query must return BOTH a total count AND a filtered subset count for the same entity (e.g. total students AND admitted students per counsellor), use CASE WHEN inside COUNT. Using WHERE drops all non-matching rows, making the total count impossible.
+
+Example: `COUNT(DISTINCT csj.student_id) AS total_students, COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' THEN csj.student_id END) AS admissions, COUNT(DISTINCT CASE WHEN csj.course_status = 'Document Pending' THEN csj.student_id END) AS document_pending`
 
 **RULE S10.** "Spread across teams" / "distribution across teams" / "per team breakdown" means one row per team member (GROUP BY both manager AND team_member). It does NOT mean one aggregated row per team. If the question asks how something is distributed or spread, always include the member-level detail:
-- WRONG grouping: `GROUP BY manager.counsellor_id, manager.counsellor_name`
-- CORRECT grouping: `GROUP BY manager.counsellor_id, manager.counsellor_name, team_member.counsellor_id, team_member.counsellor_name`
-
+- Group by `manager.counsellor_id, manager.counsellor_name, team_member.counsellor_id, team_member.counsellor_name`
 ---
 
 ### JOIN RULES
 
-**RULE J1.** NEVER use OR across two counsellor FK columns in one JOIN:
-- WRONG: `ON c.counsellor_id = s.assigned_counsellor_id OR c.counsellor_id = s.assigned_counsellor_l3_id`
-- RIGHT: Two separate subqueries, or determine L2 vs L3 from context.
+**RULE J1.** When joining two counsellor FK columns, use two separate subqueries or determine L2 vs L3 from context. Use the following format:
+```sql
+ON c.counsellor_id = s.assigned_counsellor_id
+```
+or
+```sql
+ON c.counsellor_id = s.assigned_counsellor_l3_id
+```
+Do not combine these conditions with OR in a single JOIN.
 
 **RULE J2.** NEVER filter by counsellor name on any base table. Always JOIN counsellors and use `c.counsellor_name ILIKE '%Name%'`.
 
 **RULE J3.** When joining counsellors to student_remarks for call metrics, ALWAYS use LEFT JOIN.
-- WRONG: `FROM counsellors c JOIN student_remarks sr ON ...` — excludes counsellors with zero calls.
-- CORRECT: `FROM counsellors c LEFT JOIN student_remarks sr ON ...`
+```sql
+FROM counsellors c LEFT JOIN student_remarks sr ON ...
+```
+This ensures that counsellors with zero calls are included in the results.
 - Applies to: total calls, connected calls, success rate, efficiency, any call metric per counsellor.
 
 **RULE J4.** For conversion rate queries (e.g. application → admission), use `course_status_journeys` with CASE WHEN for both counts in a single query (see Pattern 9).
@@ -1053,12 +1031,26 @@ This is the canonical way to count total ICC. Never use `COUNT(DISTINCT student_
 
 **RULE J7.** When a query starts from a child table (`course_status_journeys`, `student_remarks`, `latest_course_statuses`, `student_lead_activities`) without JOINing `students`, ALWAYS add `WHERE student_id IN (SELECT student_id FROM students)` to guard against orphaned test-lead records that were deleted from `students` but remain in child tables. Failure to do this will inflate counts with invalid data.
 
+**RULE J8.** **Preserve Outer Joins.** When using a `LEFT JOIN` to show a full roster (e.g., "all universities" or "all counsellors"), never put a filter for a child-table column in the `WHERE` clause. Put those filters inside the `ON` condition or use a `CASE WHEN` in the SELECT. Using `WHERE` on a `LEFT JOINED` table column will accidentally turn it into an `INNER JOIN` and hide entities with zero counts.
+
+Example of correct LEFT JOIN preservation:
+```sql
+-- CORRECT: Filter in ON clause
+FROM counsellors c
+LEFT JOIN students s ON c.counsellor_id = s.assigned_counsellor_id 
+    AND s.current_student_status = 'Pre Application'
+
+-- WRONG: Filter in WHERE clause (turns LEFT JOIN into INNER JOIN)
+FROM counsellors c
+LEFT JOIN students s ON c.counsellor_id = s.assigned_counsellor_id
+WHERE s.current_student_status = 'Pre Application'  -- This hides counsellors with no Pre Application students
+```
+
 ---
 
 ### TIMEZONE RULES
 
 All `created_at` columns store UTC. User expects IST (UTC+5:30). `CURRENT_DATE` is in IST.
-
 **Case 1 — Explicit day boundary (today / yesterday / specific date):**
 ```sql
 WHERE created_at >= (CURRENT_DATE - interval '5 hours 30 minutes')
