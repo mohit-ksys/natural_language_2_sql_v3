@@ -1,16 +1,33 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import PropTypes from 'prop-types';
+import { checkHealth } from '../services/api';
 
 export default function SettingsModal({ isOpen, onClose, settings, setSettings, backendStatus = 'disconnected' }) {
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+
+  // Close on Escape key
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
-  const [testing, setTesting] = useState(false);
-
-  const handleTestConnection = () => {
+  const handleTestConnection = async () => {
     setTesting(true);
-    setTimeout(() => {
+    setTestResult(null);
+    try {
+      const res = await checkHealth();
+      setTestResult(res.ok ? 'connected' : 'failed');
+      setSettings(prev => ({ ...prev, datahubConnected: res.ok }));
+    } catch {
+      setTestResult('failed');
+    } finally {
       setTesting(false);
-      setSettings(prev => ({ ...prev, datahubConnected: true }));
-    }, 1500);
+    }
   };
 
   const handleToggle = (key) => {
@@ -19,12 +36,12 @@ export default function SettingsModal({ isOpen, onClose, settings, setSettings, 
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" onClick={e => e.stopPropagation()}>
+      <div className="modal-content" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="ChatWithDB Settings">
         <div className="modal-header">
-          <h2>DataWhisper Settings</h2>
-          <button className="modal-close-btn" onClick={onClose}>✕</button>
+          <h2>ChatWithDB Settings</h2>
+          <button className="modal-close-btn" onClick={onClose} aria-label="Close settings">✕</button>
         </div>
-        
+
         <div className="modal-body">
           <div className="settings-section">
             <h3>System Status</h3>
@@ -33,6 +50,13 @@ export default function SettingsModal({ isOpen, onClose, settings, setSettings, 
                 <div className={`status-dot ${backendStatus === 'connected' ? 'connected' : ''}`}></div>
                 <span>{backendStatus === 'connected' ? '✅ Backend Connected' : '❌ Backend Offline'}</span>
               </div>
+              <button
+                className={`test-btn ${testing ? 'testing' : ''} ${testResult === 'connected' ? 'connected' : testResult === 'failed' ? 'failed' : ''}`}
+                onClick={handleTestConnection}
+                disabled={testing}
+              >
+                {testing ? '⟳ Testing...' : testResult === 'connected' ? '✓ Connected' : testResult === 'failed' ? '✕ Failed' : 'Test Connection'}
+              </button>
             </div>
           </div>
 
@@ -54,7 +78,7 @@ export default function SettingsModal({ isOpen, onClose, settings, setSettings, 
                 <h4>Auto-run generated queries</h4>
                 <p>Execute SQL immediately after AI generates it</p>
               </div>
-              <div className={`switch-mod ${settings.autoRunQuery ? 'on' : ''}`}>
+              <div className={`switch-mod ${settings.autoRunQuery ? 'on' : ''}`} role="switch" aria-checked={settings.autoRunQuery}>
                 <div className="knob-mod"></div>
               </div>
             </div>
@@ -67,7 +91,7 @@ export default function SettingsModal({ isOpen, onClose, settings, setSettings, 
                 <h4>Hide raw SQL query</h4>
                 <p>Only show the English explanation & results</p>
               </div>
-              <div className={`switch-mod ${settings.hideQuery ? 'on' : ''}`}>
+              <div className={`switch-mod ${settings.hideQuery ? 'on' : ''}`} role="switch" aria-checked={settings.hideQuery}>
                 <div className="knob-mod"></div>
               </div>
             </div>
@@ -76,7 +100,7 @@ export default function SettingsModal({ isOpen, onClose, settings, setSettings, 
                 <h4>MCQ clarification</h4>
                 <p>Ask clarifying questions before generating SQL</p>
               </div>
-              <div className={`switch-mod ${settings.mcqEnabled ? 'on' : ''}`}>
+              <div className={`switch-mod ${settings.mcqEnabled ? 'on' : ''}`} role="switch" aria-checked={settings.mcqEnabled}>
                 <div className="knob-mod"></div>
               </div>
             </div>
@@ -87,3 +111,11 @@ export default function SettingsModal({ isOpen, onClose, settings, setSettings, 
     </div>
   );
 }
+
+SettingsModal.propTypes = {
+  isOpen: PropTypes.bool.isRequired,
+  onClose: PropTypes.func.isRequired,
+  settings: PropTypes.object.isRequired,
+  setSettings: PropTypes.func.isRequired,
+  backendStatus: PropTypes.string,
+};

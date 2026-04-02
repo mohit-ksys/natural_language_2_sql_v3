@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import PropTypes from 'prop-types';
 
 export default function InputDock({ onSendMessage, model, setModel, thinkOn, setThinkOn, chatStarted }) {
   const [inputVal, setInputVal] = useState('');
@@ -121,3 +122,12 @@ export default function InputDock({ onSendMessage, model, setModel, thinkOn, set
     </div>
   );
 }
+
+InputDock.propTypes = {
+  onSendMessage: PropTypes.func.isRequired,
+  model: PropTypes.string.isRequired,
+  setModel: PropTypes.func.isRequired,
+  thinkOn: PropTypes.bool.isRequired,
+  setThinkOn: PropTypes.func.isRequired,
+  chatStarted: PropTypes.bool,
+};

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import Hero from './components/Hero';
 import Thread from './components/Thread';
@@ -14,11 +14,14 @@ export default function App() {
   const [msgCounter, setMsgCounter] = useState(0);
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [settings, setSettings] = useState({
-    datahubConnected: false,
-    autoRunQuery: false,
-    hideQuery: false,
-    mcqEnabled: false,
+
+  const DEFAULT_SETTINGS = { datahubConnected: false, autoRunQuery: false, hideQuery: false, mcqEnabled: false };
+  const [settings, setSettings] = useState(() => {
+    try {
+      const saved = localStorage.getItem('dw-settings');
+      if (saved) return { ...DEFAULT_SETTINGS, ...JSON.parse(saved), datahubConnected: false };
+    } catch {}
+    return DEFAULT_SETTINGS;
   });
 
   const [model, setModel] = useState('gemini-3.1-flash-lite-preview');
@@ -26,6 +29,11 @@ export default function App() {
 
   const [toastMsg, setToastMsg] = useState('');
   const [showToast, setShowToast] = useState(false);
+
+  // Toast queue so rapid toasts don't overwrite each other
+  const toastQueue = useRef([]);
+  const toastBusy = useRef(false);
+  const processToastFn = useRef(null);
 
   const [isLoading, setIsLoading] = useState(true);
   const [backendStatus, setBackendStatus] = useState(null);
@@ -97,13 +105,6 @@ export default function App() {
     }
   }, [messages, currentChatId]);
 
-  // Save whenever chats change
-  useEffect(() => {
-    if (chats && chats.length > 0) {
-      saveChatsToBackendAsync(chats, currentChatId);
-    }
-  }, [chats]);
-
   // Save data before page unloads
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -139,11 +140,31 @@ export default function App() {
     initApp();
   }, []);
 
-  const addToast = (msg, ms = 2400) => {
+  // Persist settings to localStorage (exclude runtime-only keys)
+  useEffect(() => {
+    try {
+      const { datahubConnected, ...persistable } = settings;
+      localStorage.setItem('dw-settings', JSON.stringify(persistable));
+    } catch {}
+  }, [settings]);
+
+  // Toast queue processing
+  processToastFn.current = () => {
+    if (toastQueue.current.length === 0) { toastBusy.current = false; return; }
+    toastBusy.current = true;
+    const { msg, ms } = toastQueue.current.shift();
     setToastMsg(msg);
     setShowToast(true);
-    setTimeout(() => setShowToast(false), ms);
+    setTimeout(() => {
+      setShowToast(false);
+      setTimeout(() => processToastFn.current?.(), 350);
+    }, ms);
   };
+
+  const addToast = useCallback((msg, ms = 2400) => {
+    toastQueue.current.push({ msg, ms });
+    if (!toastBusy.current) processToastFn.current?.();
+  }, []);
 
   // Use the actual query as title, truncated neatly at a word boundary
   const generateChatTitle = (query) => {
@@ -560,7 +581,7 @@ export default function App() {
       <div className="app loading">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
           <div style={{ textAlign: 'center', color: '#999' }}>
-            <div style={{ fontSize: '24px', marginBottom: '10px' }}>⟳ Initializing DataWhisper...</div>
+            <div style={{ fontSize: '24px', marginBottom: '10px' }}>⟳ Initializing ChatWithDB...</div>
             <div style={{ fontSize: '12px' }}>Connecting to backend...</div>
           </div>
         </div>

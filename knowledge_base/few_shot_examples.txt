@@ -13,7 +13,7 @@ SELECT
     COUNT(DISTINCT CASE WHEN s.current_student_status = 'Pre Application' THEN s.student_id END) AS pre_application,
     COUNT(DISTINCT CASE WHEN s.current_student_status = 'Initial Counselling Completed' THEN s.student_id END) AS counselling_completed,
     COUNT(DISTINCT CASE WHEN csj.course_status = 'Application' THEN csj.student_id END) AS applications,
-    COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' THEN csj.student_id END) AS admissions,
+    COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done') THEN csj.student_id END) AS admissions,
     COUNT(DISTINCT CASE WHEN csj.course_status = 'Enrolled' THEN csj.student_id END) AS enrolled
 FROM counsellors c
 JOIN students s ON c.counsellor_id = s.assigned_counsellor_id
@@ -33,12 +33,12 @@ Question: For each counsellor, show me how many students reached admission or en
 SELECT
     c.counsellor_name,
     COUNT(DISTINCT s.student_id) AS total_students,
-    COUNT(DISTINCT CASE WHEN csj.course_status IN ('Admission', 'Enrolled') THEN csj.student_id END) AS converted_students,
+    COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done') THEN csj.student_id END + CASE WHEN csj.course_status = 'Enrolled' THEN csj.student_id END) AS converted_students,
     COUNT(DISTINCT sr.remark_id) AS total_remarks,
     COUNT(DISTINCT CASE WHEN sr.callback_date >= CURRENT_DATE THEN sr.remark_id END) AS upcoming_callbacks,
     COUNT(DISTINCT CASE WHEN sr.callback_date < CURRENT_DATE THEN sr.remark_id END) AS overdue_callbacks,
     ROUND(
-        COUNT(DISTINCT CASE WHEN csj.course_status IN ('Admission', 'Enrolled') THEN csj.student_id END)::numeric
+        (COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done') THEN csj.student_id END) + COUNT(DISTINCT CASE WHEN csj.course_status = 'Enrolled' THEN csj.student_id END))::numeric
         / NULLIF(COUNT(DISTINCT s.student_id), 0) * 100, 2
     ) AS conversion_rate_pct
 FROM counsellors c
@@ -60,7 +60,8 @@ SELECT COUNT(DISTINCT csj.student_id) AS applications
 FROM course_status_journeys csj
 JOIN university_courses uc ON csj.course_id = uc.course_id
 WHERE uc.university_name ILIKE '%amity%'
-  AND csj.course_status = 'Application';
+  AND csj.course_status = 'Application'
+  AND csj.student_id IN (SELECT student_id FROM students);
 ```
 Key patterns: "application stage", "paperwork stage", "document submission stage", "being formally processed", "form filled", "form fills" ALL mean `course_status_journeys.course_status = 'Application'`. NEVER use `students.current_student_status` for Application/Admission/Enrolled stages. NEVER filter `latest_course_statuses.latest_course_status ILIKE '%Form%'`. For Application/Admission/Enrolled → always use course_status_journeys.
 
@@ -76,7 +77,7 @@ WITH stage_priority AS (
         MAX(
             CASE
                 WHEN csj.course_status = 'Enrolled'        THEN 4
-                WHEN csj.course_status = 'Admission'       THEN 3
+                WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done') THEN 3
                 WHEN csj.course_status = 'Application'     THEN 2
                 WHEN s.current_student_status = 'Pre Application' THEN 1
                 ELSE 0
@@ -104,12 +105,20 @@ Question: On average, how many days from when a student first enters the system 
 
 ```sql
 SELECT
-    AVG(EXTRACT(EPOCH FROM (csj.created_at - s.created_at)) / 86400) AS avg_tat_days
+    AVG(EXTRACT(EPOCH FROM (sub.first_milestone_date - s.created_at)) / 86400) AS avg_tat_days
 FROM students s
-JOIN course_status_journeys csj ON s.student_id = csj.student_id
-WHERE csj.course_status IN ('Admission', 'Enrolled')
-  AND s.created_at IS NOT NULL
-  AND csj.created_at IS NOT NULL;
+JOIN (
+    SELECT 
+        student_id,
+        course_id,
+        MIN(created_at) AS first_milestone_date
+    FROM course_status_journeys
+    WHERE (course_status = 'Admission' AND fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done'))
+       OR course_status = 'Enrolled'
+    GROUP BY student_id, course_id
+) sub ON s.student_id = sub.student_id
+WHERE s.created_at IS NOT NULL
+  AND sub.first_milestone_date IS NOT NULL;
 ```
 
 For university-level TAT (breakdown per university):
@@ -117,15 +126,23 @@ For university-level TAT (breakdown per university):
 SELECT
     uc.university_name,
     COUNT(DISTINCT s.student_id) AS converted_students,
-    ROUND(AVG(EXTRACT(EPOCH FROM (csj.created_at - s.created_at)) / 86400)::numeric, 1) AS avg_tat_days,
-    ROUND(MIN(EXTRACT(EPOCH FROM (csj.created_at - s.created_at)) / 86400)::numeric, 1) AS min_tat_days,
-    ROUND(MAX(EXTRACT(EPOCH FROM (csj.created_at - s.created_at)) / 86400)::numeric, 1) AS max_tat_days
+    ROUND(AVG(EXTRACT(EPOCH FROM (sub.first_milestone_date - s.created_at)) / 86400)::numeric, 1) AS avg_tat_days,
+    ROUND(MIN(EXTRACT(EPOCH FROM (sub.first_milestone_date - s.created_at)) / 86400)::numeric, 1) AS min_tat_days,
+    ROUND(MAX(EXTRACT(EPOCH FROM (sub.first_milestone_date - s.created_at)) / 86400)::numeric, 1) AS max_tat_days
 FROM students s
-JOIN course_status_journeys csj ON s.student_id = csj.student_id
-JOIN university_courses uc ON csj.course_id = uc.course_id
-WHERE csj.course_status IN ('Admission', 'Enrolled')
-  AND s.created_at IS NOT NULL
-  AND csj.created_at IS NOT NULL
+JOIN (
+    SELECT 
+        student_id,
+        course_id,
+        MIN(created_at) AS first_milestone_date
+    FROM course_status_journeys
+    WHERE (course_status = 'Admission' AND fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done'))
+       OR course_status = 'Enrolled'
+    GROUP BY student_id, course_id
+) sub ON s.student_id = sub.student_id
+JOIN university_courses uc ON sub.course_id = uc.course_id
+WHERE s.created_at IS NOT NULL
+  AND sub.first_milestone_date IS NOT NULL
 GROUP BY uc.university_name
 ORDER BY converted_students DESC;
 ```
@@ -147,6 +164,7 @@ SELECT
     ) AS quality_rate_pct
 FROM counsellors c
 JOIN student_remarks sr ON c.counsellor_id = sr.counsellor_id
+WHERE sr.student_id IN (SELECT student_id FROM students)
 GROUP BY c.counsellor_id, c.counsellor_name
 HAVING COUNT(sr.remark_id) > 0
 ORDER BY quality_rate_pct DESC;
@@ -185,7 +203,9 @@ FROM students s
 JOIN course_status_journeys csj ON s.student_id = csj.student_id
 JOIN counsellors c ON s.assigned_counsellor_id = c.counsellor_id
 LEFT JOIN student_remarks sr ON s.student_id = sr.student_id
-WHERE csj.course_status IN ('Application', 'Admission', 'Enrolled')
+WHERE (csj.course_status = 'Application' 
+    OR (csj.course_status = 'Admission' AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done'))
+    OR csj.course_status = 'Enrolled')
 GROUP BY s.student_id, s.student_name, s.student_email, s.student_phone, c.counsellor_name, csj.course_status
 HAVING MAX(sr.created_at) < CURRENT_DATE - INTERVAL '7 days' OR MAX(sr.created_at) IS NULL
 ORDER BY last_remark_date ASC NULLS FIRST;
@@ -202,9 +222,9 @@ WITH counsellor_metrics AS (
         c.counsellor_id,
         c.counsellor_name,
         COUNT(DISTINCT s.student_id) AS total_students,
-        COUNT(DISTINCT CASE WHEN csj.course_status IN ('Admission','Enrolled') THEN csj.student_id END) AS conversions,
+        (COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done') THEN csj.student_id END) + COUNT(DISTINCT CASE WHEN csj.course_status = 'Enrolled' THEN csj.student_id END)) AS conversions,
         ROUND(
-            COUNT(DISTINCT CASE WHEN csj.course_status IN ('Admission','Enrolled') THEN csj.student_id END)::numeric
+            (COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done') THEN csj.student_id END) + COUNT(DISTINCT CASE WHEN csj.course_status = 'Enrolled' THEN csj.student_id END))::numeric
             / NULLIF(COUNT(DISTINCT s.student_id), 0) * 100, 2
         ) AS conversion_rate_pct
     FROM counsellors c
@@ -249,12 +269,77 @@ SELECT
     COUNT(DISTINCT CASE WHEN lcs.is_shortlisted = true THEN lcs.student_id END) AS shortlisted_students,
     ROUND(COUNT(DISTINCT CASE WHEN lcs.is_shortlisted = true THEN lcs.student_id END)::numeric * 100.0 / NULLIF(COUNT(DISTINCT csj.student_id), 0), 2) AS shortlist_rate_pct
 FROM university_courses uc
-LEFT JOIN course_status_journeys csj ON uc.course_id = csj.course_id
+LEFT JOIN course_status_journeys csj ON uc.course_id = csj.course_id AND csj.student_id IN (SELECT student_id FROM students)
 LEFT JOIN latest_course_statuses lcs ON uc.course_id = lcs.course_id AND lcs.student_id = csj.student_id
 GROUP BY uc.degree_name, uc.course_name
 ORDER BY uc.degree_name, interested_students DESC;
 ```
 Key patterns: "student interest" / "students interested in a course" = COUNT(DISTINCT student_id) from course_status_journeys — students who have taken action on this course. NEVER use students.preferred_course for interest metrics (that's only for self-stated preferences). NEVER use latest_course_statuses for general interest counts (it's ONLY for shortlisted and API status). For shortlisted count, use CASE WHEN with is_shortlisted = true from latest_course_statuses. Always join lcs with both course_id AND student_id to avoid duplication. No LIMIT unless asking for "top N".
+
+---
+
+Question: For each university, show total admitted students, total course worth, total deposit collected, fee remaining, and breakdown of students by payment type (semester paid, full fee paid, annual paid, partially paid, registration done, etc.)?
+
+```sql
+WITH admitted_students AS (
+    SELECT
+        student_id,
+        course_id,
+        MIN(created_at) AS first_admission_date
+    FROM course_status_journeys
+    WHERE course_status = 'Admission'
+      AND fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done')
+      AND student_id IN (SELECT student_id FROM students)
+    GROUP BY student_id, course_id
+),
+deduped_payments AS (
+    SELECT DISTINCT ON (student_id, course_id, deposit_amount, fee_type, created_at::DATE)
+        student_id,
+        course_id,
+        deposit_amount,
+        INITCAP(TRIM(fee_type)) AS fee_type_clean
+    FROM course_status_journeys
+    WHERE deposit_amount > 0
+      AND student_id IN (SELECT student_id FROM students)
+    ORDER BY student_id, course_id, deposit_amount, fee_type, created_at::DATE, created_at
+),
+payments AS (
+    SELECT
+        student_id,
+        course_id,
+        SUM(deposit_amount) AS total_deposit_collected
+    FROM deduped_payments
+    GROUP BY student_id, course_id
+)
+SELECT
+    uc.university_name,
+    COUNT(DISTINCT adm.student_id)                                        AS total_admitted_students,
+    SUM(uc.total_fees)                                                    AS total_course_worth,
+    COALESCE(SUM(p.total_deposit_collected), 0)                           AS total_deposit_collected,
+    SUM(uc.total_fees) - COALESCE(SUM(p.total_deposit_collected), 0)      AS total_fee_remaining,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = 'Semester Paid'      THEN dp.student_id END) AS semester_paid,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = 'Full Fee Paid'      THEN dp.student_id END) AS full_fee_paid,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = 'Annual Paid'        THEN dp.student_id END) AS annual_paid,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = 'Semester Fee Paid'  THEN dp.student_id END) AS semester_fee_paid,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = 'Registration Done'  THEN dp.student_id END) AS registration_done,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean IN ('Partially Paid', 'Partial Done', 'Partial Paid') THEN dp.student_id END) AS partially_paid,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = 'One Year Fee Paid'  THEN dp.student_id END) AS one_year_fee_paid,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = '1St Year Fee Paid'  THEN dp.student_id END) AS first_year_fee_paid
+FROM admitted_students adm
+JOIN university_courses uc
+    ON adm.course_id = uc.course_id
+LEFT JOIN payments p
+    ON adm.student_id = p.student_id
+   AND adm.course_id  = p.course_id
+LEFT JOIN deduped_payments dp
+    ON adm.student_id = dp.student_id
+   AND adm.course_id  = dp.course_id
+GROUP BY
+    uc.university_name
+ORDER BY
+    total_deposit_collected DESC;
+```
+Key patterns: Use MIN(created_at) per (student_id, course_id) in admitted_students CTE to get first admission event — never filter raw rows directly. Use DISTINCT ON in deduped_payments to remove duplicate payment rows (same student, course, amount, fee_type, date). Apply INITCAP(TRIM(fee_type)) to normalize inconsistent casing before CASE WHEN comparisons. Payments CTE aggregates deposit per student-course after deduplication. Final SELECT joins admitted_students → university_courses (for total_fees and university_name), LEFT JOINs payments (for deposit sum), LEFT JOINs deduped_payments again (for per-fee-type breakdown). COALESCE(SUM(...), 0) handles students with no payment rows. Always guard child table queries with student_id IN (SELECT student_id FROM students) to exclude orphaned records.
 
 ---
 
