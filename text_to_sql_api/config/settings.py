@@ -15,7 +15,7 @@ class Settings(BaseSettings):
 
     GEMINI_API_KEY: str
     SUPABASE_URL: str = ""
-    DATABASE_URL: str = "postgresql+psycopg2://analyst_user:analyst_user123@storage.bhugoal.cloud:54321/degreefyd_online_lms"
+    DATABASE_URL: str
     GEMINI_MODEL: str = "gemini-3.1-flash-lite-preview"
 
     KNOWLEDGE_BASE_DIR: str = str(ROOT_DIR / "knowledge_base")
