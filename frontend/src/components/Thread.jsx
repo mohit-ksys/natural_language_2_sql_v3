@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import PropTypes from 'prop-types';
 import AiMessage from './AiMessage';
 import MCQMessage from './MCQMessage';
 
@@ -57,14 +58,6 @@ export default function Thread({ messages, addToast, onFix, onRegen, onSubmitMCQ
   return (
     <div className="conversation" id="conversation" ref={convRef} onScroll={handleScroll}>
       <div className="thread" id="thread">
-        {/* EMPTY STATE */}
-        {messages.length === 0 && (
-          <div className="thread-empty">
-            <span className="thread-empty-icon">◈</span>
-            <span className="thread-empty-title">Ask your database anything</span>
-            <span className="thread-empty-sub">Try one of the suggestions above ↑</span>
-          </div>
-        )}
 
         {messages.map((m, i) => {
           if (m.type === 'user') {
@@ -101,7 +94,7 @@ export default function Thread({ messages, addToast, onFix, onRegen, onSubmitMCQ
               <div key={m.id || i} className="message msg-ai">
                 <div className="msg-ai-header">
                   <div className="ai-avatar">⚠</div>
-                  <span className="ai-name">DataWhisper</span>
+                  <span className="ai-name">ChatWithDB</span>
                   <span style={{ color: '#ff6b6b' }}>Error</span>
                 </div>
                 <div style={{ padding: '16px', color: '#ff6b6b', fontSize: '13px', lineHeight: '1.5' }}>
@@ -130,7 +123,7 @@ export default function Thread({ messages, addToast, onFix, onRegen, onSubmitMCQ
           <div className="message msg-ai">
             <div className="msg-ai-header">
               <div className="ai-avatar loading-avatar">◈</div>
-              <span className="ai-name">DataWhisper</span>
+              <span className="ai-name">ChatWithDB</span>
               <div className="think-pulse" style={{ marginLeft: '6px' }}>
                 <span></span><span></span><span></span>
               </div>
@@ -157,3 +150,13 @@ export default function Thread({ messages, addToast, onFix, onRegen, onSubmitMCQ
     </div>
   );
 }
+
+Thread.propTypes = {
+  messages: PropTypes.array.isRequired,
+  addToast: PropTypes.func.isRequired,
+  onFix: PropTypes.func.isRequired,
+  onRegen: PropTypes.func.isRequired,
+  onSubmitMCQAnswers: PropTypes.func.isRequired,
+  onSkipMCQ: PropTypes.func.isRequired,
+  settings: PropTypes.object,
+};

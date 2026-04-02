@@ -72,7 +72,7 @@ export default function MCQMessage({ msg, onSubmitAnswers, onSkip }) {
     <div className="message msg-ai mcq-message" data-id={id}>
       <div className="msg-ai-header">
         <div className="ai-avatar">◈</div>
-        <span className="ai-name">DataWhisper</span>
+        <span className="ai-name">ChatWithDB</span>
         {model && <span className="ai-model-tag">{model}</span>}
         <span className="mcq-badge">MCQ</span>
         {timestamp && <span className="msg-timestamp">{shortTime(timestamp)}</span>}

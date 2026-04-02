@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import PropTypes from 'prop-types';
 import { executeSql } from '../services/api';
 import { calcCost, formatCost, formatTokens } from '../services/tokenCost';
 
@@ -22,7 +23,9 @@ function renderAnswer(text) {
   if (!text) return [];
 
   function inlineHtml(str) {
-    return str
+    // Escape raw HTML first to prevent XSS, then apply markdown
+    const escaped = str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return escaped
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.*?)\*/g, '<em>$1</em>')
       .replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -194,6 +197,14 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
     if (fixPanelOpen && fixInputRef.current) fixInputRef.current.focus();
   }, [fixPanelOpen]);
 
+  // Close fix panel on Escape
+  useEffect(() => {
+    if (!fixPanelOpen) return;
+    const handler = (e) => { if (e.key === 'Escape') setFixPanelOpen(false); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [fixPanelOpen]);
+
   useEffect(() => {
     if (isEditing && editAreaRef.current) {
       editAreaRef.current.focus();
@@ -201,11 +212,18 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
     }
   }, [isEditing]);
 
+  // Auto-run on mount if setting enabled — intentional empty dep array (run once)
+  const autoRunOnMount = useRef({ settings, sql, sessionId, isEdited });
   useEffect(() => {
-    if (settings?.autoRunQuery && !isEdited && sql && sessionId) {
-      handleRun();
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    const { settings: s, sql: q, sessionId: sid, isEdited: edited } = autoRunOnMount.current;
+    if (s?.autoRunQuery && !edited && q && sid) handleRun();
+  }, []); // intentional: captures initial values via ref
+
+  // Reset table sort when viewing a different message
+  useEffect(() => {
+    setSortCol(null);
+    setSortDir('asc');
+  }, [id]);
 
   // SQL undo/redo helpers
   const handleSaveEdit = () => {
@@ -300,7 +318,7 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
     <div className="message msg-ai" data-id={id}>
       <div className="msg-ai-header">
         <div className="ai-avatar">◈</div>
-        <span className="ai-name">DataWhisper</span>
+        <span className="ai-name">ChatWithDB</span>
         <span className="ai-model-tag">{model}</span>
         {isRegen && <span className="regen-badge">✦ Regenerated</span>}
         {token_usage && (
@@ -330,14 +348,14 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
                 disabled={historyIdx === 0}
                 title="Undo edit"
                 style={historyIdx === 0 ? {opacity: 0.3, pointerEvents: 'none'} : {}}
-              >← Undo</button>
+              >↩ Undo</button>
               <button
                 className="query-btn"
                 onClick={handleRedo}
                 disabled={historyIdx === sqlHistory.length - 1}
                 title="Redo edit"
                 style={historyIdx === sqlHistory.length - 1 ? {opacity: 0.3, pointerEvents: 'none'} : {}}
-              >→ Redo</button>
+              >↪ Redo</button>
               {!isEditing ? (
                 <button className="query-btn" onClick={() => { setEditText(sql); setIsEditing(true); }}>✎ Edit</button>
               ) : (
@@ -568,3 +586,24 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
     </div>
   );
 }
+
+AiMessage.propTypes = {
+  msg: PropTypes.shape({
+    id: PropTypes.string,
+    model: PropTypes.string,
+    isRegen: PropTypes.bool,
+    sql: PropTypes.string,
+    answer: PropTypes.string,
+    data: PropTypes.array,
+    execution_time: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    sessionId: PropTypes.string,
+    userQuery: PropTypes.string,
+    token_usage: PropTypes.object,
+    timestamp: PropTypes.string,
+    query_id: PropTypes.string,
+  }).isRequired,
+  addToast: PropTypes.func.isRequired,
+  onFix: PropTypes.func.isRequired,
+  onRegen: PropTypes.func.isRequired,
+  settings: PropTypes.object,
+};

@@ -258,3 +258,67 @@ Key patterns: "student interest" / "students interested in a course" = COUNT(DIS
 
 ---
 
+Question: For each university, show total admitted students, total course worth, total deposit collected, fee remaining, and breakdown of students by payment type (semester paid, full fee paid, annual paid, partially paid, registration done, etc.)?
+
+```sql
+WITH admitted_students AS (
+    SELECT
+        student_id,
+        course_id,
+        MIN(created_at) AS first_admission_date
+    FROM course_status_journeys
+    WHERE course_status = 'Admission'
+      AND student_id IN (SELECT student_id FROM students)
+    GROUP BY student_id, course_id
+),
+deduped_payments AS (
+    SELECT DISTINCT ON (student_id, course_id, deposit_amount, fee_type, created_at::DATE)
+        student_id,
+        course_id,
+        deposit_amount,
+        INITCAP(TRIM(fee_type)) AS fee_type_clean
+    FROM course_status_journeys
+    WHERE deposit_amount > 0
+      AND student_id IN (SELECT student_id FROM students)
+    ORDER BY student_id, course_id, deposit_amount, fee_type, created_at::DATE, created_at
+),
+payments AS (
+    SELECT
+        student_id,
+        course_id,
+        SUM(deposit_amount) AS total_deposit_collected
+    FROM deduped_payments
+    GROUP BY student_id, course_id
+)
+SELECT
+    uc.university_name,
+    COUNT(DISTINCT adm.student_id)                                        AS total_admitted_students,
+    SUM(uc.total_fees)                                                    AS total_course_worth,
+    COALESCE(SUM(p.total_deposit_collected), 0)                           AS total_deposit_collected,
+    SUM(uc.total_fees) - COALESCE(SUM(p.total_deposit_collected), 0)      AS total_fee_remaining,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = 'Semester Paid'      THEN dp.student_id END) AS semester_paid,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = 'Full Fee Paid'      THEN dp.student_id END) AS full_fee_paid,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = 'Annual Paid'        THEN dp.student_id END) AS annual_paid,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = 'Semester Fee Paid'  THEN dp.student_id END) AS semester_fee_paid,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = 'Registration Done'  THEN dp.student_id END) AS registration_done,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean IN ('Partially Paid', 'Partial Done', 'Partial Paid') THEN dp.student_id END) AS partially_paid,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = 'One Year Fee Paid'  THEN dp.student_id END) AS one_year_fee_paid,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = '1St Year Fee Paid'  THEN dp.student_id END) AS first_year_fee_paid
+FROM admitted_students adm
+JOIN university_courses uc
+    ON adm.course_id = uc.course_id
+LEFT JOIN payments p
+    ON adm.student_id = p.student_id
+   AND adm.course_id  = p.course_id
+LEFT JOIN deduped_payments dp
+    ON adm.student_id = dp.student_id
+   AND adm.course_id  = dp.course_id
+GROUP BY
+    uc.university_name
+ORDER BY
+    total_deposit_collected DESC;
+```
+Key patterns: Use MIN(created_at) per (student_id, course_id) in admitted_students CTE to get first admission event — never filter raw rows directly. Use DISTINCT ON in deduped_payments to remove duplicate payment rows (same student, course, amount, fee_type, date). Apply INITCAP(TRIM(fee_type)) to normalize inconsistent casing before CASE WHEN comparisons. Payments CTE aggregates deposit per student-course after deduplication. Final SELECT joins admitted_students → university_courses (for total_fees and university_name), LEFT JOINs payments (for deposit sum), LEFT JOINs deduped_payments again (for per-fee-type breakdown). COALESCE(SUM(...), 0) handles students with no payment rows. Always guard child table queries with student_id IN (SELECT student_id FROM students) to exclude orphaned records.
+
+---
+

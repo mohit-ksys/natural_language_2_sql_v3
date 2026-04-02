@@ -480,6 +480,106 @@ AND student_id IN (
 - NEVER use `deposit_amount` to answer questions about course pricing — it is actual money paid, not the listed course fee.
 - NEVER use `total_fees` to answer questions about payments collected — it is the catalog price, not actual collected amount.
 
+## DISTINCTION 11 - DEPOSIT AMOUNT — CRITICAL RULES
+
+---
+
+### RULE D1 — Never SUM deposit_amount without dedup CTE
+
+`course_status_journeys` is append-only. Same payment gets logged multiple times via re-triggers. Always use this CTE before any `SUM(deposit_amount)`:
+
+```sql
+deduped_payments AS (
+    SELECT DISTINCT ON (student_id, course_id, fee_type, created_at::DATE)
+        student_id, course_id, deposit_amount,
+        INITCAP(TRIM(fee_type)) AS fee_type_clean
+    FROM course_status_journeys
+    WHERE deposit_amount > 0
+      AND student_id IN (SELECT student_id FROM students)
+    ORDER BY student_id, course_id, fee_type, created_at::DATE, created_at DESC
+)
+```
+
+`created_at DESC` ensures if the same fee_type is corrected on the same day, the latest (corrected) amount wins. Do NOT include `deposit_amount` in the `DISTINCT ON` key — that breaks correction handling.
+
+---
+
+### RULE D2 — Two separate de-dups in one query
+
+Admission de-dup and payment de-dup are independent problems:
+
+- **Admission** → `MIN(created_at)` per `(student_id, course_id)`
+- **Payment** → `DISTINCT ON (student_id, course_id, fee_type, created_at::DATE) ORDER BY ... created_at DESC`
+
+Never use one strategy for both.
+
+---
+
+### RULE D3 — Always normalize fee_type
+
+Always apply `INITCAP(TRIM(fee_type))` when reading from `course_status_journeys`. Never aggregate or filter raw `fee_type`.
+
+Known normalized values: `Semester Paid`, `Full Fee Paid`, `Annual Paid`, `Semester Fee Paid`, `Registration Done`, `Partially Paid`, `Partial Done`, `One Year Fee Paid`, `1St Year Fee Paid`.
+
+---
+
+### RULE D4 — fee_type breakdown always in pivot format
+
+Never use `STRING_AGG` for fee type breakdown. Always use `COUNT(DISTINCT CASE WHEN ...)` per fee type as separate columns — same pattern as stage breakdown (RULE O2).
+
+---
+
+### PATTERN — Fee summary (canonical base template)
+
+```sql
+WITH admitted_students AS (
+    SELECT student_id, course_id, MIN(created_at) AS first_admission_date
+    FROM course_status_journeys
+    WHERE course_status = 'Admission'
+      AND student_id IN (SELECT student_id FROM students)
+    GROUP BY student_id, course_id
+),
+deduped_payments AS (
+    SELECT DISTINCT ON (student_id, course_id, fee_type, created_at::DATE)
+        student_id, course_id, deposit_amount,
+        INITCAP(TRIM(fee_type)) AS fee_type_clean
+    FROM course_status_journeys
+    WHERE deposit_amount > 0
+      AND student_id IN (SELECT student_id FROM students)
+    ORDER BY student_id, course_id, fee_type, created_at::DATE, created_at DESC
+),
+payments AS (
+    SELECT student_id, course_id, SUM(deposit_amount) AS total_deposit_collected
+    FROM deduped_payments
+    GROUP BY student_id, course_id
+)
+SELECT
+    uc.university_name,
+    COUNT(DISTINCT adm.student_id)                                    AS total_admitted_students,
+    SUM(uc.total_fees)                                                AS total_course_worth,
+    COALESCE(SUM(p.total_deposit_collected), 0)                       AS total_deposit_collected,
+    SUM(uc.total_fees) - COALESCE(SUM(p.total_deposit_collected), 0)  AS total_fee_remaining,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = 'Semester Paid'     THEN dp.student_id END) AS semester_paid,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = 'Full Fee Paid'     THEN dp.student_id END) AS full_fee_paid,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = 'Annual Paid'       THEN dp.student_id END) AS annual_paid,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = 'Semester Fee Paid' THEN dp.student_id END) AS semester_fee_paid,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = 'Registration Done' THEN dp.student_id END) AS registration_done,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = 'Partially Paid'    THEN dp.student_id END) AS partially_paid,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = 'Partial Done'      THEN dp.student_id END) AS partial_done,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = 'One Year Fee Paid' THEN dp.student_id END) AS one_year_fee_paid,
+    COUNT(DISTINCT CASE WHEN dp.fee_type_clean = '1St Year Fee Paid' THEN dp.student_id END) AS first_year_fee_paid
+FROM admitted_students adm
+JOIN university_courses uc ON adm.course_id = uc.course_id
+LEFT JOIN payments p  ON adm.student_id = p.student_id  AND adm.course_id = p.course_id
+LEFT JOIN deduped_payments dp ON adm.student_id = dp.student_id AND adm.course_id = dp.course_id
+GROUP BY uc.university_name
+ORDER BY total_deposit_collected DESC;
+```
+
+Adapt grouping: university → `GROUP BY uc.university_name`, course → add `uc.course_name`, counsellor → join via `students.enrollment_counsellor_id`.
+
+---
+
 ---
 
 # SECTION 4 — NATURAL LANGUAGE → SQL INTENT MAP

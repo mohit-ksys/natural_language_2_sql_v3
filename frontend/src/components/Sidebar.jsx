@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import PropTypes from 'prop-types';
 
 export default function Sidebar({ startNewChat, onOpenSettings, chats = [], loadChat, currentChatId, deleteChat, pinChat, renameChat }) {
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
@@ -6,8 +7,10 @@ export default function Sidebar({ startNewChat, onOpenSettings, chats = [], load
   const [showAll, setShowAll] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [renamingId, setRenamingId] = useState(null);
   const [renameVal, setRenameVal] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const renameInputRef = useRef(null);
 
   useEffect(() => {
@@ -25,6 +28,12 @@ export default function Sidebar({ startNewChat, onOpenSettings, chats = [], load
       renameInputRef.current.select();
     }
   }, [renamingId]);
+
+  // Debounce search query by 300ms
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
 
   const toggleTheme = () => setTheme(prev => prev === 'light' ? 'dark' : 'light');
 
@@ -58,33 +67,46 @@ export default function Sidebar({ startNewChat, onOpenSettings, chats = [], load
     return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
   });
 
-  // Filter by search
-  const filteredChats = searchQuery.trim()
+  // Filter by debounced search query
+  const filteredChats = debouncedSearch.trim()
     ? sortedChats.filter(c => {
-        const q = searchQuery.toLowerCase();
+        const q = debouncedSearch.toLowerCase();
         const inTitle = getDisplayTitle(c).toLowerCase().includes(q);
         const inMsgs = Array.isArray(c.messages) && c.messages.some(m => m.text?.toLowerCase().includes(q));
         return inTitle || inMsgs;
       })
     : sortedChats;
 
-  const visibleChats = showAll || searchQuery ? filteredChats : filteredChats.slice(0, VISIBLE_COUNT);
+  const visibleChats = showAll || debouncedSearch ? filteredChats : filteredChats.slice(0, VISIBLE_COUNT);
   const hiddenCount = filteredChats.length - VISIBLE_COUNT;
 
   function highlightTitle(title) {
-    if (!searchQuery.trim()) return title;
-    const idx = title.toLowerCase().indexOf(searchQuery.toLowerCase());
+    if (!debouncedSearch.trim()) return title;
+    const idx = title.toLowerCase().indexOf(debouncedSearch.toLowerCase());
     if (idx === -1) return title;
     return (
       <>
         {title.slice(0, idx)}
-        <mark className="search-highlight">{title.slice(idx, idx + searchQuery.length)}</mark>
-        {title.slice(idx + searchQuery.length)}
+        <mark className="search-highlight">{title.slice(idx, idx + debouncedSearch.length)}</mark>
+        {title.slice(idx + debouncedSearch.length)}
       </>
     );
   }
 
   const hasPinned = filteredChats.some(c => c.isPinned);
+
+  const handleDeleteClick = (e, chatId) => {
+    e.stopPropagation();
+    if (confirmDeleteId === chatId) {
+      // Second click: confirmed
+      deleteChat(chatId);
+      setConfirmDeleteId(null);
+    } else {
+      setConfirmDeleteId(chatId);
+      // Auto-cancel after 3 seconds
+      setTimeout(() => setConfirmDeleteId(null), 3000);
+    }
+  };
 
   return (
     <aside className={`sidebar${collapsed ? ' collapsed' : ''}`}>
@@ -172,12 +194,12 @@ export default function Sidebar({ startNewChat, onOpenSettings, chats = [], load
             </div>
           )}
 
-          <div className="sidebar-section-label">{searchQuery ? 'Results' : 'Chat History'}</div>
+          <div className="sidebar-section-label">{debouncedSearch ? 'Results' : 'Chat History'}</div>
 
           <div className="history-list">
             {filteredChats.length > 0 ? (
               <>
-                {hasPinned && !searchQuery && (
+                {hasPinned && !debouncedSearch && (
                   <div className="sidebar-pin-label">📌 Pinned</div>
                 )}
                 {visibleChats.map((chat) => (
@@ -224,21 +246,21 @@ export default function Sidebar({ startNewChat, onOpenSettings, chats = [], load
                       )}
                       {deleteChat && (
                         <button
-                          className="history-delete-btn"
-                          title="Delete chat"
-                          onClick={e => { e.stopPropagation(); deleteChat(chat.id); }}
-                        >✕</button>
+                          className={`history-delete-btn ${confirmDeleteId === chat.id ? 'confirm' : ''}`}
+                          title={confirmDeleteId === chat.id ? 'Click again to confirm delete' : 'Delete chat'}
+                          onClick={e => handleDeleteClick(e, chat.id)}
+                        >{confirmDeleteId === chat.id ? '?' : '✕'}</button>
                       )}
                     </div>
                   </div>
                 ))}
-                {!showAll && !searchQuery && hiddenCount > 0 && (
+                {!showAll && !debouncedSearch && hiddenCount > 0 && (
                   <button className="show-more-btn" onClick={() => setShowAll(true)}>
                     <span className="show-more-icon">↓</span>
                     <span className="show-more-text">{hiddenCount} more</span>
                   </button>
                 )}
-                {showAll && !searchQuery && filteredChats.length > VISIBLE_COUNT && (
+                {showAll && !debouncedSearch && filteredChats.length > VISIBLE_COUNT && (
                   <button className="show-more-btn" onClick={() => setShowAll(false)}>
                     <span className="show-more-icon">↑</span>
                     <span className="show-more-text">Show less</span>
@@ -248,8 +270,8 @@ export default function Sidebar({ startNewChat, onOpenSettings, chats = [], load
             ) : (
               <div className="history-empty">
                 <span className="history-empty-icon">◈</span>
-                <span className="history-empty-title">{searchQuery ? 'No results' : 'No chats yet'}</span>
-                <span className="history-empty-sub">{searchQuery ? 'Try a different search' : 'Click + New Query to start'}</span>
+                <span className="history-empty-title">{debouncedSearch ? 'No results' : 'No chats yet'}</span>
+                <span className="history-empty-sub">{debouncedSearch ? 'Try a different search' : 'Click + New Query to start'}</span>
               </div>
             )}
           </div>
@@ -269,3 +291,14 @@ export default function Sidebar({ startNewChat, onOpenSettings, chats = [], load
     </aside>
   );
 }
+
+Sidebar.propTypes = {
+  startNewChat: PropTypes.func.isRequired,
+  onOpenSettings: PropTypes.func.isRequired,
+  chats: PropTypes.array,
+  loadChat: PropTypes.func.isRequired,
+  currentChatId: PropTypes.string,
+  deleteChat: PropTypes.func,
+  pinChat: PropTypes.func,
+  renameChat: PropTypes.func,
+};
