@@ -25,11 +25,21 @@ export function calcCost(model, inputTokens, outputTokens) {
 
   const inputCost  = (inp / 1_000_000) * inputRate;
   const outputCost = (out / 1_000_000) * outputRate;
+  const totalCost  = inputCost + outputCost;
 
-  return { inputCost, outputCost, totalCost: inputCost + outputCost };
+  return { inputCost, outputCost, totalCost, inputRate, outputRate };
 }
 
 export function formatCost(usd) {
+  if (usd === null || usd === undefined) return '';
+  if (usd === 0) return '$0.00';
+  if (usd < 0.00001) return '<$0.00001';
+  if (usd < 0.001)   return `$${usd.toFixed(5)}`;
+  if (usd < 0.01)    return `$${usd.toFixed(4)}`;
+  return `$${usd.toFixed(3)}`;
+}
+
+export function formatUsd(usd) {
   if (usd === null || usd === undefined) return '';
   if (usd === 0) return '$0.00';
   if (usd < 0.00001) return '<$0.00001';

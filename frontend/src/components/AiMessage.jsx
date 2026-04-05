@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import { executeSql } from '../services/api';
-import { calcCost, formatCost, formatTokens } from '../services/tokenCost';
+import { calcCost, formatCost, formatUsd, formatTokens } from '../services/tokenCost';
+import * as XLSX from 'xlsx';
 
 // Star labels and per-score action options
 const STAR_NAMES=['','Wrong — bad query','Partially correct','Mostly right — small fix','Good — minor tweak','Perfect ✦'];
@@ -293,6 +294,15 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
     }
   };
 
+  const handleExportExcel = () => {
+    if (!displayData || displayData.length === 0) return;
+    const ws = XLSX.utils.json_to_sheet(displayData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Results');
+    const fileName = `query_results_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.xlsx`;
+    XLSX.writeFile(wb, fileName);
+  };
+
   // Table sort logic
   const handleSort = (col) => {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -322,11 +332,42 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
         <span className="ai-model-tag">{model}</span>
         {isRegen && <span className="regen-badge">✦ Regenerated</span>}
         {token_usage && (
-          <span className="token-badge" title={`Input: ${token_usage.input_tokens?.toLocaleString()} tokens · Output: ${token_usage.output_tokens?.toLocaleString()} tokens`}>
+          <span className="token-badge token-badge-hover">
             <span className="token-in">↑{formatTokens(token_usage.input_tokens)}</span>
             <span className="token-sep">·</span>
             <span className="token-out">↓{formatTokens(token_usage.output_tokens)}</span>
             {tokenCost && (<><span className="token-sep">·</span><span className="token-cost">{formatCost(tokenCost.totalCost)}</span></>)}
+            {tokenCost && (
+              <div className="token-popover">
+                <div className="tp-title">Cost Breakdown</div>
+                <div className="tp-model">{token_usage.model || model}</div>
+                <table className="tp-table">
+                  <thead>
+                    <tr><th></th><th>Tokens</th><th>Rate/M</th><th>Cost (USD)</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td className="tp-label">Input</td>
+                      <td>{(token_usage.input_tokens || 0).toLocaleString()}</td>
+                      <td>${tokenCost.inputRate.toFixed(2)}</td>
+                      <td>{formatUsd(tokenCost.inputCost)}</td>
+                    </tr>
+                    <tr>
+                      <td className="tp-label">Output</td>
+                      <td>{(token_usage.output_tokens || 0).toLocaleString()}</td>
+                      <td>${tokenCost.outputRate.toFixed(2)}</td>
+                      <td>{formatUsd(tokenCost.outputCost)}</td>
+                    </tr>
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td className="tp-label tp-total" colSpan={3}>Total</td>
+                      <td className="tp-total">{formatUsd(tokenCost.totalCost)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
           </span>
         )}
         {timestamp && <span className="msg-timestamp">{shortTime(timestamp)}</span>}
@@ -477,6 +518,9 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
                 Show Less
               </button>
             )}
+            <button className="export-excel-btn" onClick={handleExportExcel} title="Export to Excel">
+              ⬇ Excel
+            </button>
           </div>
 
           {/* TABLE VIEW */}

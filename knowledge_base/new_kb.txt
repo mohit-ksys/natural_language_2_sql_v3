@@ -664,7 +664,7 @@ Adapt grouping: university → `GROUP BY uc.university_name`, course → add `uc
 | "success rate" / "performance" / "efficiency" (counsellor/team) | `COUNT(Connected)/COUNT(all)` from student_remarks — NOT conversion |
 | "conversion rate" / "admission rate" (student outcomes) | `COUNT(DISTINCT student_id WHERE course_status IN ('Admission','Document Pending','Document Submitted','Enrolled'))` from `course_status_journeys` |
 | "admissions each month" / "monthly admission trend" | COUNT by date bucket WHERE `course_status = 'Admission'` on `course_status_journeys` |
-| "recent admissions" / "admissions in last N days" /| Use MIN(created_at) per student WHERE `course_status = 'Admission'` on `course_status_journeys` — see PATTERN 11 |
+| "recent admissions" / "admissions in last N days" / "admissions done yesterday" / "admissions done today" / "admissions yesterday" / "admissions today" / "admissions this week" / "admissions this month" / ANY date-bounded admission query | Use MIN(created_at) per student WHERE `course_status = 'Admission'` on `course_status_journeys` — see PATTERN 11 |
 | "total leads over time" / "lead count by month" / "leads created" | COUNT by date bucket from `students` — never filter by `current_student_status` |
 | "total ICC" / "total initial counselling calls" / "how many ICC" / "ICC count" / "ICC done" / "students who had ICC" (any form) | `COUNT(DISTINCT student_id) WHERE "first_Icc_Date" IS NOT NULL` from `students` — ALWAYS use `"first_Icc_Date"` column (double-quoted), NOT `current_student_status` |
 | "call at 9 AM" / "hourly call breakdown" / "best/worst time slot" | `EXTRACT(HOUR FROM ... AT TIME ZONE 'Asia/Kolkata')` on `student_remarks` |
@@ -1060,15 +1060,32 @@ ORDER BY pre_ni_count DESC;
 
 ---
 
-### PATTERN 14 — Attempted Calls on Newly Added Students (counsellor wise)
+### PATTERN 14 — Attempted Calls on Newly Added Students  (counsellor wise)
 
 Counts distinct students (from a specific creation date window) who received at least one call attempt, broken down by counsellor. The student creation date window is applied inside the JOIN ON clause. Apply the standard IST date window (see TIMEZONE RULES) for today / yesterday / last N days.
 **RULE J8/F6 exception:** `WHERE sr.student_id IS NOT NULL` is intentional — this is NOT a full-roster query. Only counsellors who attempted calls on new leads appear. Do NOT remove this filter.
 
-**Attempted calls on newly added students (any date window):**
+**Variant A — Attempted calls only (any date window):**
 ```sql
 SELECT 
     c.counsellor_name,
+    COUNT(DISTINCT sr.student_id) AS total_attempted_calls
+FROM counsellors c
+LEFT JOIN students s ON c.counsellor_id = s.assigned_counsellor_id
+LEFT JOIN student_remarks sr ON s.student_id = sr.student_id
+    AND s.created_at >= <start_ist>   -- e.g. CURRENT_DATE - INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+    AND s.created_at <  <end_ist>     -- e.g. CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+WHERE sr.student_id IS NOT NULL
+GROUP BY c.counsellor_id, c.counsellor_name
+ORDER BY total_attempted_calls DESC;
+```
+
+**Variant B — Total leads assigned (all-time portfolio) + attempted calls on new leads (date window):**
+Use when the user asks for both total leads assigned to a counsellor AND how many of the newly added students (within a date window) were attempted. The date filter is placed only in the `student_remarks` JOIN ON clause so `COUNT(DISTINCT s.student_id)` captures the counsellor's full portfolio, while `COUNT(DISTINCT sr.student_id)` counts only new-lead attempts in the window.
+```sql
+SELECT 
+    c.counsellor_name,
+    COUNT(DISTINCT s.student_id) AS total_leads_assigned,
     COUNT(DISTINCT sr.student_id) AS total_attempted_calls
 FROM counsellors c
 LEFT JOIN students s ON c.counsellor_id = s.assigned_counsellor_id
