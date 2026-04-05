@@ -193,6 +193,12 @@ export default function App() {
       };
       setChats(prev => [newChat, ...prev]);
       setCurrentChatId(chatIdToUse);
+    } else {
+      // Also treat as first query if the chat still has the default untitled title
+      const currentChat = chats.find(c => c.id === currentChatId);
+      if (currentChat && (currentChat.title === 'New Chat' || currentChat.title === 'Generating title...')) {
+        isFirstQuery = true;
+      }
     }
     return { chatIdToUse, isFirstQuery };
   };
