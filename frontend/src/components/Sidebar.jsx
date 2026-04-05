@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import PropTypes from 'prop-types';
 
-export default function Sidebar({ startNewChat, onOpenSettings, chats = [], loadChat, currentChatId, deleteChat, pinChat, renameChat }) {
+export default function Sidebar({ startNewChat, onOpenSettings, chats = [], loadChat, currentChatId, deleteChat, pinChat, renameChat, currentUser, onDashboard, onAdmin, onLogout }) {
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebarCollapsed') === 'true');
   const [showAll, setShowAll] = useState(false);
@@ -277,6 +277,24 @@ export default function Sidebar({ startNewChat, onOpenSettings, chats = [], load
           </div>
 
           <div className="sidebar-footer">
+            {currentUser && (
+              <div style={{ padding: '6px 12px 2px', fontSize: '11px', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {currentUser.full_name || currentUser.username}
+                <span style={{ marginLeft: '6px', background: '#374151', color: '#9ca3af', borderRadius: '3px', padding: '1px 5px', fontSize: '10px' }}>{currentUser.role}</span>
+              </div>
+            )}
+            {onDashboard && (
+              <div className="footer-item" onClick={onDashboard} title="Dashboard">
+                <span className="footer-icon">◈</span>
+                <span className="footer-text">Dashboard</span>
+              </div>
+            )}
+            {onAdmin && (
+              <div className="footer-item" onClick={onAdmin} title="User Management">
+                <span className="footer-icon">👥</span>
+                <span className="footer-text">Users</span>
+              </div>
+            )}
             <div className="footer-item" onClick={toggleTheme} title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}>
               <span className="footer-icon">{theme === 'light' ? '☾' : '☀'}</span>
               <span className="footer-text">{theme === 'light' ? 'Dark' : 'Light'}</span>
@@ -285,6 +303,12 @@ export default function Sidebar({ startNewChat, onOpenSettings, chats = [], load
               <span className="footer-icon">⚙</span>
               <span className="footer-text">Settings</span>
             </div>
+            {onLogout && (
+              <div className="footer-item" onClick={onLogout} title="Sign out" style={{ color: '#f87171' }}>
+                <span className="footer-icon">⏏</span>
+                <span className="footer-text">Sign Out</span>
+              </div>
+            )}
           </div>
         </>
       )}

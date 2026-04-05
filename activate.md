@@ -94,3 +94,49 @@ git merge feature/mcq-query-refinement   # only then does main get the changes
 
 Until you do that merge, your branches are completely independent.
 
+
+
+ Step 1 — Install new backend dependencies                                                                                                                                                                                                                                                                       
+  cd "C:\Users\mohit\OneDrive\Desktop\FRESH START\DataWhisper\text_to_sql_api"                                                                           
+  pip install -r requirements.txt
+
+  ---
+  Step 2 — Generate JWT secret and add to .env
+
+  python -c "import secrets; print(secrets.token_hex(32))"
+
+  Copy the output and open .env, replace REPLACE_WITH_GENERATED_SECRET with it.
+
+  ---
+  Step 3 — Run schema.sql on your auth DB
+
+  cd "C:\Users\mohit\OneDrive\Desktop\FRESH START\DataWhisper"
+  psql "postgresql://postgres.hqtrvqosendjpqosqknw:%23%23ChatWithDB%20%23@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres" -f schema.sql
+
+  Replace ... with your actual AUTH_DB_URL from .env. Or paste the contents of schema.sql directly into your Supabase SQL editor.
+
+  ---
+  Step 4 — Seed the 6 super_admin users
+
+  cd "C:\Users\mohit\OneDrive\Desktop\FRESH START\DataWhisper"
+  python seed_users.py
+
+  ---
+  Step 5 — Start the backend
+
+  cd "C:\Users\mohit\OneDrive\Desktop\FRESH START\DataWhisper\text_to_sql_api"
+  uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+
+  ---
+  Step 6 — Start the frontend
+
+  cd "C:\Users\mohit\OneDrive\Desktop\FRESH START\DataWhisper\frontend"
+  npm install
+  npm run dev
+
+  ---
+  Step 7 — Verify
+
+  Open http://localhost:5173 — you should see the login page. Login with:
+  - Username: mohit.kapoor@degreefyd.com
+  - Password: mohit.kapoor@degreefyd.com

@@ -3,8 +3,9 @@ import time
 import traceback
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from auth.dependencies import get_current_user
 from config.database import execute_sql
 from models.schemas import (
     DisambiguateRequest,
@@ -48,16 +49,15 @@ def _enforce_query_rate_limit(session_id: str):
     _QUERY_ACTIVITY[session_id] = history
 
 
+def _resolve_lms_type(current_user: dict, req_lms_type: str = None) -> str:
+    """Super admin uses request body lms_type; others use their user record."""
+    if current_user["role"] == "super_admin":
+        return req_lms_type or "online"
+    return str(current_user["lms_type"]) if current_user["lms_type"] else "online"
+
+
 @router.post("/query", response_model=QueryResponse)
-def process_query(req: QueryRequest):
-    """
-    Simplified query flow:
-    1. Load session history (last 5 turns)
-    2. Generate SQL via LLM
-    3. Validate SQL
-    4. Execute (if requested)
-    5. Log to conversational_log.jsonl
-    """
+def process_query(req: QueryRequest, current_user: dict = Depends(get_current_user)):
     start_time = time.time()
 
     if req.user_query.strip() == "":
@@ -67,123 +67,94 @@ def process_query(req: QueryRequest):
 
     req_model = req.model or llm_service.get_active_model()
     if req.model and req.model not in llm_service.ALLOWED_MODELS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid model. Allowed: {llm_service.ALLOWED_MODELS}",
-        )
+        raise HTTPException(status_code=400, detail=f"Invalid model. Allowed: {llm_service.ALLOWED_MODELS}")
 
-    log.info("QUERY session=%s query=%r model=%s", req.session_id, req.user_query[:100], req_model)
+    lms_type = _resolve_lms_type(current_user, req.lms_type)
+    user_id = str(current_user["id"])
 
-    # Load session history (last 5 turns for context)
+    log.info("QUERY user=%s session=%s query=%r model=%s", current_user["username"], req.session_id, req.user_query[:100], req_model)
+
     session_history = memory_service.format_session_for_prompt(req.session_id)
-
-    # Check if session has 5+ turns for context alert
     session = memory_service.get_session(req.session_id)
     turns_count = len(session.get("turns", []))
     should_show_context_alert = turns_count >= 5
 
-    # Generate SQL with session context
-    log.info("LLM call model=%s query=%r", req_model, req.user_query[:100])
     try:
         generated_sql, thoughts, sql_usage = llm_service.generate_sql(
             user_query=req.user_query,
             session_history=session_history,
-            learned_rules="",  # No universal memory anymore
+            learned_rules="",
             model=req_model,
             thinking_enabled=req.thinking_enabled,
             thinking_level=req.thinking_level,
             include_thoughts=req.include_thoughts,
         )
-        log.debug("generated SQL: %s", generated_sql[:200])
     except Exception as e:
         traceback.print_exc()
         log.error("SQL generation failed: %s", str(e))
         fid = memory_service.save_feedback(
-            session_id=req.session_id,
-            user_query=req.user_query,
+            session_id=req.session_id, user_query=req.user_query,
             error_message=f"SQL generation failed: {str(e)}",
-            chat_id=req.chat_id or "",
+            chat_id=req.chat_id or "", user_id=user_id, lms_type=lms_type, model=req_model,
         )
         _emsg = str(e)
         if "429" in _emsg or "RESOURCE_EXHAUSTED" in _emsg:
             raise HTTPException(status_code=429, detail="LLM quota exhausted. Please wait and retry.")
         raise HTTPException(status_code=500, detail=f"Failed to generate SQL: {str(e)}")
 
-    # Validate SQL
     if not llm_service.validate_sql(generated_sql):
         fid = memory_service.save_feedback(
-            session_id=req.session_id,
-            user_query=req.user_query,
-            generated_sql=generated_sql,
+            session_id=req.session_id, user_query=req.user_query, generated_sql=generated_sql,
             error_message="Security block: non-read-only SQL generated.",
-            chat_id=req.chat_id or "",
+            chat_id=req.chat_id or "", user_id=user_id, lms_type=lms_type, model=req_model,
         )
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "message": "Generated SQL is not read-only. Operation blocked.",
-                "sql": generated_sql,
-                "feedback_id": fid,
-            },
-        )
+        raise HTTPException(status_code=403, detail={
+            "message": "Generated SQL is not read-only. Operation blocked.",
+            "sql": generated_sql, "feedback_id": fid,
+        })
 
     execution_time = round(time.time() - start_time, 3)
-
-    # Save feedback with empty answer (will be updated after execution if needed)
     fid = memory_service.save_feedback(
-        session_id=req.session_id,
-        user_query=req.user_query,
-        generated_sql=generated_sql,
-        execution_time=execution_time,
-        chat_id=req.chat_id or "",
+        session_id=req.session_id, user_query=req.user_query, generated_sql=generated_sql,
+        execution_time=execution_time, chat_id=req.chat_id or "",
+        user_id=user_id, lms_type=lms_type, model=req_model,
     )
 
     if not req.execute:
-        # Return SQL only — caller will hit /execute when ready
         _token_usage = {'model': req_model, **sql_usage} if sql_usage else None
         return QueryResponse(
-            feedback_id=fid,
-            session_id=req.session_id,
-            sql=generated_sql,
-            execution_time=execution_time,
-            cached=False,
-            executed=False,
+            feedback_id=fid, session_id=req.session_id, sql=generated_sql,
+            execution_time=execution_time, cached=False, executed=False,
             session_context_alert="⚠️ Session context limited to last 5 queries" if should_show_context_alert else None,
             token_usage=_token_usage,
         )
 
-    # --- Execute against DB ---
     results = []
     try:
-        results = execute_sql(generated_sql)
+        results = execute_sql(generated_sql, lms_type)
     except Exception as sql_err:
         fixed_sql = llm_service.auto_fix_sql(req.user_query, generated_sql, str(sql_err), model=req_model)
         if fixed_sql and llm_service.validate_sql(fixed_sql):
             generated_sql = fixed_sql
             try:
-                results = execute_sql(generated_sql)
+                results = execute_sql(generated_sql, lms_type)
             except Exception as e2:
                 fid = memory_service.save_feedback(
-                    session_id=req.session_id,
-                    user_query=req.user_query,
-                    generated_sql=generated_sql,
-                    error_message=str(e2),
-                    chat_id=req.chat_id or "",
+                    session_id=req.session_id, user_query=req.user_query, generated_sql=generated_sql,
+                    error_message=str(e2), chat_id=req.chat_id or "",
+                    user_id=user_id, lms_type=lms_type, model=req_model,
                 )
                 traceback.print_exc()
                 raise HTTPException(status_code=500, detail=f"SQL execution failed after auto-fix: {str(e2)}")
         else:
             traceback.print_exc()
             fid = memory_service.save_feedback(
-                session_id=req.session_id,
-                user_query=req.user_query,
-                generated_sql=generated_sql,
-                error_message=str(sql_err),
-                chat_id=req.chat_id or "",
+                session_id=req.session_id, user_query=req.user_query, generated_sql=generated_sql,
+                error_message=str(sql_err), chat_id=req.chat_id or "",
+                user_id=user_id, lms_type=lms_type, model=req_model,
             )
             raise HTTPException(status_code=500, detail=f"SQL execution failed: {str(sql_err)}")
 
-    # Generate answer
     ans_usage = {}
     try:
         answer, chart_type, ans_usage = llm_service.generate_answer(req.user_query, results, model=req_model)
@@ -191,88 +162,63 @@ def process_query(req: QueryRequest):
         answer = f"Query returned {len(results)} rows."
         chart_type = "Table"
 
-    # Accumulate token usage across both LLM calls
     _total_input = sql_usage.get('input_tokens', 0) + ans_usage.get('input_tokens', 0)
     _total_output = sql_usage.get('output_tokens', 0) + ans_usage.get('output_tokens', 0)
     _token_usage = {'model': req_model, 'input_tokens': _total_input, 'output_tokens': _total_output}
 
-    # Update session memory with answer (don't save again to conversational log)
     memory_service.update_session_turn(req.session_id, fid, generated_sql, answer)
 
     return QueryResponse(
-        feedback_id=fid,
-        session_id=req.session_id,
-        sql=generated_sql,
-        answer=answer,
-        chart_type=chart_type,
-        data=results,
-        execution_time=execution_time,
-        cached=False,
-        executed=True,
+        feedback_id=fid, session_id=req.session_id, sql=generated_sql,
+        answer=answer, chart_type=chart_type, data=results,
+        execution_time=execution_time, cached=False, executed=True,
         session_context_alert="⚠️ Session context limited to last 5 queries" if should_show_context_alert else None,
         token_usage=_token_usage,
     )
 
 
 @router.post("/execute", response_model=ExecuteResponse)
-def execute_query(req: ExecuteRequest):
-    """Execute a previously-generated (or user-edited) SQL query against the DB."""
+def execute_query(req: ExecuteRequest, current_user: dict = Depends(get_current_user)):
     if not llm_service.validate_sql(req.sql):
         raise HTTPException(status_code=403, detail="Non-read-only SQL blocked.")
 
+    lms_type = _resolve_lms_type(current_user, req.lms_type)
+    user_id = str(current_user["id"])
     start_time = time.time()
+
     try:
-        results = execute_sql(req.sql)
+        results = execute_sql(req.sql, lms_type)
     except Exception as sql_err:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"SQL execution failed: {str(sql_err)}")
 
     execution_time = round(time.time() - start_time, 3)
-
     _exec_model = req.model or llm_service.get_active_model()
     _exec_ans_usage = {}
     try:
         answer, chart_type, _exec_ans_usage = llm_service.generate_answer(
-            req.original_query or req.sql,
-            results,
-            model=_exec_model,
+            req.original_query or req.sql, results, model=_exec_model,
         )
     except Exception:
         answer = f"Query returned {len(results)} rows."
         chart_type = "Table"
 
-    # Update feedback record if we have an ID
-    if req.feedback_id:
-        try:
-            memory_service.save_feedback(
-                session_id=req.session_id,
-                user_query=req.original_query or req.sql,
-                generated_sql=req.sql,
-                answer=answer,
-                execution_time=execution_time,
-            )
-        except Exception:
-            traceback.print_exc()
-
     _exec_token_usage = {'model': _exec_model, **_exec_ans_usage} if _exec_ans_usage else None
     return ExecuteResponse(
-        answer=answer,
-        chart_type=chart_type,
-        data=results,
-        execution_time=execution_time,
-        feedback_id=req.feedback_id,
+        answer=answer, chart_type=chart_type, data=results,
+        execution_time=execution_time, feedback_id=req.feedback_id,
         token_usage=_exec_token_usage,
     )
 
 
 @router.get("/history", response_model=HistoryResponse)
-def get_history():
+def get_history(current_user: dict = Depends(get_current_user)):
     data = memory_service.get_history(limit=50)
     return HistoryResponse(success=True, data=data)
 
 
 @router.post("/config/model", response_model=ModelSwitchResponse)
-def switch_model(req: ModelSwitchRequest):
+def switch_model(req: ModelSwitchRequest, _: dict = Depends(get_current_user)):
     try:
         active = llm_service.set_active_model(req.model)
         return ModelSwitchResponse(active_model=active)
@@ -281,23 +227,21 @@ def switch_model(req: ModelSwitchRequest):
 
 
 @router.get("/config/model", response_model=ModelSwitchResponse)
-def get_model():
+def get_model(_: dict = Depends(get_current_user)):
     return ModelSwitchResponse(active_model=llm_service.get_active_model())
 
 
 @router.get("/sessions", response_model=SessionsResponse)
-def get_all_sessions():
-    """Return all sessions from disk for frontend sync on startup."""
-    sessions = memory_service._load_sessions()
-    return SessionsResponse(success=True, sessions=sessions)
+def get_all_sessions(_: dict = Depends(get_current_user)):
+    return SessionsResponse(success=True, sessions={})
 
 
 @router.get("/students/latest")
-def get_latest_students():
-    """Fetch latest 10 students who entered the system."""
+def get_latest_students(current_user: dict = Depends(get_current_user)):
+    lms_type = _resolve_lms_type(current_user)
     try:
         sql = "SELECT student_name, created_at FROM students ORDER BY created_at DESC LIMIT 10"
-        results = execute_sql(sql)
+        results = execute_sql(sql, lms_type)
         return {"success": True, "students": results}
     except Exception as e:
         log.error("Failed to fetch latest students: %s", str(e))
@@ -306,15 +250,10 @@ def get_latest_students():
 
 # ─────────────────────────── MCQ DISAMBIGUATION ──────────────────────────────
 
-
 def _validate_model(model: str | None) -> str:
-    """Return resolved model name or raise 400."""
     req_model = model or llm_service.get_active_model()
     if model and model not in llm_service.ALLOWED_MODELS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid model. Allowed: {llm_service.ALLOWED_MODELS}",
-        )
+        raise HTTPException(status_code=400, detail=f"Invalid model. Allowed: {llm_service.ALLOWED_MODELS}")
     return req_model
 
 
@@ -326,38 +265,32 @@ def _generate_and_respond(
     req_model: str,
     execute: bool,
     start_time: float,
+    lms_type: str,
+    user_id: str,
     mcq_questions: list = None,
     mcq_answers: list = None,
 ) -> QueryResponse:
-    """Shared logic: generate SQL (with optional extra context), validate, execute, return."""
     session_history = memory_service.format_session_for_prompt(session_id)
     session = memory_service.get_session(session_id)
     turns_count = len(session.get("turns", []))
     should_show_context_alert = turns_count >= 5
 
-    # Inject extra MCQ / feedback context between session history and the query
     combined_history = session_history
     if extra_context:
         combined_history = session_history + "\n" + extra_context
 
     try:
         generated_sql, thoughts, sql_usage = llm_service.generate_sql(
-            user_query=user_query,
-            session_history=combined_history,
-            learned_rules="",
-            model=req_model,
+            user_query=user_query, session_history=combined_history,
+            learned_rules="", model=req_model,
         )
-        log.debug("MCQ-enhanced SQL: %s", generated_sql[:200])
     except Exception as e:
         traceback.print_exc()
-        log.error("SQL generation failed: %s", str(e))
         fid = memory_service.save_feedback(
-            session_id=session_id,
-            user_query=user_query,
-            error_message=f"SQL generation failed: {str(e)}",
-            chat_id=chat_id,
-            mcq_questions=mcq_questions,
-            mcq_answers=mcq_answers,
+            session_id=session_id, user_query=user_query,
+            error_message=f"SQL generation failed: {str(e)}", chat_id=chat_id,
+            mcq_questions=mcq_questions, mcq_answers=mcq_answers,
+            user_id=user_id, lms_type=lms_type, model=req_model,
         )
         _emsg = str(e)
         if "429" in _emsg or "RESOURCE_EXHAUSTED" in _emsg:
@@ -366,29 +299,22 @@ def _generate_and_respond(
 
     if not llm_service.validate_sql(generated_sql):
         fid = memory_service.save_feedback(
-            session_id=session_id,
-            user_query=user_query,
-            generated_sql=generated_sql,
-            error_message="Security block: non-read-only SQL generated.",
-            chat_id=chat_id,
-            mcq_questions=mcq_questions,
-            mcq_answers=mcq_answers,
+            session_id=session_id, user_query=user_query, generated_sql=generated_sql,
+            error_message="Security block: non-read-only SQL generated.", chat_id=chat_id,
+            mcq_questions=mcq_questions, mcq_answers=mcq_answers,
+            user_id=user_id, lms_type=lms_type, model=req_model,
         )
-        raise HTTPException(
-            status_code=403,
-            detail={"message": "Generated SQL is not read-only. Operation blocked.",
-                    "sql": generated_sql, "feedback_id": fid},
-        )
+        raise HTTPException(status_code=403, detail={
+            "message": "Generated SQL is not read-only. Operation blocked.",
+            "sql": generated_sql, "feedback_id": fid,
+        })
 
     execution_time = round(time.time() - start_time, 3)
     fid = memory_service.save_feedback(
-        session_id=session_id,
-        user_query=user_query,
-        generated_sql=generated_sql,
-        execution_time=execution_time,
-        chat_id=chat_id,
-        mcq_questions=mcq_questions,
-        mcq_answers=mcq_answers,
+        session_id=session_id, user_query=user_query, generated_sql=generated_sql,
+        execution_time=execution_time, chat_id=chat_id,
+        mcq_questions=mcq_questions, mcq_answers=mcq_answers,
+        user_id=user_id, lms_type=lms_type, model=req_model,
     )
 
     if not execute:
@@ -400,25 +326,30 @@ def _generate_and_respond(
             token_usage=_token_usage,
         )
 
-    # Execute
     results = []
     try:
-        results = execute_sql(generated_sql)
+        results = execute_sql(generated_sql, lms_type)
     except Exception as sql_err:
         fixed_sql = llm_service.auto_fix_sql(user_query, generated_sql, str(sql_err), model=req_model)
         if fixed_sql and llm_service.validate_sql(fixed_sql):
             generated_sql = fixed_sql
             try:
-                results = execute_sql(generated_sql)
+                results = execute_sql(generated_sql, lms_type)
             except Exception as e2:
-                memory_service.save_feedback(session_id=session_id, user_query=user_query,
-                                            generated_sql=generated_sql, error_message=str(e2), chat_id=chat_id)
+                memory_service.save_feedback(
+                    session_id=session_id, user_query=user_query, generated_sql=generated_sql,
+                    error_message=str(e2), chat_id=chat_id,
+                    user_id=user_id, lms_type=lms_type, model=req_model,
+                )
                 traceback.print_exc()
                 raise HTTPException(status_code=500, detail=f"SQL execution failed after auto-fix: {str(e2)}")
         else:
             traceback.print_exc()
-            memory_service.save_feedback(session_id=session_id, user_query=user_query,
-                                        generated_sql=generated_sql, error_message=str(sql_err), chat_id=chat_id)
+            memory_service.save_feedback(
+                session_id=session_id, user_query=user_query, generated_sql=generated_sql,
+                error_message=str(sql_err), chat_id=chat_id,
+                user_id=user_id, lms_type=lms_type, model=req_model,
+            )
             raise HTTPException(status_code=500, detail=f"SQL execution failed: {str(sql_err)}")
 
     ans_usage = {}
@@ -443,15 +374,14 @@ def _generate_and_respond(
 
 
 @router.post("/disambiguate", response_model=DisambiguateResponse)
-def disambiguate_query(req: DisambiguateRequest):
-    """Generate 3 MCQ clarifying questions for an ambiguous query."""
+def disambiguate_query(req: DisambiguateRequest, current_user: dict = Depends(get_current_user)):
     if not req.user_query.strip():
         raise HTTPException(status_code=400, detail="user_query is required.")
 
     _enforce_query_rate_limit(req.session_id)
     req_model = _validate_model(req.model)
 
-    log.info("DISAMBIGUATE session=%s query=%r model=%s", req.session_id, req.user_query[:100], req_model)
+    log.info("DISAMBIGUATE session=%s query=%r", req.session_id, req.user_query[:100])
 
     session_history = memory_service.format_session_for_prompt(req.session_id)
     questions, error = mcq_service.generate_mcqs(req.user_query, session_history, model=req_model)
@@ -465,6 +395,8 @@ def disambiguate_query(req: DisambiguateRequest):
         "questions": questions,
         "session_id": req.session_id,
         "chat_id": req.chat_id or "",
+        "user_id": str(current_user["id"]),
+        "lms_type": _resolve_lms_type(current_user, req.lms_type),
     })
 
     return DisambiguateResponse(
@@ -483,8 +415,7 @@ def disambiguate_query(req: DisambiguateRequest):
 
 
 @router.post("/answer-mcq", response_model=QueryResponse)
-def answer_mcq(req: MCQAnswerRequest):
-    """Process query after user answers the MCQ clarifying questions."""
+def answer_mcq(req: MCQAnswerRequest, current_user: dict = Depends(get_current_user)):
     start_time = time.time()
 
     ctx = memory_service.get_query_context(req.query_id)
@@ -495,6 +426,8 @@ def answer_mcq(req: MCQAnswerRequest):
     original_query = ctx["original_query"]
     session_id = ctx["session_id"]
     chat_id = req.chat_id or ctx.get("chat_id", "")
+    lms_type = ctx.get("lms_type") or _resolve_lms_type(current_user)
+    user_id = str(current_user["id"])
 
     if len(req.answers) != len(questions):
         raise HTTPException(status_code=400, detail=f"Expected {len(questions)} answers, got {len(req.answers)}.")
@@ -502,28 +435,19 @@ def answer_mcq(req: MCQAnswerRequest):
     _enforce_query_rate_limit(session_id)
     req_model = _validate_model(req.model)
 
-    # Save answers into context so /english-feedback can reuse them
     memory_service.update_query_context(req.query_id, {"answers": req.answers})
-
     enhanced_context = mcq_service.build_enhanced_context(original_query, questions, req.answers)
-    log.info("ANSWER-MCQ query_id=%s session=%s model=%s", req.query_id[:8], session_id, req_model)
 
     return _generate_and_respond(
-        user_query=original_query,
-        session_id=session_id,
-        chat_id=chat_id,
-        extra_context=enhanced_context,
-        req_model=req_model,
-        execute=req.execute,
-        start_time=start_time,
-        mcq_questions=questions,
-        mcq_answers=req.answers,
+        user_query=original_query, session_id=session_id, chat_id=chat_id,
+        extra_context=enhanced_context, req_model=req_model, execute=req.execute,
+        start_time=start_time, lms_type=lms_type, user_id=user_id,
+        mcq_questions=questions, mcq_answers=req.answers,
     )
 
 
 @router.post("/english-feedback", response_model=QueryResponse)
-def english_feedback(req: EnhancedFeedbackRequest):
-    """Refine SQL using English feedback, optionally combined with prior MCQ context."""
+def english_feedback(req: EnhancedFeedbackRequest, current_user: dict = Depends(get_current_user)):
     start_time = time.time()
 
     ctx = memory_service.get_query_context(req.query_id)
@@ -537,22 +461,17 @@ def english_feedback(req: EnhancedFeedbackRequest):
     session_id = ctx["session_id"]
     chat_id = req.chat_id or ctx.get("chat_id", "")
     questions = ctx.get("questions")
-    answers = ctx.get("answers")  # May be None if user skipped MCQs
+    answers = ctx.get("answers")
+    lms_type = ctx.get("lms_type") or _resolve_lms_type(current_user)
+    user_id = str(current_user["id"])
 
     _enforce_query_rate_limit(session_id)
     req_model = _validate_model(req.model)
 
-    feedback_context = mcq_service.build_feedback_context(
-        original_query, questions, answers, req.feedback,
-    )
-    log.info("ENGLISH-FEEDBACK query_id=%s session=%s model=%s", req.query_id[:8], session_id, req_model)
+    feedback_context = mcq_service.build_feedback_context(original_query, questions, answers, req.feedback)
 
     return _generate_and_respond(
-        user_query=original_query,
-        session_id=session_id,
-        chat_id=chat_id,
-        extra_context=feedback_context,
-        req_model=req_model,
-        execute=req.execute,
-        start_time=start_time,
+        user_query=original_query, session_id=session_id, chat_id=chat_id,
+        extra_context=feedback_context, req_model=req_model, execute=req.execute,
+        start_time=start_time, lms_type=lms_type, user_id=user_id,
     )

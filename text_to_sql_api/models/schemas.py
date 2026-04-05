@@ -5,12 +5,13 @@ from pydantic import BaseModel
 class QueryRequest(BaseModel):
     user_query: str
     session_id: str
-    chat_id: Optional[str] = None  # Frontend chat ID for logging (internal use only)
+    chat_id: Optional[str] = None
     model: Optional[str] = None
+    lms_type: Optional[str] = None   # super_admin only; ignored for other roles
     thinking_enabled: bool = False
     thinking_level: str = "high"
     include_thoughts: bool = False
-    execute: bool = False  # if False, return SQL only without running against DB
+    execute: bool = False
 
 
 class QueryResponse(BaseModel):
@@ -23,8 +24,8 @@ class QueryResponse(BaseModel):
     answer: Optional[str] = None
     chart_type: Optional[str] = None
     data: Optional[list[dict[str, Any]]] = None
-    session_context_alert: Optional[str] = None  # Alert about 5-turn context limit
-    token_usage: Optional[dict] = None  # {model, input_tokens, output_tokens}
+    session_context_alert: Optional[str] = None
+    token_usage: Optional[dict] = None
 
 
 class ExecuteRequest(BaseModel):
@@ -33,6 +34,7 @@ class ExecuteRequest(BaseModel):
     original_query: Optional[str] = None
     feedback_id: Optional[str] = None
     model: Optional[str] = None
+    lms_type: Optional[str] = None   # super_admin only
 
 
 class ExecuteResponse(BaseModel):
@@ -41,7 +43,7 @@ class ExecuteResponse(BaseModel):
     data: list[dict[str, Any]]
     execution_time: float
     feedback_id: Optional[str] = None
-    token_usage: Optional[dict] = None  # {model, input_tokens, output_tokens}
+    token_usage: Optional[dict] = None
 
 
 class LogicFeedbackRequest(BaseModel):
@@ -82,18 +84,18 @@ class HistoryResponse(BaseModel):
 
 class SessionsResponse(BaseModel):
     success: bool
-    sessions: dict[str, Any]  # session_id -> {created_at, turns: [...]}
+    sessions: dict[str, Any]
 
 
 # ─── MCQ Disambiguation Models ───────────────────────────────────────────────
 
 class MCQOption(BaseModel):
-    label: str          # "A", "B", "C", "D"
-    text: str           # "This month"
+    label: str
+    text: str
 
 
 class MCQQuestion(BaseModel):
-    question_id: str    # "q1", "q2", "q3"
+    question_id: str
     question_text: str
     options: list[MCQOption]
 
@@ -103,6 +105,7 @@ class DisambiguateRequest(BaseModel):
     session_id: str
     chat_id: Optional[str] = None
     model: Optional[str] = None
+    lms_type: Optional[str] = None
 
 
 class DisambiguateResponse(BaseModel):
@@ -116,7 +119,7 @@ class MCQAnswerRequest(BaseModel):
     query_id: str
     session_id: str
     chat_id: Optional[str] = None
-    answers: list[int | str]        # Selected option index (0-based) or free-text string for "Other"
+    answers: list[int | str]
     model: Optional[str] = None
     execute: bool = False
 

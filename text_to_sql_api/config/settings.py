@@ -14,8 +14,22 @@ class Settings(BaseSettings):
     )
 
     GEMINI_API_KEY: str
-    SUPABASE_URL: str = ""
-    DATABASE_URL: str = ""
+
+    # Auth + logs + sessions DB (plain PostgreSQL)
+    AUTH_DB_URL: str
+
+    # LMS query DBs
+    ONLINE_LMS_URL: str
+    REGULAR_LMS_URL: str
+
+    # JWT
+    JWT_SECRET_KEY: str
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRY_HOURS: int = 8
+
+    # Refresh token
+    REFRESH_TOKEN_EXPIRY_DAYS: int = 7
+
     GEMINI_MODEL: str = "gemini-3.1-flash-lite-preview"
 
     KNOWLEDGE_BASE_DIR: str = str(ROOT_DIR / "knowledge_base")
@@ -27,7 +41,7 @@ class Settings(BaseSettings):
         "gemini-3-flash-preview",
     ]
 
-    SESSION_MAX_TURNS: int = 5  # Load last 5 turns for conversational context
+    SESSION_MAX_TURNS: int = 5
     SESSION_PROMPT_TURNS: int = 5
 
 
