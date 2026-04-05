@@ -376,6 +376,18 @@ Full post-application flow on `course_status_journeys`:
 
 ## DISTINCTION 9 — NotInterested (NI)
 
+### Three NI Variants — Quick Reference
+
+| Term | Meaning | Primary table | Trigger phrase |
+|------|---------|--------------|----------------|
+| **Total NI** | All students currently NI (before OR after application) | `students` UNION `course_status_journeys` | "total NI", "how many NI", "NI count" |
+| **Pre-NI** | NI students who never had ICC and never reached Application/Admission/etc. | `students` with `"first_Icc_Date" IS NULL` + NOT IN progression | "pre NI", "NI with no ICC", "NI who never progressed" |
+| **First NI** | NI students whose **first remark** falls in the date window (earliest contact) | `student_remarks` DISTINCT ON `created_at ASC` for current NI students | "first NI", "first time NI", "newly NI" |
+
+**NEVER mix these up.** Total NI ≠ Pre-NI ≠ First NI. Always confirm which variant the user means before generating SQL.
+
+---
+
 ### NI-1 — Pure NI before application (student never applied)
 Use when: "NI before application", "NI who never applied", "NI who dropped before applying"
 ```sql
@@ -394,6 +406,8 @@ AND student_id IN (SELECT student_id FROM students);
 ### NI-3 — General NI (no context given)
 Use when: user just says "total NI", "how many NI students" with no further qualifier.
 ALWAYS use BOTH tables and return `COUNT(DISTINCT student_id)` combining results:
+
+**All-time total NI:**
 ```sql
 SELECT COUNT(DISTINCT student_id) AS total_ni FROM (
     SELECT student_id FROM students WHERE current_student_status = 'NotInterested'
@@ -403,6 +417,25 @@ SELECT COUNT(DISTINCT student_id) AS total_ni FROM (
     AND student_id IN (SELECT student_id FROM students)
 ) combined;
 ```
+
+**Date-filtered total NI (use `updated_at` on both tables):**
+```sql
+SELECT COUNT(DISTINCT student_id) AS total_ni FROM (
+    SELECT student_id FROM students
+    WHERE current_student_status = 'NotInterested'
+      AND updated_at >= <start_ist>
+      AND updated_at <  <end_ist>
+    UNION
+    SELECT student_id FROM course_status_journeys
+    WHERE course_status = 'NotInterested'
+      AND student_id IN (SELECT student_id FROM students)
+      AND created_at >= <start_ist>
+      AND created_at <  <end_ist>
+) combined;
+```
+Apply standard IST date window (see TIMEZONE RULES).
+- `students` branch → use `updated_at` (tracks when the NI status was last SET on the student record).
+- `course_status_journeys` branch → use `created_at` (append-only log; each row's `created_at` IS the event timestamp).
 
 ### NI-4 — NI students at a specific funnel stage
 Use when: "NI students who are at [stage]", "NI students marked as [stage]", "NI students currently at [stage]".
@@ -449,6 +482,48 @@ AND student_id IN (
     WHERE current_student_status = 'Pre Application'
 );
 ```
+
+### NI-6 — Pre-NI Students (NI with no ICC and never progressed to application or beyond)
+Use when: "pre NI", "NI students who never had ICC", "NI who never applied", "NI with no progress"
+Definition: Students who are `NotInterested`, never had an ICC (`"first_Icc_Date" IS NULL`), and never reached Application/Admission/Document Pending/Document Submitted/Enrolled.
+```sql
+WITH never_progressed AS (
+    SELECT s.student_id
+    FROM students s
+    WHERE s.current_student_status = 'NotInterested'
+      AND s."first_Icc_Date" IS NULL
+      AND s.student_id NOT IN (
+          SELECT DISTINCT student_id
+          FROM course_status_journeys
+          WHERE course_status IN ('Application', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')
+      )
+)
+SELECT COUNT(DISTINCT np.student_id) AS pre_ni_count
+FROM never_progressed np
+JOIN students s ON np.student_id = s.student_id;
+```
+For a date-filtered version (e.g. pre-NI students added yesterday), apply the IST date window on `s.created_at` — see PATTERN 13.
+
+### NI-7 — First NI (NI students whose first remark falls in the date window)
+Use when: "first NI", "first time NI", "newly NI", "students who became NI for the first time in X period"
+Definition: Students whose `current_student_status = 'NotInterested'` AND whose **earliest remark** (`MIN(created_at)` via `DISTINCT ON`) falls in the given IST date window.
+Do NOT confuse with Pre-NI (no ICC) or Total NI (all NI regardless of timing).
+```sql
+WITH first_ni_students AS (
+  SELECT DISTINCT ON (sr.student_id)
+    sr.student_id,
+    sr.created_at AS first_ni_at
+  FROM student_remarks sr
+  INNER JOIN students s ON sr.student_id = s.student_id
+  WHERE s.current_student_status = 'NotInterested'
+  ORDER BY sr.student_id, sr.created_at ASC
+)
+SELECT COUNT(*) AS first_ni_count
+FROM first_ni_students
+WHERE first_ni_at >= <start_ist>
+  AND first_ni_at <  <end_ist>;
+```
+Apply the standard IST date window (see TIMEZONE RULES) for today / yesterday / last N days. See PATTERN 16.
 
 ---
 
@@ -604,6 +679,7 @@ Adapt grouping: university → `GROUP BY uc.university_name`, course → add `uc
 | "NI before application" / "NI who never applied" | `students.current_student_status = 'NotInterested'` — see NI-1 |
 | "NI after application" / "NI who applied" | `course_status_journeys.course_status = 'NotInterested'` — see NI-2 |
 | "NI students at [stage]" / "NI students marked as [stage]" | NI always from `course_status_journeys.course_status = 'NotInterested'`, stage as subquery IN — see NI-4. NEVER query NI and stage both from students table |
+| "first NI" / "first time NI" / "newly NI" / "students who became NI for the first time" | `DISTINCT ON (student_id)` earliest remark for current NI students — see NI-7 and PATTERN 16. NOT the same as Pre-NI or Total NI |
 | "NI reason" / "NI breakdown" / "why NI" / "NI sub-status" / "NI categories" | `students.current_student_ni_sub_status` GROUP BY, filter `current_student_status = 'NotInterested'` — see NI-5 |
 | "shortlisted courses" / "shortlisted universities" | `latest_course_statuses.is_shortlisted = true` |
 | "supervisor" / "team owner" | `counsellors.role = 'to'` |
@@ -616,6 +692,11 @@ Adapt grouping: university → `GROUP BY uc.university_name`, course → add `uc
 | "deposit" / "deposit amount" / "amount deposited" / "amount paid by student" / "payment collected" | `course_status_journeys.deposit_amount` — actual money paid by student |
 | "study mode" / "course delivery mode" | `university_courses.study_mode` — NOT students.mode |
 | "which time slot performs best/worst" | `calling_status='Connected'` rate by hour — NOT quality call rate |
+| "first connected" / "first time connected" / "first connected count" | CTE with `MIN(created_at)` per student WHERE `calling_status='Connected'` on `student_remarks` — see PATTERN 12 |
+| "first connected counsellor wise" / "who connected first" (counsellor breakdown) | Correlated subquery on `student_remarks` for first connected event per student, then GROUP BY counsellor — see PATTERN 12 |
+| "pre NI" / "NI with no ICC" / "NI who never progressed" | `current_student_status='NotInterested'` + `"first_Icc_Date" IS NULL` + NOT IN course_status_journeys progression — see NI-6 in DISTINCTION 9 and PATTERN 13 |
+| "attempted calls on new leads" / "calls made to students added yesterday" / "leads attempted yesterday" | COUNT(DISTINCT sr.student_id) joining students filtered by `created_at` yesterday window — see PATTERN 14 |
+| "total leads today" / "attempted leads today" / "leads and attempts today" (counsellor wise) | Two COUNT(DISTINCT) on students and student_remarks filtered by today's IST window — see PATTERN 15 |
 
 ---
 
@@ -823,7 +904,7 @@ WHERE first_event_date >= CURRENT_DATE - interval 'N days' - interval '5 hours 3
 ```
 
 **Applies to all statuses:** `'Application'`, `'Admission'`, `'Document Pending'`, `'Document Submitted'`, `'Enrolled'`, `'NotInterested'` (after application).
-**Why MIN?** `course_status_journeys` is append-only — a student can have multiple rows for the same status. Without MIN, duplicates inflate counts and old students reappear in recent-period filters.
+**Why MIN?** `course_status_journeys` is append-only — a student can have multiple rows for the same `course_status` (re-triggers, duplicates). Without MIN, duplicates inflate counts and old students reappear in recent-period filters.
 
 ---
 
@@ -876,6 +957,175 @@ WHERE manager.role = 'to'
 GROUP BY manager.counsellor_id, manager.counsellor_name
 ORDER BY success_rate DESC;
 ```
+
+---
+
+### PATTERN 12 — First Connected (total count + counsellor wise)
+
+Counts students whose **very first Connected call** falls within a given date window. Uses `MIN(created_at)` to find each student's first connected event.
+Apply the standard IST date window (see TIMEZONE RULES) for today / yesterday / last N days as needed.
+
+**Total first connected (any date window):**
+```sql
+WITH first_connected_dates AS (
+    SELECT 
+        student_id,
+        MIN(created_at) AS first_connected_at
+    FROM student_remarks
+    WHERE calling_status = 'Connected'
+      AND student_id IN (SELECT student_id FROM students)
+    GROUP BY student_id
+)
+SELECT COUNT(DISTINCT fcd.student_id) AS first_connected_count
+FROM first_connected_dates fcd
+WHERE fcd.first_connected_at >= <start_ist>   -- e.g. CURRENT_DATE - INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+  AND fcd.first_connected_at <  <end_ist>;    -- e.g. CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+```
+
+**First connected counsellor wise (any date window):**
+```sql
+SELECT
+    c.counsellor_name,
+    COUNT(DISTINCT sr.student_id) AS first_connected_count
+FROM student_remarks sr
+JOIN counsellors c 
+    ON c.counsellor_id = sr.counsellor_id
+WHERE sr.calling_status = 'Connected'
+  AND sr.student_id IN (SELECT student_id FROM students)
+  AND sr.created_at = (
+        SELECT MIN(sr2.created_at)
+        FROM student_remarks sr2
+        WHERE sr2.student_id = sr.student_id
+          AND sr2.calling_status = 'Connected'
+  )
+  AND sr.created_at >= <start_ist>   -- e.g. CURRENT_DATE - INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+  AND sr.created_at <  <end_ist>     -- e.g. CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+GROUP BY c.counsellor_id, c.counsellor_name
+ORDER BY first_connected_count DESC;
+```
+
+**Key rule:** Always use `MIN(created_at)` (CTE or correlated subquery) to identify the first connected call. NEVER count all connected calls — that inflates the count for students connected multiple times.
+
+**RULE J3 exception:** RULE J3 (`FROM counsellors LEFT JOIN student_remarks`) applies to full-roster call-metric queries. In the counsellor-wise variant above, the query drives FROM `student_remarks` → INNER JOIN `counsellors` intentionally — we only want counsellors who made a first-connected call. Do NOT flip this to `FROM counsellors LEFT JOIN student_remarks` here.
+
+---
+
+### PATTERN 13 — Pre-NI Students (date-filtered)
+
+Counts students who went NI without ever having an ICC or progressing to application stage. Apply the standard IST date window (see TIMEZONE RULES) to `students.created_at` for today / yesterday / last N days.
+
+**Pre-NI students added in a given date window:**
+```sql
+WITH never_progressed AS (
+    SELECT s.student_id
+    FROM students s
+    WHERE s.current_student_status = 'NotInterested'
+      AND s."first_Icc_Date" IS NULL
+      AND s.student_id NOT IN (
+          SELECT DISTINCT student_id
+          FROM course_status_journeys
+          WHERE course_status IN ('Application', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')
+      )
+)
+SELECT COUNT(DISTINCT np.student_id) AS pre_ni_count
+FROM never_progressed np
+JOIN students s ON np.student_id = s.student_id
+WHERE s.created_at >= <start_ist>   -- e.g. CURRENT_DATE - INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+  AND s.created_at <  <end_ist>;    -- e.g. CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+```
+
+**Definition of Pre-NI:** `current_student_status = 'NotInterested'` AND `"first_Icc_Date" IS NULL` AND student never appeared in `course_status_journeys` with a forward-progression status.
+
+**Pre-NI counsellor wise (any date window):**
+```sql
+SELECT
+    c.counsellor_name,
+    COUNT(DISTINCT s.student_id) AS pre_ni_count
+FROM students s
+JOIN counsellors c ON s.assigned_counsellor_id = c.counsellor_id
+WHERE s.current_student_status = 'NotInterested'
+  AND s."first_Icc_Date" IS NULL
+  AND s.student_id NOT IN (
+      SELECT DISTINCT student_id
+      FROM course_status_journeys
+      WHERE course_status IN ('Application', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')
+  )
+  AND s.created_at >= <start_ist>
+  AND s.created_at <  <end_ist>
+GROUP BY c.counsellor_id, c.counsellor_name
+ORDER BY pre_ni_count DESC;
+```
+
+**RULE F6 exception:** This is NOT a full-roster query. `JOIN counsellors` (INNER) is intentional — counsellors with zero pre-NI students are excluded by design. If the user explicitly asks for all counsellors, switch to `LEFT JOIN counsellors`.
+
+---
+
+### PATTERN 14 — Attempted Calls on Newly Added Students (counsellor wise)
+
+Counts distinct students (from a specific creation date window) who received at least one call attempt, broken down by counsellor. The student creation date window is applied inside the JOIN ON clause. Apply the standard IST date window (see TIMEZONE RULES) for today / yesterday / last N days.
+**RULE J8/F6 exception:** `WHERE sr.student_id IS NOT NULL` is intentional — this is NOT a full-roster query. Only counsellors who attempted calls on new leads appear. Do NOT remove this filter.
+
+**Attempted calls on newly added students (any date window):**
+```sql
+SELECT 
+    c.counsellor_name,
+    COUNT(DISTINCT sr.student_id) AS total_attempted_calls
+FROM counsellors c
+LEFT JOIN students s ON c.counsellor_id = s.assigned_counsellor_id
+LEFT JOIN student_remarks sr ON s.student_id = sr.student_id
+    AND s.created_at >= <start_ist>   -- e.g. CURRENT_DATE - INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+    AND s.created_at <  <end_ist>     -- e.g. CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+WHERE sr.student_id IS NOT NULL
+GROUP BY c.counsellor_id, c.counsellor_name
+ORDER BY total_attempted_calls DESC;
+```
+
+---
+
+### PATTERN 15 — Total Leads and Attempted Leads (counsellor wise, any date window)
+
+Shows per-counsellor count of new leads added in a given date window AND how many of those were attempted (had at least one remark). The student creation window is applied in the JOIN ON clause. Apply the standard IST date window (see TIMEZONE RULES) for today / yesterday / last N days.
+**RULE J8/F6 exception:** `WHERE sr.student_id IS NOT NULL` is intentional — this is NOT a full-roster query. Only counsellors who attempted calls on new leads appear. Do NOT remove this filter.
+
+```sql
+SELECT 
+    c.counsellor_name,
+    COUNT(DISTINCT s.student_id) AS total_leads,
+    COUNT(DISTINCT sr.student_id) AS total_attempted_leads
+FROM counsellors c
+LEFT JOIN students s ON c.counsellor_id = s.assigned_counsellor_id
+LEFT JOIN student_remarks sr ON s.student_id = sr.student_id
+    AND s.created_at >= <start_ist>   -- e.g. CURRENT_DATE - INTERVAL '5 hours 30 minutes' (today)
+    AND s.created_at <  <end_ist>     -- e.g. CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+WHERE sr.student_id IS NOT NULL
+GROUP BY c.counsellor_id, c.counsellor_name
+ORDER BY total_attempted_leads DESC;
+```
+
+---
+
+### PATTERN 16 — First NI (any date window)
+
+Counts NI students whose **first remark** (earliest `created_at` in `student_remarks`) falls within the given IST date window. Uses `DISTINCT ON (student_id) ORDER BY student_id, created_at ASC` to get each student's earliest remark.
+Apply the standard IST date window (see TIMEZONE RULES) for today / yesterday / last N days.
+
+```sql
+WITH first_ni_students AS (
+  SELECT DISTINCT ON (sr.student_id)
+    sr.student_id,
+    sr.created_at AS first_ni_at
+  FROM student_remarks sr
+  INNER JOIN students s ON sr.student_id = s.student_id
+  WHERE s.current_student_status = 'NotInterested'
+  ORDER BY sr.student_id, sr.created_at ASC
+)
+SELECT COUNT(*) AS first_ni_count
+FROM first_ni_students
+WHERE first_ni_at >= <start_ist>   -- e.g. CURRENT_DATE - INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+  AND first_ni_at <  <end_ist>;    -- e.g. CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+```
+
+**Key rule:** This counts current NI students by when they were first contacted, NOT by when they became NI. Do NOT use `student_remarks.calling_status` here — any remark (regardless of status) counts as first contact.
 
 ---
 
@@ -962,10 +1212,6 @@ ORDER BY success_rate DESC;
 
 **RULE S12.** When asked about total ICC / total initial counselling calls / ICC count — in any form — ALWAYS use `"first_Icc_Date"` from `students` (double-quoted for case sensitivity). Count as `COUNT(DISTINCT student_id) WHERE "first_Icc_Date" IS NOT NULL`. Do NOT use `current_student_status = 'Initial Counselling Completed'` for this metric.
 
-**RULE S13.** Date field selection for filtering and time-based queries:
-- When filtering data from `students` or `current_student_status` table → ALWAYS use `updated_at` (this reflects when the student's status was last modified).
-- When filtering data from `course_status_journeys` or `course_status` → ALWAYS use `created_at` (this table creates a new row for every status change, so created_at is the event timestamp).
-- Rationale: `students.updated_at` tracks the latest modification to the student record. `course_status_journeys.created_at` tracks when each status change event occurred (append-only log).
 
 **RULE S14.** Standard ICC count query — ALWAYS use this exact pattern for counting ICC:
 ```sql
