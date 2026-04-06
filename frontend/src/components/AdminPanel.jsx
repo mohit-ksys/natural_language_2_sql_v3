@@ -5,200 +5,344 @@ export default function AdminPanel({ onClose }) {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-
-  // Create user form
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ username: '', full_name: '', role: 'admin', lms_type: 'online' });
   const [creating, setCreating] = useState(false);
-
-  // Password reveal modal
   const [reveal, setReveal] = useState(null); // { username, password }
+  const [search, setSearch] = useState('');
 
   const loadUsers = async () => {
     setLoading(true);
-    const res = await fetchUsers();
-    setLoading(false);
-    if (res.ok) setUsers(res.data.users);
-    else setError(res.error);
+    setError('');
+    try {
+      const res = await fetchUsers();
+      if (res.ok) setUsers(res.data.users || []);
+      else setError(res.error || 'Failed to load users');
+    } catch (e) {
+      setError(e.message || 'Failed to load users');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(() => { loadUsers(); }, []);
+  useEffect(() => {
+    loadUsers();
+    const handler = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, []);
 
   const handleCreate = async (e) => {
     e.preventDefault();
     setCreating(true);
-    const payload = {
-      username: form.username.trim(),
-      full_name: form.full_name.trim(),
-      role: form.role,
-      lms_type: form.role === 'super_admin' ? null : form.lms_type,
-    };
-    const res = await createUser(payload);
-    setCreating(false);
-    if (res.ok) {
-      setReveal({ username: res.data.username, password: res.data.password });
-      setShowCreate(false);
-      setForm({ username: '', full_name: '', role: 'admin', lms_type: 'online' });
-      loadUsers();
-    } else {
-      alert(`Error: ${res.error}`);
+    setError('');
+    try {
+      const payload = {
+        username: form.username.trim(),
+        full_name: form.full_name.trim(),
+        role: form.role,
+        lms_type: form.role === 'super_admin' ? null : form.lms_type,
+      };
+      const res = await createUser(payload);
+      if (res.ok) {
+        setReveal({ username: res.data.username, password: res.data.password });
+        setShowCreate(false);
+        setForm({ username: '', full_name: '', role: 'admin', lms_type: 'online' });
+        loadUsers();
+      } else {
+        setError(res.error || 'Failed to create user');
+      }
+    } catch (e) {
+      setError(e.message || 'Failed to create user');
+    } finally {
+      setCreating(false);
     }
   };
 
   const handleReset = async (username) => {
     if (!confirm(`Reset password for ${username}?`)) return;
-    const res = await resetPassword(username);
-    if (res.ok) setReveal({ username: res.data.username, password: res.data.new_password });
-    else alert(`Error: ${res.error}`);
+    try {
+      const res = await resetPassword(username);
+      if (res.ok) setReveal({ username: res.data.username, password: res.data.new_password });
+      else setError(res.error || 'Reset failed');
+    } catch (e) {
+      setError(e.message || 'Reset failed');
+    }
   };
 
   const handleDeactivate = async (username) => {
-    if (!confirm(`Deactivate ${username}? All their sessions will be revoked.`)) return;
-    const res = await deactivateUser(username);
-    if (res.ok) loadUsers();
-    else alert(`Error: ${res.error}`);
+    if (!confirm(`Deactivate ${username}? All active sessions will be revoked.`)) return;
+    try {
+      const res = await deactivateUser(username);
+      if (res.ok) loadUsers();
+      else setError(res.error || 'Deactivate failed');
+    } catch (e) {
+      setError(e.message || 'Deactivate failed');
+    }
   };
 
   const handleReactivate = async (username) => {
-    const res = await reactivateUser(username);
-    if (res.ok) loadUsers();
-    else alert(`Error: ${res.error}`);
+    try {
+      const res = await reactivateUser(username);
+      if (res.ok) loadUsers();
+      else setError(res.error || 'Reactivate failed');
+    } catch (e) {
+      setError(e.message || 'Reactivate failed');
+    }
+  };
+
+  const filtered = users.filter(u =>
+    u.username.toLowerCase().includes(search.toLowerCase()) ||
+    u.full_name.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const roleMeta = {
+    super_admin: { label: 'Super Admin', color: '#a78bfa', bg: 'rgba(167,139,250,0.12)', border: 'rgba(167,139,250,0.25)' },
+    admin:       { label: 'Admin',       color: '#60a5fa', bg: 'rgba(96,165,250,0.12)',  border: 'rgba(96,165,250,0.25)' },
+    analyser:    { label: 'Analyser',    color: '#34d399', bg: 'rgba(52,211,153,0.12)',  border: 'rgba(52,211,153,0.25)' },
   };
 
   return (
-    <div style={styles.overlay}>
-      <div style={styles.panel}>
-        <div style={styles.header}>
-          <span style={styles.headerTitle}>User Management</span>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button style={styles.btnCreate} onClick={() => setShowCreate(true)}>+ Create User</button>
-            <button style={styles.btnClose} onClick={onClose}>×</button>
+    <div className="ap-overlay" onClick={onClose}>
+      <div className="ap-panel" onClick={e => e.stopPropagation()}>
+
+        {/* ── Header ── */}
+        <div className="ap-header">
+          <div className="ap-header-left">
+            <div className="ap-header-icon">⬡</div>
+            <div>
+              <h2 className="ap-title">User Management</h2>
+              <p className="ap-subtitle">{users.length} user{users.length !== 1 ? 's' : ''} · superadmin access</p>
+            </div>
+          </div>
+          <div className="ap-header-right">
+            <button className="ap-btn-primary" onClick={() => { setShowCreate(true); setError(''); }}>
+              + Create User
+            </button>
+            <button className="ap-btn-close" onClick={onClose}>✕</button>
           </div>
         </div>
 
-        {loading && <p style={styles.info}>Loading users...</p>}
-        {error && <p style={styles.errorText}>{error}</p>}
+        {/* ── Error banner ── */}
+        {error && (
+          <div className="ap-error-banner">
+            <span>⚠ {error}</span>
+            <button onClick={() => setError('')}>✕</button>
+          </div>
+        )}
 
-        {!loading && (
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                {['Username', 'Full Name', 'Role', 'LMS', 'Status', 'Last Login', 'Actions'].map(h => (
-                  <th key={h} style={styles.th}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {users.map(u => (
-                <tr key={u.id} style={{ borderBottom: '1px solid #2a2d3a' }}>
-                  <td style={styles.td}>{u.username}</td>
-                  <td style={styles.td}>{u.full_name}</td>
-                  <td style={styles.td}><span style={roleStyle(u.role)}>{u.role}</span></td>
-                  <td style={styles.td}>{u.lms_type || '—'}</td>
-                  <td style={styles.td}>
-                    <span style={{ color: u.is_active ? '#4ade80' : '#f87171', fontSize: '12px' }}>
-                      {u.is_active ? 'Active' : 'Inactive'}
-                    </span>
-                  </td>
-                  <td style={styles.td}>{u.last_login_at_ist ? new Date(u.last_login_at_ist).toLocaleString('en-IN') : '—'}</td>
-                  <td style={styles.td}>
-                    <div style={{ display: 'flex', gap: '6px' }}>
-                      <button style={styles.btnSm} onClick={() => handleReset(u.username)}>Reset PW</button>
-                      {u.is_active
-                        ? <button style={{ ...styles.btnSm, background: '#7f1d1d' }} onClick={() => handleDeactivate(u.username)}>Deactivate</button>
-                        : <button style={{ ...styles.btnSm, background: '#14532d' }} onClick={() => handleReactivate(u.username)}>Reactivate</button>
-                      }
-                    </div>
-                  </td>
+        {/* ── Search ── */}
+        <div className="ap-search-row">
+          <div className="ap-search-wrap">
+            <span className="ap-search-icon">⌕</span>
+            <input
+              className="ap-search"
+              placeholder="Search by name or email…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+            {search && <button className="ap-search-clear" onClick={() => setSearch('')}>✕</button>}
+          </div>
+          <button className="ap-btn-ghost" onClick={loadUsers} title="Refresh">⟳ Refresh</button>
+        </div>
+
+        {/* ── Table ── */}
+        <div className="ap-table-wrap">
+          {loading ? (
+            <div className="ap-empty">
+              <div className="mcq-spinner" style={{ fontSize: '22px', marginBottom: '10px', opacity: 0.5 }}>⟳</div>
+              Loading users…
+            </div>
+          ) : error && users.length === 0 ? (
+            <div className="ap-empty" style={{ color: 'var(--red)' }}>
+              <div style={{ fontSize: '22px', marginBottom: '10px' }}>⚠</div>
+              {error}
+              <br />
+              <button className="ap-btn-ghost" style={{ marginTop: '12px' }} onClick={loadUsers}>Retry</button>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="ap-empty">{search ? 'No users match your search.' : 'No users found.'}</div>
+          ) : (
+            <table className="ap-table">
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Role</th>
+                  <th>LMS</th>
+                  <th>Status</th>
+                  <th>Last Login</th>
+                  <th>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filtered.map(u => {
+                  const rm = roleMeta[u.role] || roleMeta.analyser;
+                  const lastLogin = u.last_login_at_ist
+                    ? new Date(u.last_login_at_ist).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                    : null;
+                  return (
+                    <tr key={u.id} className={u.is_active ? '' : 'ap-row-inactive'}>
+                      <td className="ap-td-user">
+                        <div className="ap-avatar">{u.full_name.charAt(0).toUpperCase()}</div>
+                        <div className="ap-user-info">
+                          <span className="ap-user-name">{u.full_name}</span>
+                          <span className="ap-user-email">{u.username}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <span className="ap-role-badge" style={{ color: rm.color, background: rm.bg, borderColor: rm.border }}>
+                          {rm.label}
+                        </span>
+                      </td>
+                      <td>
+                        {u.lms_type ? (
+                          <span className="ap-lms-badge">{u.lms_type}</span>
+                        ) : (
+                          <span className="ap-dash">—</span>
+                        )}
+                      </td>
+                      <td>
+                        <span className={`ap-status ${u.is_active ? 'active' : 'inactive'}`}>
+                          <span className="ap-status-dot" />
+                          {u.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
+                      <td className="ap-td-login">
+                        {lastLogin ? <span className="ap-login-time">{lastLogin}</span> : <span className="ap-dash">Never</span>}
+                      </td>
+                      <td>
+                        <div className="ap-actions">
+                          <button className="ap-action-btn" onClick={() => handleReset(u.username)} title="Reset password">
+                            🔑 Reset PW
+                          </button>
+                          {u.is_active ? (
+                            <button className="ap-action-btn danger" onClick={() => handleDeactivate(u.username)} title="Deactivate user">
+                              ✕ Deactivate
+                            </button>
+                          ) : (
+                            <button className="ap-action-btn success" onClick={() => handleReactivate(u.username)} title="Reactivate user">
+                              ✓ Reactivate
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* ── Footer count ── */}
+        {!loading && filtered.length > 0 && (
+          <div className="ap-footer">
+            {search ? `${filtered.length} of ${users.length} users` : `${users.length} total users`}
+            &nbsp;·&nbsp;
+            {users.filter(u => u.is_active).length} active
+            &nbsp;·&nbsp;
+            {users.filter(u => !u.is_active).length} inactive
+          </div>
         )}
       </div>
 
-      {/* Create user form modal */}
+      {/* ── Create User Modal ── */}
       {showCreate && (
-        <div style={styles.modal}>
-          <div style={styles.modalBox}>
-            <h3 style={styles.modalTitle}>Create User</h3>
-            <form onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <input style={styles.input} placeholder="Username (email)" value={form.username}
-                onChange={e => setForm(f => ({ ...f, username: e.target.value }))} required />
-              <input style={styles.input} placeholder="Full Name" value={form.full_name}
-                onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} required />
-              <select style={styles.input} value={form.role}
-                onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
-                <option value="admin">admin</option>
-                <option value="analyser">analyser</option>
-                <option value="super_admin">super_admin</option>
-              </select>
-              {form.role !== 'super_admin' && (
-                <select style={styles.input} value={form.lms_type}
-                  onChange={e => setForm(f => ({ ...f, lms_type: e.target.value }))}>
-                  <option value="online">online</option>
-                  <option value="regular">regular</option>
-                </select>
-              )}
-              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                <button type="button" style={styles.btnCancel} onClick={() => setShowCreate(false)}>Cancel</button>
-                <button type="submit" style={styles.btnPrimary} disabled={creating}>{creating ? 'Creating...' : 'Create'}</button>
+        <div className="ap-modal-overlay" onClick={() => setShowCreate(false)}>
+          <div className="ap-modal" onClick={e => e.stopPropagation()}>
+            <div className="ap-modal-header">
+              <h3>Create New User</h3>
+              <button className="ap-btn-close" onClick={() => setShowCreate(false)}>✕</button>
+            </div>
+            <form onSubmit={handleCreate} className="ap-modal-form">
+              <label className="ap-label">
+                Email address
+                <input
+                  className="ap-input"
+                  type="email"
+                  placeholder="user@company.com"
+                  value={form.username}
+                  onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
+                  required
+                  autoFocus
+                />
+              </label>
+              <label className="ap-label">
+                Full name
+                <input
+                  className="ap-input"
+                  type="text"
+                  placeholder="Jane Smith"
+                  value={form.full_name}
+                  onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
+                  required
+                />
+              </label>
+              <div className="ap-form-row">
+                <label className="ap-label">
+                  Role
+                  <select className="ap-input" value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
+                    <option value="admin">Admin</option>
+                    <option value="analyser">Analyser</option>
+                    <option value="super_admin">Super Admin</option>
+                  </select>
+                </label>
+                {form.role !== 'super_admin' && (
+                  <label className="ap-label">
+                    LMS Type
+                    <select className="ap-input" value={form.lms_type} onChange={e => setForm(f => ({ ...f, lms_type: e.target.value }))}>
+                      <option value="online">Online</option>
+                      <option value="regular">Regular</option>
+                    </select>
+                  </label>
+                )}
+              </div>
+              <p className="ap-hint">A secure random password will be generated and shown once after creation.</p>
+              <div className="ap-modal-actions">
+                <button type="button" className="ap-btn-ghost" onClick={() => setShowCreate(false)}>Cancel</button>
+                <button type="submit" className="ap-btn-primary" disabled={creating}>
+                  {creating ? '⟳ Creating…' : 'Create User'}
+                </button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* Password reveal modal */}
+      {/* ── Password Reveal Modal ── */}
       {reveal && (
-        <div style={styles.modal}>
-          <div style={styles.modalBox}>
-            <h3 style={styles.modalTitle}>Password for {reveal.username}</h3>
-            <p style={{ color: '#9ca3af', fontSize: '13px', marginBottom: '8px' }}>
-              Copy this password — it won&apos;t be shown again.
-            </p>
-            <div style={styles.pwBox}>
-              <code style={{ color: '#e2e8f0', fontSize: '16px' }}>{reveal.password}</code>
-              <button style={styles.btnSm} onClick={() => { navigator.clipboard.writeText(reveal.password); }}>Copy</button>
+        <div className="ap-modal-overlay" onClick={() => setReveal(null)}>
+          <div className="ap-modal" onClick={e => e.stopPropagation()}>
+            <div className="ap-modal-header">
+              <h3>Password Generated</h3>
             </div>
-            <button style={{ ...styles.btnPrimary, marginTop: '16px', width: '100%' }} onClick={() => setReveal(null)}>Done</button>
+            <div className="ap-pw-body">
+              <div className="ap-pw-user">
+                <div className="ap-avatar large">{reveal.username.charAt(0).toUpperCase()}</div>
+                <span className="ap-user-email">{reveal.username}</span>
+              </div>
+              <p className="ap-hint" style={{ marginBottom: '12px' }}>
+                ⚠ Copy this password now — it will not be shown again after you close this dialog.
+              </p>
+              <div className="ap-pw-box">
+                <code className="ap-pw-code">{reveal.password}</code>
+                <button
+                  className="ap-btn-copy"
+                  onClick={() => navigator.clipboard.writeText(reveal.password)}
+                  title="Copy to clipboard"
+                >
+                  ⎘ Copy
+                </button>
+              </div>
+            </div>
+            <div className="ap-modal-actions" style={{ borderTop: '1px solid var(--border)' }}>
+              <button className="ap-btn-primary" style={{ width: '100%' }} onClick={() => setReveal(null)}>
+                Done — I've copied the password
+              </button>
+            </div>
           </div>
         </div>
       )}
     </div>
   );
 }
-
-function roleStyle(role) {
-  const colors = { super_admin: '#7c3aed', admin: '#2563eb', analyser: '#0891b2' };
-  return {
-    background: colors[role] || '#374151',
-    color: '#fff',
-    padding: '2px 8px',
-    borderRadius: '4px',
-    fontSize: '11px',
-    fontWeight: 600,
-  };
-}
-
-const styles = {
-  overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  panel: { background: '#1a1d27', borderRadius: '12px', border: '1px solid #2a2d3a', width: '90vw', maxWidth: '1100px', maxHeight: '85vh', overflow: 'auto', padding: '24px' },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
-  headerTitle: { fontSize: '18px', fontWeight: 700, color: '#e2e8f0' },
-  btnClose: { background: 'none', border: '1px solid #374151', color: '#9ca3af', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontSize: '18px' },
-  btnCreate: { background: '#4f46e5', border: 'none', color: '#fff', borderRadius: '6px', padding: '6px 14px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 },
-  table: { width: '100%', borderCollapse: 'collapse' },
-  th: { textAlign: 'left', padding: '10px 12px', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase', borderBottom: '1px solid #2a2d3a' },
-  td: { padding: '10px 12px', fontSize: '13px', color: '#d1d5db', verticalAlign: 'middle' },
-  btnSm: { background: '#374151', border: 'none', color: '#d1d5db', borderRadius: '4px', padding: '4px 8px', cursor: 'pointer', fontSize: '11px', fontWeight: 500 },
-  info: { color: '#6b7280', textAlign: 'center' },
-  errorText: { color: '#f87171', textAlign: 'center' },
-  modal: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  modalBox: { background: '#1a1d27', border: '1px solid #2a2d3a', borderRadius: '10px', padding: '28px', width: '380px' },
-  modalTitle: { margin: '0 0 16px', fontSize: '16px', color: '#e2e8f0', fontWeight: 700 },
-  input: { padding: '9px 12px', background: '#0f1117', border: '1px solid #2a2d3a', borderRadius: '7px', color: '#e2e8f0', fontSize: '13px', outline: 'none' },
-  btnPrimary: { background: '#4f46e5', border: 'none', color: '#fff', borderRadius: '7px', padding: '8px 16px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 },
-  btnCancel: { background: '#374151', border: 'none', color: '#d1d5db', borderRadius: '7px', padding: '8px 16px', cursor: 'pointer', fontSize: '13px' },
-  pwBox: { display: 'flex', alignItems: 'center', gap: '12px', background: '#0f1117', border: '1px solid #2a2d3a', borderRadius: '8px', padding: '12px 16px' },
-};

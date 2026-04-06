@@ -72,9 +72,16 @@ def _make_access_token(user: dict) -> str:
 
 
 def _make_refresh_token_and_store(user_id: str) -> str:
-    """Generate a secure refresh token, hash it, store in DB, return plaintext."""
-    raw = secrets.token_urlsafe(48)
-    hashed = _hash_pw(raw)
+    """Generate a secure refresh token, hash it, store in DB, return plaintext.
+
+    Token format: "{token_id}.{secret}"
+    The token_id is the DB row UUID — allows O(1) lookup on refresh/logout
+    instead of scanning and bcrypt-comparing every active token.
+    """
+    token_id = str(uuid.uuid4())
+    secret = secrets.token_urlsafe(48)  # token_urlsafe never contains "."
+    raw = f"{token_id}.{secret}"
+    hashed = _hash_pw(secret)           # only hash the secret portion
     now_utc = datetime.now(timezone.utc)
     expires_utc = now_utc + timedelta(days=settings.REFRESH_TOKEN_EXPIRY_DAYS)
 
@@ -84,7 +91,7 @@ def _make_refresh_token_and_store(user_id: str) -> str:
             INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at_utc, expires_at_ist)
             VALUES (:id, :user_id, :token_hash, :exp_utc, :exp_utc AT TIME ZONE 'Asia/Kolkata')
         """), {
-            "id": str(uuid.uuid4()),
+            "id": token_id,
             "user_id": user_id,
             "token_hash": hashed,
             "exp_utc": expires_utc,
@@ -146,27 +153,25 @@ def login(req: LoginRequest):
 @router.post("/refresh")
 def refresh_token(req: RefreshRequest):
     """Validate refresh token and issue a new access token."""
-    engine = get_auth_engine()
+    # Token format: "{token_id}.{secret}" — look up by ID then verify secret
+    token_id, dot, secret = req.refresh_token.partition(".")
+    if not dot:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token.")
 
-    # Fetch all non-revoked, non-expired tokens and find a matching hash
+    engine = get_auth_engine()
     with engine.connect() as conn:
-        rows = conn.execute(text("""
+        row = conn.execute(text("""
             SELECT rt.id, rt.token_hash, rt.expires_at_utc, rt.revoked,
                    u.id as user_id, u.username, u.full_name, u.role, u.lms_type, u.is_active
             FROM refresh_tokens rt
             JOIN users u ON u.id = rt.user_id
-            WHERE rt.revoked = false AND rt.expires_at_utc > now()
-        """)).fetchall()
+            WHERE rt.id = :token_id AND rt.revoked = false AND rt.expires_at_utc > now()
+        """), {"token_id": token_id}).fetchone()
 
-    matched = None
-    for row in rows:
-        if _verify_pw(req.refresh_token, row.token_hash):
-            matched = dict(row._mapping)
-            break
-
-    if matched is None:
+    if row is None or not _verify_pw(secret, row.token_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token.")
 
+    matched = dict(row._mapping)
     if not matched["is_active"]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is deactivated.")
 
@@ -184,17 +189,19 @@ def refresh_token(req: RefreshRequest):
 @router.post("/logout")
 def logout(req: RefreshRequest):
     """Revoke the given refresh token."""
+    token_id, dot, secret = req.refresh_token.partition(".")
+    if not dot:
+        return {"success": True}  # malformed token — nothing to revoke
+
     engine = get_auth_engine()
     with engine.connect() as conn:
-        rows = conn.execute(text(
-            "SELECT id, token_hash FROM refresh_tokens WHERE revoked = false"
-        )).fetchall()
+        row = conn.execute(text(
+            "SELECT id, token_hash FROM refresh_tokens WHERE id = :token_id AND revoked = false"
+        ), {"token_id": token_id}).fetchone()
 
-    for row in rows:
-        if _verify_pw(req.refresh_token, row.token_hash):
-            with engine.begin() as conn:
-                conn.execute(text("UPDATE refresh_tokens SET revoked=true WHERE id=:id"), {"id": row.id})
-            return {"success": True}
+    if row and _verify_pw(secret, row.token_hash):
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE refresh_tokens SET revoked=true WHERE id=:id"), {"id": row.id})
 
     return {"success": True}
 

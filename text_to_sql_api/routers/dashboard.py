@@ -2,12 +2,24 @@
 Dashboard router — superadmin only. Stats cards + paginated query log.
 """
 
-from fastapi import APIRouter, Depends, Query
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from typing import Optional
 
 from auth.dependencies import require_super_admin
 from config.database import get_auth_engine
+
+
+def _parse_date(value: Optional[str], param_name: str) -> Optional[str]:
+    """Validate ISO date/datetime string; raise 400 on bad format."""
+    if not value:
+        return None
+    try:
+        datetime.fromisoformat(value)
+        return value
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid date format for '{param_name}'. Use ISO 8601 (e.g. 2024-04-01 or 2024-04-01T00:00:00).")
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
@@ -69,6 +81,9 @@ def get_logs(
     date_to: Optional[str] = Query(None),
 ):
     """Paginated + filtered query log for dashboard table."""
+    date_from = _parse_date(date_from, "date_from")
+    date_to = _parse_date(date_to, "date_to")
+
     engine = get_auth_engine()
 
     conditions = []
@@ -101,11 +116,11 @@ def get_logs(
         params["lms_type"] = lms_type
 
     if date_from:
-        conditions.append("ql.created_at_utc >= :date_from::timestamptz")
+        conditions.append("ql.created_at_utc >= CAST(:date_from AS timestamptz)")
         params["date_from"] = date_from
 
     if date_to:
-        conditions.append("ql.created_at_utc <= :date_to::timestamptz")
+        conditions.append("ql.created_at_utc <= CAST(:date_to AS timestamptz)")
         params["date_to"] = date_to
 
     where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""

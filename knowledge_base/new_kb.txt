@@ -99,7 +99,7 @@ Append-only call log. One row per call attempt, multiple per student.
 | student_id | VARCHAR → students | |
 | counsellor_id | VARCHAR → counsellors | Counsellor who made the call. |
 | calling_status | VARCHAR | 'Connected' or 'Not Connected'. |
-| sub_calling_status | VARCHAR | Connected: 'Hot', 'Warm', 'Cold'. Not Connected: 'Ringing no response', 'Line Busy', 'Switched off', 'Invalid Number'|
+| sub_calling_status | VARCHAR | Connected: 'Cold'. Not Connected: 'Ringing no response', 'Line Busy', 'Switched off', 'Invalid Number'|
 | remarks | TEXT | Free-text notes. Use ILIKE. |
 | callback_date | DATE | Type DATE — never apply timezone offset to this column. |
 | feesAmount | INTEGER | Fees discussed. SUM for payment tracking. |
@@ -107,9 +107,8 @@ Append-only call log. One row per call attempt, multiple per student.
 | updated_at | TIMESTAMPTZ | When record was last updated (UTC). |
 
 ### Business rules:
-- Quality call = `calling_status = 'Connected' AND sub_calling_status IN ('Hot', 'Warm')`.
 - Raw connection = `calling_status = 'Connected'` only.
-- Success rate / call performance / efficiency = `COUNT(Connected) / COUNT(all)` — NOT student conversion.
+- Success rate / call performance / efficiency = `COUNT(Connected)/COUNT(all)` — NOT student conversion.
 - First call per student: `ROW_NUMBER() OVER (PARTITION BY student_id ORDER BY created_at, remark_id) = 1`.
 - Latest remark per student: `DISTINCT ON (student_id) ORDER BY student_id, created_at DESC`.
 - Overdue callbacks: `callback_date < CURRENT_DATE`. Upcoming: `callback_date >= CURRENT_DATE`.
@@ -231,6 +230,31 @@ Marketing touchpoints only. One row per activity, multiple per student.
 
 ---
 
+## TABLE: counsellor_break_logs
+One row per break session taken by a counsellor.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | INTEGER PK | Auto-incremented. |
+| counsellor_id | VARCHAR → counsellors | Counsellor who took the break. |
+| break_start | TIMESTAMPTZ NOT NULL | When the break started (UTC). |
+| break_end | TIMESTAMPTZ | When the break ended (UTC). NULL if break is ongoing. |
+| duration | INTEGER | Duration in minutes. NULL until break ends. |
+| duration_seconds | INTEGER | Duration in seconds. NULL until break ends. |
+| duration_formatted | VARCHAR(10) | Human-readable duration (e.g. "00:15:30"). NULL until break ends. |
+| created_at | TIMESTAMPTZ NOT NULL | When record was created (UTC). |
+| updated_at | TIMESTAMPTZ NOT NULL | When record was last updated (UTC). |
+| break_type | VARCHAR(255) | Type of break (e.g. 'lunch', 'short break'). Defaults to empty string. |
+| notes | VARCHAR(255) | Optional notes about the break. Defaults to empty string. |
+
+### Business rules:
+- An ongoing break has `break_end IS NULL`.
+- `duration` and `duration_seconds` are only populated after `break_end` is set.
+- Join to `counsellors` via `counsellor_id` to get counsellor names.
+- Always apply IST timezone conversion when filtering on `break_start` or `break_end` (see TIMEZONE RULES).
+
+---
+
 # SECTION 2 — TABLE RELATIONSHIPS
 
 ```
@@ -297,7 +321,6 @@ course_status_journeys.course_id  → university_courses.course_id
 |---|---|---|
 | "success rate", "efficiency", "performing well/best/worst", "how is X performing" (counsellor/team context) | student_remarks | `COUNT(calling_status='Connected') / COUNT(all remarks)` |
 | "conversion rate", "admission rate", "how many students converted" (explicit student outcome) | course_status_journeys | `COUNT(DISTINCT student_id WHERE course_status IN ('Admission','Enrolled'))` |
-| "quality call rate", "hot/warm rate" | student_remarks | `COUNT(Connected AND sub_status IN ('Hot','Warm')) / COUNT(all)` |
 | "best/worst time slot", "peak performance hour" | student_remarks | `COUNT(calling_status='Connected') / COUNT(*)` by hour — NOT quality call rate |
 
 **Example: "What is the success rate of each counsellor?"**
@@ -441,7 +464,7 @@ Apply standard IST date window (see TIMEZONE RULES).
 Use when: "NI students who are at [stage]", "NI students marked as [stage]", "NI students currently at [stage]".
 NEVER query both NI and stage from the same students table — they cannot coexist on the same row.
 
-**Rule:** Always get NI from `course_status_journeys`, and filter stage via subquery:
+**Rule:** Always get NI from `course_status_journeys.course_status = 'NotInterested'`, and filter stage via subquery:
 - Stage from `students` table (Fresh, Pre Application, ICC) → subquery on `students.current_student_status`
 - Stage from `course_status_journeys` (Application, Admission, Document Pending, Document Submitted, Enrolled) → subquery on `course_status_journeys.course_status`
 
@@ -540,7 +563,7 @@ Apply the standard IST date window (see TIMEZONE RULES) for today / yesterday / 
 | Total fees collected / revenue | `course_status_journeys` | `SUM(deposit_amount) WHERE deposit_amount > 0` | |
 
 **Rules:**
-- "Total fee", "admission fee", "course fee", "how much is the course", "course worth", "fee of [university/course]" → ALWAYS use `university_courses.total_fees`.
+- "Total fee", "admission fee", "course fee", "how much does a course cost", "course worth", "fee of [course/university]" → ALWAYS use `university_courses.total_fees`.
 - "Deposit", "deposit amount", "amount paid", "payment collected", "fees received" → ALWAYS use `course_status_journeys.deposit_amount`.
 - NEVER use `deposit_amount` to answer questions about course pricing — it is actual money paid, not the listed course fee.
 - NEVER use `total_fees` to answer questions about payments collected — it is the catalog price, not actual collected amount.
@@ -659,7 +682,6 @@ Adapt grouping: university → `GROUP BY uc.university_name`, course → add `uc
 | "enrolled" / "enrollment count" | `course_status = 'Enrolled'` on `course_status_journeys` |
 | "converted" / "conversion" / "admitted or beyond" | `course_status IN ('Admission', 'Document Pending', 'Document Submitted', 'Enrolled')` on `course_status_journeys` |
 | "applications by source" | JOIN `course_status_journeys` + `students`, filter `course_status = 'Application'`, group by `students.source` |
-| "quality call" / "hot/warm connection" | `calling_status='Connected' AND sub_calling_status IN ('Hot','Warm')` |
 | "connected call" / "raw connection" | `calling_status = 'Connected'` only |
 | "success rate" / "performance" / "efficiency" (counsellor/team) | `COUNT(Connected)/COUNT(all)` from student_remarks — NOT conversion |
 | "conversion rate" / "admission rate" (student outcomes) | `COUNT(DISTINCT student_id WHERE course_status IN ('Admission','Document Pending','Document Submitted','Enrolled'))` from `course_status_journeys` |
@@ -1160,6 +1182,8 @@ WHERE first_ni_at >= <start_ist>   -- e.g. CURRENT_DATE - INTERVAL '1 day' - INT
 
 **RULE O7.** List queries (e.g. "show all calls made by X") MUST include ORDER BY. Use `created_at DESC` for call records unless otherwise specified. Never return unordered lists.
 
+**RULE O8.** Whenever a date or timestamp column (`created_at`, `updated_at`, or any derived date) is returned to the user, it MUST be converted to IST using `AT TIME ZONE 'Asia/Kolkata'`. Always use `MIN(created_at)` (not raw `created_at`) when selecting event dates from append-only tables to avoid duplicates from re-triggers. Never expose UTC timestamps directly in query output.
+
 ---
 
 ### FILTER RULES
@@ -1253,7 +1277,7 @@ For date-filtered queries on `course_status_journeys` (Application, Admission, D
 
 **RULE S8.** For time-slot / hourly performance queries ("best time", "worst time", "perform best at what hour", "connected at 9 AM"):
 - ALWAYS use `EXTRACT(HOUR FROM created_at AT TIME ZONE 'Asia/Kolkata')` on `student_remarks`.
-- Performance = `calling_status = 'Connected'` rate only — NEVER add `sub_calling_status IN ('Hot','Warm')`.
+- Performance = `calling_status = 'Connected'` rate only.
 - Always include `HAVING COUNT(*) > 0`.
 - Add `LIMIT 1` when asking for a single best/worst slot.
 
@@ -1346,6 +1370,15 @@ EXTRACT(HOUR FROM (created_at + INTERVAL '5 hours 30 minutes'))
 **RULE TZ2.** NEVER alter the user's specified time interval value. If the user asks for "last 6 months", write `INTERVAL '6 months'` exactly. Do NOT subtract timezone offset hours from a duration (e.g. do NOT write `INTERVAL '5 months 24 days'` instead of `INTERVAL '6 months'`). ALWAYS use `CURRENT_DATE - interval 'N ...' - interval '5 hours 30 minutes'` form — never `NOW() - INTERVAL 'N ...'`.
 
 **RULE TZ3.** In PostgreSQL, a column alias defined in the SELECT clause cannot be used inside expressions, functions, or CASE statements in the ORDER BY clause. It can only be used directly.This limitation applies specifically when the alias is derived (computed via CASE, functions, etc.), not a physical column.If your ORDER BY logic becomes complex, using a subquery or CTE is the most maintainable and scalable approach.Relying on alias reuse in complex queries can lead to unexpected failures during migrations (e.g., MySQL → PostgreSQL), so avoid it in production-grade SQL.
+
+**RULE TZ4.** Whenever a query returns a date or timestamp to the user, ALWAYS convert `created_at` or `updated_at` to IST using `AT TIME ZONE 'Asia/Kolkata'` (or equivalently `+ INTERVAL '5 hours 30 minutes'`). NEVER display raw UTC timestamps to the user. Additionally, ALWAYS use `MIN(created_at)` when selecting a representative date for an event from append-only tables (e.g. `course_status_journeys`, `student_remarks`) — never use `MAX` or a raw undeduped `created_at` for this purpose.
+```sql
+-- Correct: display date in IST
+SELECT MIN(created_at) AT TIME ZONE 'Asia/Kolkata' AS event_date_ist
+FROM course_status_journeys
+WHERE course_status = '<Status>'
+GROUP BY student_id;
+```
 
 ---
 

@@ -1,5 +1,6 @@
 import time
 import logging
+import threading
 
 from google import genai
 from google.genai import types
@@ -12,9 +13,9 @@ log = logging.getLogger("text2sql")
 client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
 _active_model: str = settings.GEMINI_MODEL
+_MODEL_LOCK = threading.Lock()
 
 ALLOWED_MODELS = settings.ALLOWED_MODELS
-
 
 
 def _call_llm(
@@ -48,15 +49,17 @@ TAG_VOCABULARY = [
 
 
 def get_active_model() -> str:
-    return _active_model
+    with _MODEL_LOCK:
+        return _active_model
 
 
 def set_active_model(model: str) -> str:
     global _active_model
     if model not in ALLOWED_MODELS:
         raise ValueError(f"Model '{model}' not allowed. Choose from: {ALLOWED_MODELS}")
-    _active_model = model
-    return _active_model
+    with _MODEL_LOCK:
+        _active_model = model
+        return _active_model
 
 
 def _call_gemini(
@@ -148,9 +151,10 @@ def generate_sql(
     thinking_enabled: bool = False,
     thinking_level: str = "high",
     include_thoughts: bool = False,
+    lms_type: str = "online",
 ) -> tuple[str, str]:
     """Returns (sql, thoughts). thoughts is empty unless include_thoughts=True."""
-    knowledge_base = get_knowledge_base_prompt()
+    knowledge_base = get_knowledge_base_prompt(lms_type=lms_type)
 
     from datetime import datetime
     now = datetime.now()
@@ -170,14 +174,15 @@ def generate_sql(
 2. MANDATORY: JOIN with 'counsellors' table using 'counsellor_name' whenever a staff/counsellor name is mentioned. Never guess IDs.
 3. MANDATORY: For Admissions count, always use COUNT(DISTINCT student_id) to avoid duplicates.
 4. MANDATORY: Apply date, time, month, day and year filters ONLY if specified in the user query explicitly. Otherwise do not filter by date.
-5. MANDATORY: Do NOT add LIMIT unless the user explicitly says "top N", "limit to", or gives a specific number. Summary and aggregation queries must have NO LIMIT.
-6. TIMEZONE for 'created_at' (stored UTC, CURRENT_DATE is IST) — two cases only:
+5. MANDATORY: Do NOT add LIMIT unless the user explicitly says "top N", "limit to", or gives a specific number. Summary and aggregation queries must have NO LIMIT. 
+6. MANDATORY: Add limit 5 for all queries that return a list of records or rows more than 50.
+7. TIMEZONE for 'created_at' (stored UTC, CURRENT_DATE is IST) — two cases only:
     - Rolling windows (last N days/hours/months): use plain `NOW() - INTERVAL 'X days'` — NO timezone offset needed.
     - IST day-boundary (Today/Yesterday): subtract offset — `created_at >= CURRENT_DATE - interval '5 hours 30 minutes' AND created_at < CURRENT_DATE + interval '1 day' - interval '5 hours 30 minutes'`
     - callback_date is type DATE — never apply timezone offset to it.
-7. For year-based queries, always use EXTRACT(YEAR FROM CURRENT_DATE) or DATE_TRUNC('year', CURRENT_DATE). NEVER hardcode a numeric year literal.
-8. NEVER use ILIKE on IDs. Always join by name.
-9. Output ONLY raw SQL. No markdown, no comments, no explanation.
+8. For year-based queries, always use EXTRACT(YEAR FROM CURRENT_DATE) or DATE_TRUNC('year', CURRENT_DATE). NEVER hardcode a numeric year literal.
+9. NEVER use ILIKE on IDs. Always join by name.
+10. Output ONLY raw SQL. No markdown, no comments, no explanation.
 
 
 User Question: "{user_query}"
@@ -236,8 +241,8 @@ Instructions:
     return answer, chart_type, usage
 
 
-def auto_fix_sql(user_query: str, failed_sql: str, error_message: str, model: str = None) -> str | None:
-    knowledge_base = get_knowledge_base_prompt()
+def auto_fix_sql(user_query: str, failed_sql: str, error_message: str, model: str = None, lms_type: str = "online") -> str | None:
+    knowledge_base = get_knowledge_base_prompt(lms_type=lms_type)
     prompt = f"""{knowledge_base}
 
 ### SQL ERROR TO FIX:
@@ -391,5 +396,5 @@ Respond ONLY as valid JSON in this exact format:
         "filter":   {"verdict": "ERROR", "reason": ""},
         "group_by": {"verdict": "ERROR", "reason": ""},
         "overall":  "ERROR",
-        "summary":  str(e) if 'e' in dir() else "Unknown error",
+        "summary":  "Unknown error",
     }

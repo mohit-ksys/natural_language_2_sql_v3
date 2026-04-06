@@ -150,29 +150,6 @@ Key patterns: TAT = course_status_journeys.created_at − students.created_at. U
 
 ---
 
-Question: Which counsellors are best at reaching students and having quality conversations with strong or moderate interest?
-
-```sql
-SELECT
-    c.counsellor_name,
-    COUNT(sr.remark_id) AS total_attempts,
-    COUNT(CASE WHEN sr.calling_status = 'Connected' AND sr.sub_calling_status IN ('Hot', 'Warm') THEN 1 END) AS quality_connections,
-    COUNT(CASE WHEN sr.calling_status = 'Connected' THEN 1 END) AS total_connected,
-    ROUND(
-        COUNT(CASE WHEN sr.calling_status = 'Connected' AND sr.sub_calling_status IN ('Hot', 'Warm') THEN 1 END)::numeric
-        / NULLIF(COUNT(sr.remark_id), 0) * 100, 2
-    ) AS quality_rate_pct
-FROM counsellors c
-JOIN student_remarks sr ON c.counsellor_id = sr.counsellor_id
-WHERE sr.student_id IN (SELECT student_id FROM students)
-GROUP BY c.counsellor_id, c.counsellor_name
-HAVING COUNT(sr.remark_id) > 0
-ORDER BY quality_rate_pct DESC;
-```
-Key patterns: call quality = `calling_status = 'Connected' AND sub_calling_status IN ('Hot', 'Warm')`. This is a student_remarks metric — join counsellors directly to student_remarks on counsellor_id. Do NOT route through the students table and do NOT use student conversion rate (current_student_status IN ('Admission','Enrolled')) as a substitute for call quality — they measure completely different things. No status = 'active' filter. No LIMIT.
-
----
-
 Question: Show me monthly lead counts over the last 6 months broken down by source.
 
 ```sql
@@ -340,6 +317,56 @@ ORDER BY
     total_deposit_collected DESC;
 ```
 Key patterns: Use MIN(created_at) per (student_id, course_id) in admitted_students CTE to get first admission event — never filter raw rows directly. Use DISTINCT ON in deduped_payments to remove duplicate payment rows (same student, course, amount, fee_type, date). Apply INITCAP(TRIM(fee_type)) to normalize inconsistent casing before CASE WHEN comparisons. Payments CTE aggregates deposit per student-course after deduplication. Final SELECT joins admitted_students → university_courses (for total_fees and university_name), LEFT JOINs payments (for deposit sum), LEFT JOINs deduped_payments again (for per-fee-type breakdown). COALESCE(SUM(...), 0) handles students with no payment rows. Always guard child table queries with student_id IN (SELECT student_id FROM students) to exclude orphaned records.
+
+---
+
+Question: Give me yesterday's daily activity summary — how many students had their first ICC, how many turned NotInterested for the first time, how many were first connected, and how many unique students had any remark activity?
+
+```sql
+WITH first_icc AS (
+    SELECT COUNT(DISTINCT student_id) AS icc_count
+    FROM students
+    WHERE "first_Icc_Date" >= CURRENT_DATE - INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+      AND "first_Icc_Date" < CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+),
+first_ni AS (
+    SELECT COUNT(*) AS ni_count
+    FROM (
+        SELECT DISTINCT ON (sr.student_id) 
+               sr.created_at AS first_ni_at
+        FROM student_remarks sr
+        INNER JOIN students s ON sr.student_id = s.student_id
+        WHERE s.current_student_status = 'NotInterested'
+        ORDER BY sr.student_id, sr.created_at ASC
+    ) sub
+    WHERE first_ni_at >= CURRENT_DATE - INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+      AND first_ni_at < CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+),
+first_connected AS (
+    SELECT COUNT(DISTINCT student_id) AS connected_count
+    FROM (
+        SELECT student_id, MIN(created_at) AS first_connected_at
+        FROM student_remarks
+        WHERE calling_status = 'Connected'
+        GROUP BY student_id
+    ) sub
+    WHERE first_connected_at >= CURRENT_DATE - INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+      AND first_connected_at < CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+),
+total_remarks AS (
+    SELECT COUNT(DISTINCT student_id) AS unique_remarks_count
+    FROM student_remarks
+    WHERE created_at >= CURRENT_DATE - INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+      AND created_at < CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+      AND student_id IN (SELECT student_id FROM students)
+)
+SELECT 
+    (SELECT icc_count FROM first_icc) AS total_first_icc,
+    (SELECT ni_count FROM first_ni) AS total_first_ni,
+    (SELECT connected_count FROM first_connected) AS total_first_connected,
+    (SELECT unique_remarks_count FROM total_remarks) AS total_unique_remarks;
+```
+Key patterns: "yesterday" in IST = CURRENT_DATE - INTERVAL '1 day' - INTERVAL '5 hours 30 minutes' as lower bound AND CURRENT_DATE - INTERVAL '5 hours 30 minutes' as upper bound — always apply both offsets for IST day boundaries. first_icc uses students."first_Icc_Date" (quoted, camelCase). first_ni uses DISTINCT ON to get the earliest remark per student, then filters by date — only students currently in NotInterested status. first_connected uses MIN(created_at) per student from student_remarks where calling_status = 'Connected'. unique_remarks counts DISTINCT student_id from student_remarks in the window. Final SELECT uses scalar subqueries from each CTE — returns exactly one summary row. Always guard student_remarks with student_id IN (SELECT student_id FROM students).
 
 ---
 

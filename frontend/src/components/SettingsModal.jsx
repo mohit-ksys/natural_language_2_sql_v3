@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import { checkHealth } from '../services/api';
 
-export default function SettingsModal({ isOpen, onClose, settings, setSettings, backendStatus = 'disconnected' }) {
+export default function SettingsModal({ isOpen, onClose, settings, setSettings, backendStatus = 'disconnected', currentUser }) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
 
@@ -55,19 +55,8 @@ export default function SettingsModal({ isOpen, onClose, settings, setSettings, 
                 onClick={handleTestConnection}
                 disabled={testing}
               >
-                {testing ? '⟳ Testing...' : testResult === 'connected' ? '✓ Connected' : testResult === 'failed' ? '✕ Failed' : 'Test Connection'}
+                {testing ? <><span className="mcq-spinner">⟳</span> Testing...</> : testResult === 'connected' ? '✓ Connected' : testResult === 'failed' ? '✕ Failed' : 'Test Connection'}
               </button>
-            </div>
-          </div>
-
-          <div className="settings-section">
-            <h3>Database Connection</h3>
-            <p className="settings-desc">Connected via DATABASE_URL in your .env file</p>
-            <div className="connection-box">
-              <div className="connection-status">
-                <div className={`status-dot ${backendStatus === 'connected' ? 'connected' : 'disconnected'}`}></div>
-                <span>{backendStatus === 'connected' ? 'Database: Active' : 'Database: Checking...'}</span>
-              </div>
             </div>
           </div>
 
@@ -83,6 +72,32 @@ export default function SettingsModal({ isOpen, onClose, settings, setSettings, 
               </div>
             </div>
           </div>
+
+          {currentUser?.role === 'super_admin' && (
+            <div className="settings-section">
+              <h3>LMS Database</h3>
+              <p className="settings-desc">Switch which LMS database your queries run against</p>
+              <div className="lms-switch-row">
+                <button
+                  className={`lms-switch-btn ${(settings.lmsTypeOverride || 'online') === 'online' ? 'active' : ''}`}
+                  onClick={() => setSettings(prev => ({ ...prev, lmsTypeOverride: 'online' }))}
+                >
+                  <span className="lms-switch-dot" />
+                  Online LMS
+                </button>
+                <button
+                  className={`lms-switch-btn ${settings.lmsTypeOverride === 'regular' ? 'active' : ''}`}
+                  onClick={() => setSettings(prev => ({ ...prev, lmsTypeOverride: 'regular' }))}
+                >
+                  <span className="lms-switch-dot" />
+                  Regular LMS
+                </button>
+              </div>
+              <p className="settings-desc" style={{ marginTop: '8px' }}>
+                Active: <strong style={{ color: 'var(--green)' }}>{(settings.lmsTypeOverride || 'online').charAt(0).toUpperCase() + (settings.lmsTypeOverride || 'online').slice(1)} LMS</strong>
+              </p>
+            </div>
+          )}
 
           <div className="settings-section">
             <h3>Interface</h3>
@@ -118,4 +133,5 @@ SettingsModal.propTypes = {
   settings: PropTypes.object.isRequired,
   setSettings: PropTypes.func.isRequired,
   backendStatus: PropTypes.string,
+  currentUser: PropTypes.object,
 };

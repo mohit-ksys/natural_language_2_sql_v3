@@ -56,12 +56,13 @@ export default function InputDock({ onSendMessage, model, setModel, thinkOn, set
         <div className={`input-console ${isFocused ? 'focused' : ''} ${chatStarted ? 'compact' : ''}`}>
           <div className="input-row">
             <div className="textarea-wrap">
-              <textarea 
+              <textarea
                 className="input-textarea"
                 ref={textareaRef}
                 value={inputVal}
                 placeholder="Ask your database anything..."
                 rows={1}
+                maxLength={2000}
                 onChange={handleInput}
                 onKeyDown={handleKeyDown}
                 onFocus={() => setIsFocused(true)}
@@ -112,7 +113,7 @@ export default function InputDock({ onSendMessage, model, setModel, thinkOn, set
                 )}
 
               </div>
-              <button className="send-btn" onClick={handleSend}>
+              <button className="send-btn" onClick={handleSend} disabled={!inputVal.trim()} aria-label="Send message">
                 <span className="send-icon">↑</span>
               </button>
             </div>

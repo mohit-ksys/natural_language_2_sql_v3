@@ -278,9 +278,9 @@ export default function Sidebar({ startNewChat, onOpenSettings, chats = [], load
 
           <div className="sidebar-footer">
             {currentUser && (
-              <div style={{ padding: '6px 12px 2px', fontSize: '11px', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div className="sidebar-user-info">
                 {currentUser.full_name || currentUser.username}
-                <span style={{ marginLeft: '6px', background: '#374151', color: '#9ca3af', borderRadius: '3px', padding: '1px 5px', fontSize: '10px' }}>{currentUser.role}</span>
+                <span className="sidebar-user-role">{currentUser.role}</span>
               </div>
             )}
             {onDashboard && (

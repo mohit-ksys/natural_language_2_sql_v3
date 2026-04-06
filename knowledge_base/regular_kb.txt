@@ -1,0 +1,10 @@
+# Regular LMS — Knowledge Base
+# ─────────────────────────────────────────────────────────────────────────────
+# Replace this file with the actual schema and examples for the Regular LMS
+# database (REGULAR_LMS_URL).
+#
+# Until this file is populated, queries from regular-LMS users will fall back
+# to new_kb.txt (the Online LMS schema), which will produce incorrect SQL.
+#
+# Format: follow the same structure as knowledge_base/new_kb.txt
+# ─────────────────────────────────────────────────────────────────────────────

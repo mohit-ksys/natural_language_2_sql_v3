@@ -125,6 +125,7 @@ def save_feedback(
 
     token_usage_json = json.dumps(token_usage) if token_usage else None
 
+    _db_saved = False
     try:
         engine = get_auth_engine()
         with engine.begin() as conn:
@@ -157,16 +158,18 @@ def save_feedback(
                 "mcq_data": mcq_data,
                 "now": now_utc,
             })
+        _db_saved = True
     except Exception as e:
-        log.error("Failed to save query log to DB: %s", e)
+        log.error("Failed to save query log to DB (id=%s will not persist): %s", feedback_id[:8], e)
 
     if error_message:
         log.error("feedback[%s] session=%s query=%r error=%s", feedback_id[:8], session_id, user_query[:80], error_message)
     else:
         log.info("feedback[%s] session=%s exec=%.3fs query=%r", feedback_id[:8], session_id, execution_time, user_query[:80])
 
-    # Also append to session memory
-    append_session_turn(session_id, user_query, generated_sql, answer, feedback_id, user_id=user_id)
+    # Append to session memory only when DB save succeeded (feedback_id must exist in query_logs)
+    if _db_saved:
+        append_session_turn(session_id, user_query, generated_sql, answer, feedback_id, user_id=user_id)
 
     return feedback_id
 
@@ -190,10 +193,21 @@ def get_history(limit: int = 50) -> list[dict]:
         return []
 
 
+_ALLOWED_FEEDBACK_COLUMNS = frozenset({
+    "has_logic_feedback", "logic_feedback_text",
+    "has_sql_feedback", "corrected_sql",
+    "has_english_feedback", "english_feedback_text", "regenerated_sql",
+    "has_any_feedback",
+})
+
 def update_query_log_field(feedback_id: str, updates: dict):
     """Update specific columns on a query_logs row (used by feedback endpoints)."""
     from config.database import get_auth_engine
     if not updates:
+        return
+    invalid = set(updates) - _ALLOWED_FEEDBACK_COLUMNS
+    if invalid:
+        log.error("update_query_log_field: disallowed column(s) %s", invalid)
         return
     set_parts = ", ".join(f"{k}=:{k}" for k in updates)
     updates["feedback_id"] = feedback_id
@@ -293,8 +307,8 @@ def update_session_turn(session_id: str, feedback_id: str, new_sql: str, new_ans
                 SELECT id, content FROM session_turns
                 WHERE session_id = :sid
                 ORDER BY created_at_utc DESC
-                LIMIT 10
-            """), {"sid": session_id}).fetchall()
+                LIMIT :max_turns
+            """), {"sid": session_id, "max_turns": settings.SESSION_MAX_TURNS}).fetchall()
 
         for row in rows:
             try:
@@ -325,9 +339,9 @@ def format_session_for_prompt(session_id: str) -> str:
 
     lines = ["\n### CONVERSATION HISTORY (use this for follow-up questions):\n"]
     for t in recent:
-        lines.append(f'User: {t["user_query"]}')
-        lines.append(f'SQL: {t["generated_sql"]}')
-        lines.append(f'Answer: {t["answer"]}\n')
+        lines.append(f'User: {t.get("user_query", "")}')
+        lines.append(f'SQL: {t.get("generated_sql", "")}')
+        lines.append(f'Answer: {t.get("answer", "")}\n')
     return "\n".join(lines)
 
 

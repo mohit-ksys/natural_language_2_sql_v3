@@ -99,7 +99,7 @@ export default function MCQMessage({ msg, onSubmitAnswers, onSkip }) {
       {/* Progress dots */}
       {!submitted && (
         <div className="mcq-progress">
-          {questions.map((_, i) => {
+          {(questions || []).map((_, i) => {
             const hasAns = answers[i] !== null || freeTexts[i].trim() !== '';
             return (
               <button

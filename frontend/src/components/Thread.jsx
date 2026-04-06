@@ -7,7 +7,7 @@ const SQL_HINTS = [
   'SELECT ...', 'JOIN tables ...', 'GROUP BY ...', 'WHERE ...', 'WITH cte AS (...)', 'ORDER BY ...', 'HAVING COUNT(...)',
 ];
 
-export default function Thread({ messages, addToast, onFix, onRegen, onSubmitMCQAnswers, onSkipMCQ, settings }) {
+export default function Thread({ messages, addToast, onFix, onRegen, onSubmitMCQAnswers, onSkipMCQ, settings, currentUser }) {
   const endRef = useRef(null);
   const convRef = useRef(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -15,6 +15,8 @@ export default function Thread({ messages, addToast, onFix, onRegen, onSubmitMCQ
   const [hintIdx, setHintIdx] = useState(0);
 
   const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
+  // Show loading when last message is a user message (AI hasn't responded yet)
+  // or when user messages exist but last non-user message is still being processed
   const isLoading = lastMsg && lastMsg.type === 'user';
 
   // Rotate SQL hints while loading
@@ -31,13 +33,9 @@ export default function Thread({ messages, addToast, onFix, onRegen, onSubmitMCQ
     if (autoScroll && endRef.current) {
       setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 60);
     }
-    // When new AI message arrives, show scroll button if user has scrolled away
-    if (lastMsg?.type === 'ai' && !autoScroll) {
-      setShowScrollBtn(true);
-    }
   }, [messages]);
 
-  // Detect manual scroll up
+  // Detect manual scroll — show button whenever not at bottom
   const handleScroll = (e) => {
     const el = e.currentTarget;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -46,6 +44,7 @@ export default function Thread({ messages, addToast, onFix, onRegen, onSubmitMCQ
       setShowScrollBtn(false);
     } else {
       setAutoScroll(false);
+      setShowScrollBtn(true);
     }
   };
 
@@ -95,11 +94,9 @@ export default function Thread({ messages, addToast, onFix, onRegen, onSubmitMCQ
                 <div className="msg-ai-header">
                   <div className="ai-avatar">⚠</div>
                   <span className="ai-name">ChatWithDB</span>
-                  <span style={{ color: '#ff6b6b' }}>Error</span>
+                  <span className="msg-ai-error-label">Error</span>
                 </div>
-                <div style={{ padding: '16px', color: '#ff6b6b', fontSize: '13px', lineHeight: '1.5' }}>
-                  {m.error}
-                </div>
+                <div className="msg-ai-error-body">{m.error}</div>
               </div>
             );
           }
@@ -112,6 +109,7 @@ export default function Thread({ messages, addToast, onFix, onRegen, onSubmitMCQ
                 onFix={onFix}
                 onRegen={onRegen}
                 settings={settings}
+                currentUser={currentUser}
               />
             );
           }
@@ -159,4 +157,5 @@ Thread.propTypes = {
   onSubmitMCQAnswers: PropTypes.func.isRequired,
   onSkipMCQ: PropTypes.func.isRequired,
   settings: PropTypes.object,
+  currentUser: PropTypes.object,
 };

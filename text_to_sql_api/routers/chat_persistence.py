@@ -5,7 +5,7 @@ Chat persistence router — saves/loads frontend chat UI state via user_chats ta
 import json
 import logging
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import List, Optional, Dict, Any
 from sqlalchemy import text
 
@@ -19,6 +19,10 @@ router = APIRouter()
 # ─── Pydantic models ─────────────────────────────────────────────────────────
 
 class ChatMessage(BaseModel):
+    # extra='allow' preserves MCQ fields (questions, query_id, original_query, chatId)
+    # and any other frontend fields so they survive a save/load round-trip
+    model_config = ConfigDict(extra='allow')
+
     id: str
     type: str
     text: Optional[str] = None
@@ -30,7 +34,7 @@ class ChatMessage(BaseModel):
     answer: Optional[str] = None
     chart_type: Optional[str] = None
     data: Optional[List[Dict[str, Any]]] = None
-    execution_time: Optional[float] = None
+    execution_time: Optional[Any] = None   # float or None; Any avoids coercion errors
     session_context_alert: Optional[str] = None
     sessionId: Optional[str] = None
     userQuery: Optional[str] = None
@@ -40,10 +44,12 @@ class ChatMessage(BaseModel):
 
 
 class Chat(BaseModel):
+    model_config = ConfigDict(extra='allow')
+
     id: str
     title: str
     messages: List[ChatMessage]
-    lastMessage: str
+    lastMessage: Optional[str] = ''
     createdAt: Optional[str] = None
     isPinned: Optional[bool] = False
 

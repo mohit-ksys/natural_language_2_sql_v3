@@ -26,6 +26,8 @@ class QueryResponse(BaseModel):
     data: Optional[list[dict[str, Any]]] = None
     session_context_alert: Optional[str] = None
     token_usage: Optional[dict] = None
+    sql_auto_fixed: bool = False   # True when execution failed and LLM auto-fixed the SQL
+    sql_error: Optional[str] = None  # Original DB error that triggered auto-fix (or final error)
 
 
 class ExecuteRequest(BaseModel):

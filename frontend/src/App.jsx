@@ -82,7 +82,10 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
   const [backendStatus, setBackendStatus] = useState(null);
 
   // Determine lms_type for API calls
-  const lmsType = currentUser?.role === 'super_admin' ? null : (currentUser?.lms_type || null);
+  // super_admin uses the settings override (defaults to 'online'); other roles use their account's lms_type
+  const lmsType = currentUser?.role === 'super_admin'
+    ? (settings.lmsTypeOverride || 'online')
+    : (currentUser?.lms_type || null);
 
   // Load chats from backend
   useEffect(() => {
@@ -122,20 +125,19 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
 
   useEffect(() => {
     if (!currentChatId || !messages || messages.length === 0) return;
-    // Don't save while the title is still being generated — wait for a real title
-    const currentChat = chats.find(c => c.id === currentChatId);
-    if (currentChat?.title === 'Generating title...') return;
-
-    const updatedChats = chats.map(c => {
-      if (c.id === currentChatId) {
-        const lastMsg = messages[messages.length - 1];
-        const preview = lastMsg?.text ? lastMsg.text.slice(0, 50) : '';
-        return { ...c, messages, lastMessage: preview };
-      }
-      return c;
+    // Use functional setChats so we always have the latest chats state (no stale closure)
+    setChats(prev => {
+      const updatedChats = prev.map(c => {
+        if (c.id === currentChatId) {
+          const lastMsg = messages[messages.length - 1];
+          const preview = lastMsg?.text ? lastMsg.text.slice(0, 50) : '';
+          return { ...c, messages, lastMessage: preview };
+        }
+        return c;
+      });
+      saveChatsToBackendAsync(updatedChats, currentChatId);
+      return updatedChats;
     });
-    setChats(updatedChats);
-    saveChatsToBackendAsync(updatedChats, currentChatId);
   }, [messages, currentChatId]);
 
   // Register a save function so the parent (App) can await it before logout
@@ -165,7 +167,7 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
 
   useEffect(() => {
     try {
-      const { datahubConnected, ...persistable } = settings;
+      const { datahubConnected, lmsTypeOverride, ...persistable } = settings;
       localStorage.setItem('dw-settings', JSON.stringify(persistable));
     } catch {}
   }, [settings]);
@@ -218,19 +220,15 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
   const _updateTitleOnFirst = (isFirstQuery, chatIdToUse, text) => {
     if (isFirstQuery) {
       const newTitle = generateChatTitle(text);
-      setChats(prev => {
-        const updated = prev.map(c => c.id === chatIdToUse ? { ...c, title: newTitle } : c);
-        saveChatsToBackendAsync(updated, chatIdToUse);
-        return updated;
-      });
+      setChats(prev => prev.map(c => c.id === chatIdToUse ? { ...c, title: newTitle } : c));
     }
   };
 
   const handleSendMessage = async (text, isFix = false) => {
     if (!chatStarted) setChatStarted(true);
     const { chatIdToUse, isFirstQuery } = _ensureChat(text);
-    setMsgCounter(prev => prev + 1);
     const userMsgCounter = msgCounter + 1;
+    setMsgCounter(userMsgCounter);
     const userMsgId = `u-${userMsgCounter}`;
     const newMsgs = [...messages, { id: userMsgId, type: 'user', text, isFix, timestamp: new Date().toISOString() }];
     setMessages(newMsgs);
@@ -242,9 +240,10 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
           const res = await requestMCQs(sessionId, text, model, chatIdToUse, lmsType);
           if (res.ok) {
             _updateTitleOnFirst(isFirstQuery, chatIdToUse, text);
-            setMsgCounter(prev => prev + 1);
+            const mcqCounter = userMsgCounter + 1;
+            setMsgCounter(mcqCounter);
             setMessages(prev => [...prev, {
-              id: `mcq-${userMsgCounter + 1}`, type: 'mcq', model,
+              id: `mcq-${mcqCounter}`, type: 'mcq', model,
               query_id: res.data.query_id, questions: res.data.questions,
               original_query: res.data.original_query, sessionId, chatId: chatIdToUse,
               timestamp: new Date().toISOString(),
@@ -268,13 +267,14 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
     try {
       const res = await sendQuery(sessionId, text, model, settings.autoRunQuery, chatIdToUse, lmsType);
       if (res.ok) {
-        const { sql, answer, chart_type, data, execution_time, session_context_alert } = res.data;
+        const { sql, answer, chart_type, data, execution_time, session_context_alert, sql_auto_fixed, sql_error } = res.data;
         _updateTitleOnFirst(isFirstQuery, chatIdToUse, text);
         setMsgCounter(prev => prev + 1);
         setMessages(prev => [...prev, {
           id: `ai-${userMsgCounter + 1}`, type: 'ai', model, isRegen: false, sql, answer,
           chart_type, data, execution_time, session_context_alert, sessionId,
           userQuery: text, feedbackId: '', token_usage: res.data.token_usage || null,
+          sql_auto_fixed: sql_auto_fixed || false, sql_error: sql_error || null,
           timestamp: new Date().toISOString(),
         }]);
         if (session_context_alert) addToast(session_context_alert, 3000);
@@ -294,20 +294,24 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
     try {
       const res = await submitMCQAnswers(queryId, sessionId, answers, model, settings.autoRunQuery, currentChatId);
       if (res.ok) {
-        const { sql, answer, chart_type, data, execution_time, session_context_alert } = res.data;
-        setMsgCounter(prev => prev + 1);
+        const { sql, answer, chart_type, data, execution_time, session_context_alert, sql_auto_fixed, sql_error } = res.data;
+        const nextCounter = msgCounter + 1;
+        setMsgCounter(nextCounter);
         setMessages(prev => [...prev, {
-          id: `ai-${msgCounter + 1}`, type: 'ai', model, isRegen: false, sql, answer,
+          id: `ai-${nextCounter}`, type: 'ai', model, isRegen: false, sql, answer,
           chart_type, data, execution_time, session_context_alert, sessionId,
           userQuery: prev.find(m => m.type === 'mcq' && m.query_id === queryId)?.original_query || '',
           feedbackId: res.data.feedback_id || '', query_id: queryId,
-          token_usage: res.data.token_usage || null, timestamp: new Date().toISOString(),
+          token_usage: res.data.token_usage || null,
+          sql_auto_fixed: sql_auto_fixed || false, sql_error: sql_error || null,
+          timestamp: new Date().toISOString(),
         }]);
         if (session_context_alert) addToast(session_context_alert, 3000);
       } else {
         addToast(`Error: ${res.error}`);
-        setMsgCounter(prev => prev + 1);
-        setMessages(prev => [...prev, { id: `ai-err-${msgCounter + 1}`, type: 'ai-error', error: res.error }]);
+        const nextCounter = msgCounter + 1;
+        setMsgCounter(nextCounter);
+        setMessages(prev => [...prev, { id: `ai-err-${nextCounter}`, type: 'ai-error', error: res.error }]);
       }
     } catch (err) {
       addToast('Failed to process MCQ answers');
@@ -320,12 +324,14 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
     try {
       const res = await sendQuery(sessionId, originalQuery, model, settings.autoRunQuery, currentChatId, lmsType);
       if (res.ok) {
-        const { sql, answer, chart_type, data, execution_time, session_context_alert } = res.data;
-        setMsgCounter(prev => prev + 1);
+        const { sql, answer, chart_type, data, execution_time, session_context_alert, sql_auto_fixed, sql_error } = res.data;
+        const nextCounter = msgCounter + 1;
+        setMsgCounter(nextCounter);
         setMessages(prev => [...prev, {
-          id: `ai-${msgCounter + 1}`, type: 'ai', model, isRegen: false, sql, answer,
+          id: `ai-${nextCounter}`, type: 'ai', model, isRegen: false, sql, answer,
           chart_type, data, execution_time, session_context_alert, sessionId,
           userQuery: originalQuery, feedbackId: '', token_usage: res.data.token_usage || null,
+          sql_auto_fixed: sql_auto_fixed || false, sql_error: sql_error || null,
           timestamp: new Date().toISOString(),
         }]);
         if (session_context_alert) addToast(session_context_alert, 3000);
@@ -338,8 +344,8 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
   };
 
   const handleFix = (aiMsgId, fixText, mcqQueryId) => {
-    setMsgCounter(prev => prev + 1);
     const fixMsgCounter = msgCounter + 1;
+    setMsgCounter(fixMsgCounter);
     setMessages(prev => [...prev, { id: `u-${fixMsgCounter}`, type: 'user', text: fixText, isFix: true }]);
     const sessionId = currentChatId.replace('chat-', 'session-');
     setTimeout(async () => {
@@ -368,11 +374,11 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
     if (!lastUserMsg) return;
     const sessionId = currentChatId.replace('chat-', 'session-');
     const regenMsgCounter = msgCounter + 1;
+    setMsgCounter(regenMsgCounter);
     setTimeout(async () => {
       const res = await sendQuery(sessionId, lastUserMsg.text, model, true, currentChatId, lmsType);
       if (res.ok) {
         const { sql, answer, chart_type, data, execution_time } = res.data;
-        setMsgCounter(prev => prev + 1);
         setMessages(prev => [...prev, {
           id: `ai-${regenMsgCounter}`, type: 'ai', model, isRegen: true, sql, answer,
           chart_type, data, execution_time, sessionId, userQuery: lastUserMsg.text, feedbackId: '',
@@ -501,6 +507,7 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
           onSubmitMCQAnswers={handleSubmitMCQAnswers}
           onSkipMCQ={handleSkipMCQ}
           settings={settings}
+          currentUser={currentUser}
         />
         <InputDock
           onSendMessage={t => handleSendMessage(t, false)}
@@ -518,6 +525,7 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
         settings={settings}
         setSettings={setSettings}
         backendStatus={backendStatus}
+        currentUser={currentUser}
       />
 
       {isAdminOpen && <AdminPanel onClose={() => setIsAdminOpen(false)} />}

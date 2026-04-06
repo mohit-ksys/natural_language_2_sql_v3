@@ -20,6 +20,18 @@ const STAR_OPTS={
 };
 
 // Render a markdown string into an array of React-renderable segments
+function isTableRow(line) {
+  return line.trim().startsWith('|') && line.trim().endsWith('|');
+}
+
+function isSeparatorRow(line) {
+  return isTableRow(line) && /^\|[\s|:\-]+\|$/.test(line.trim());
+}
+
+function parseTableCells(line) {
+  return line.trim().slice(1, -1).split('|').map(c => c.trim());
+}
+
 function renderAnswer(text) {
   if (!text) return [];
 
@@ -35,6 +47,7 @@ function renderAnswer(text) {
   const lines = text.split('\n');
   const segments = [];
   let listItems = [];
+  let i = 0;
 
   const flushList = () => {
     if (listItems.length > 0) {
@@ -43,26 +56,45 @@ function renderAnswer(text) {
     }
   };
 
-  lines.forEach((raw, i) => {
+  while (i < lines.length) {
+    const raw = lines[i];
     const line = raw.trimEnd();
+
+    // Detect markdown table: header row | separator row | data rows
+    if (isTableRow(line) && i + 1 < lines.length && isSeparatorRow(lines[i + 1])) {
+      flushList();
+      const headers = parseTableCells(line);
+      i += 2; // skip header + separator
+      const rows = [];
+      while (i < lines.length && isTableRow(lines[i])) {
+        rows.push(parseTableCells(lines[i]));
+        i++;
+      }
+      segments.push({ type: 'table', headers, rows });
+      continue;
+    }
+
     if (!line.trim()) {
       flushList();
       if (i < lines.length - 1) segments.push({ type: 'spacer' });
-      return;
+      i++;
+      continue;
     }
     const headingMatch = line.match(/^(#{1,3})\s+(.+)/);
     if (headingMatch) {
       flushList();
       segments.push({ type: 'heading', level: headingMatch[1].length, html: inlineHtml(headingMatch[2]) });
-      return;
+      i++;
+      continue;
     }
     const bulletMatch = line.match(/^[-•*]\s+(.+)/);
-    if (bulletMatch) { listItems.push(inlineHtml(bulletMatch[1])); return; }
+    if (bulletMatch) { listItems.push(inlineHtml(bulletMatch[1])); i++; continue; }
     const numMatch = line.match(/^\d+\.\s+(.+)/);
-    if (numMatch) { listItems.push(inlineHtml(numMatch[1])); return; }
+    if (numMatch) { listItems.push(inlineHtml(numMatch[1])); i++; continue; }
     flushList();
     segments.push({ type: 'p', html: inlineHtml(line) });
-  });
+    i++;
+  }
 
   flushList();
   return segments;
@@ -123,10 +155,25 @@ function highlightSql(sql) {
     return o;
   }
 
+  // Collapse multiple consecutive blank lines into one, trim trailing blanks
   const lines = (sql || '').split('\n');
-  return lines.map((line, i) =>
-    `<span class="sql-ln-row"><span class="sql-ln">${i + 1}</span><span class="sql-ln-code">${highlight(line)}</span></span>`
-  ).join('\n');
+  const collapsed = [];
+  let lastBlank = false;
+  for (const line of lines) {
+    const blank = line.trim() === '';
+    if (blank && lastBlank) continue;
+    collapsed.push(line);
+    lastBlank = blank;
+  }
+  while (collapsed.length && collapsed[collapsed.length - 1].trim() === '') collapsed.pop();
+
+  let lineNum = 0;
+  return collapsed.map(line => {
+    const blank = line.trim() === '';
+    if (!blank) lineNum++;
+    const num = blank ? '' : lineNum;
+    return `<span class="sql-ln-row${blank ? ' sql-ln-blank' : ''}"><span class="sql-ln">${num}</span><span class="sql-ln-code">${highlight(line)}</span></span>`;
+  }).join('\n');
 }
 
 // Short time string e.g. "2:34 PM"
@@ -151,10 +198,10 @@ function execBarStyle(secs) {
   return { pct, color };
 }
 
-export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
+export default function AiMessage({ msg, addToast, onFix, onRegen, settings, currentUser }) {
   const { id, model, isRegen, sql: apiSql, answer: apiAnswer, chart_type, data, execution_time,
           session_context_alert, sessionId, userQuery, feedbackId: msgFeedbackId, token_usage, timestamp,
-          query_id: mcqQueryId } = msg;
+          query_id: mcqQueryId, sql_auto_fixed, sql_error } = msg;
 
   const tokenCost = token_usage
     ? calcCost(token_usage.model || model, token_usage.input_tokens, token_usage.output_tokens)
@@ -169,6 +216,9 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
   const [editText, setEditText] = useState(apiSql || '');
   const [isEdited, setIsEdited] = useState(false);
   const [showAllData, setShowAllData] = useState(false);
+
+  const isSuperAdmin = currentUser?.role === 'super_admin';
+  const isAdminRole = currentUser?.role === 'admin';
 
   const [fixPanelOpen, setFixPanelOpen] = useState(false);
   const [fixText, setFixText] = useState('');
@@ -213,11 +263,12 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
     }
   }, [isEditing]);
 
-  // Auto-run on mount if setting enabled — intentional empty dep array (run once)
-  const autoRunOnMount = useRef({ settings, sql, sessionId, isEdited });
+  // Auto-run on mount if setting enabled (or always for non-superadmin) — intentional empty dep array (run once)
+  const autoRunOnMount = useRef({ settings, sql, sessionId, isEdited, isSuperAdmin, data });
   useEffect(() => {
-    const { settings: s, sql: q, sessionId: sid, isEdited: edited } = autoRunOnMount.current;
-    if (s?.autoRunQuery && !edited && q && sid) handleRun();
+    const { settings: s, sql: q, sessionId: sid, isEdited: edited, isSuperAdmin: isSuper, data: existingData } = autoRunOnMount.current;
+    // Skip auto-run if data is already present (e.g. loaded from saved chat)
+    if ((s?.autoRunQuery || !isSuper) && !edited && q && sid && !existingData?.length) handleRun();
   }, []); // intentional: captures initial values via ref
 
   // Reset table sort when viewing a different message
@@ -331,6 +382,11 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
         <span className="ai-name">ChatWithDB</span>
         <span className="ai-model-tag">{model}</span>
         {isRegen && <span className="regen-badge">✦ Regenerated</span>}
+        {sql_auto_fixed && (
+          <span className="auto-fix-badge" title={sql_error ? `Original error: ${sql_error}` : 'SQL was automatically corrected after a DB error'}>
+            ⚡ Auto-Fixed
+          </span>
+        )}
         {token_usage && (
           <span className="token-badge token-badge-hover">
             <span className="token-in">↑{formatTokens(token_usage.input_tokens)}</span>
@@ -374,7 +430,7 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
       </div>
 
       {/* WHISPER QUERY */}
-      {!settings?.hideQuery && (
+      {!settings?.hideQuery && isSuperAdmin && (
         <div className={`whisper-query ${isEditing ? 'edit-mode' : ''}`}>
           <div className="query-header">
             <span className="query-lang">
@@ -403,7 +459,7 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
                 <button className="query-btn btn-active" onClick={() => { setIsEditing(false); setEditText(sql); }}>✕ Cancel</button>
               )}
               <button className="query-btn" onClick={handleCopy}>{copyText}</button>
-              <button className="query-btn" onClick={handleRun} style={runText === '⟳ Running...' ? {color:'var(--green)'} : {}}>{runText}</button>
+              <button className="query-btn" onClick={handleRun} disabled={runText === '⟳ Running...'} style={runText === '⟳ Running...' ? {color:'var(--green)',opacity:.65} : {}}>{runText}</button>
             </div>
           </div>
 
@@ -462,6 +518,20 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
         </div>
       )}
 
+      {/* LOADING SKELETON for non-superadmin */}
+      {!isSuperAdmin && runText === '⟳ Running...' && (
+        <div className="admin-query-skeleton">
+          <div className="aqs-bar">
+            <div className="think-pulse" style={{ marginRight: 8 }}><span></span><span></span><span></span></div>
+            <span className="aqs-label">Fetching results…</span>
+          </div>
+          <div className="skeleton-line" style={{ width: '85%' }} />
+          <div className="skeleton-line" style={{ width: '65%' }} />
+          <div className="skeleton-line" style={{ width: '75%' }} />
+          <div className="skeleton-line" style={{ width: '50%' }} />
+        </div>
+      )}
+
       {/* ANSWER */}
       {(resultAnswer || apiAnswer) && (
         <div className="whisper-answer">
@@ -481,6 +551,24 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings }) {
                   <ul key={idx} className="answer-list">
                     {seg.items.map((item, j) => <li key={j} dangerouslySetInnerHTML={{ __html: item }} />)}
                   </ul>
+                );
+              }
+              if (seg.type === 'table') {
+                return (
+                  <div key={idx} className="answer-table-wrap">
+                    <table className="answer-table">
+                      <thead>
+                        <tr>{seg.headers.map((h, j) => <th key={j} dangerouslySetInnerHTML={{ __html: h }} />)}</tr>
+                      </thead>
+                      <tbody>
+                        {seg.rows.map((row, ri) => (
+                          <tr key={ri}>
+                            {row.map((cell, ci) => <td key={ci} dangerouslySetInnerHTML={{ __html: cell }} />)}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 );
               }
               if (seg.type === 'spacer') return <div key={idx} className="answer-spacer" />;
@@ -650,4 +738,5 @@ AiMessage.propTypes = {
   onFix: PropTypes.func.isRequired,
   onRegen: PropTypes.func.isRequired,
   settings: PropTypes.object,
+  currentUser: PropTypes.object,
 };
