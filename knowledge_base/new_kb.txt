@@ -928,6 +928,14 @@ WHERE first_event_date >= CURRENT_DATE - interval 'N days' - interval '5 hours 3
 **Applies to all statuses:** `'Application'`, `'Admission'`, `'Document Pending'`, `'Document Submitted'`, `'Enrolled'`, `'NotInterested'` (after application).
 **Why MIN?** `course_status_journeys` is append-only — a student can have multiple rows for the same `course_status` (re-triggers, duplicates). Without MIN, duplicates inflate counts and old students reappear in recent-period filters.
 
+**⚠️ CRITICAL — NEVER do this (direct `created_at` filter on raw rows):**
+```sql
+-- WRONG — a student admitted in February whose row was re-triggered in March
+-- will be counted as a March admission. This produces incorrect results.
+SELECT COUNT(DISTINCT student_id)
+FROM course_status_journeys
+WHERE course_status = 'Admission'
+  AND created_at >= '2026-03-01' AND created_at < '2026-04-01';
 ---
 
 ### PATTERN 9 — Conversion rate from application to admission
