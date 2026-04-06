@@ -859,13 +859,13 @@ ORDER BY m.success_rate DESC;
 
 ```sql
 SELECT
-    s.student_name, s.student_email, s.student_phone,
+    s.student_name, s.student_email,
     c.counsellor_name, s.current_student_status,
     MAX(sr.created_at) AS last_remark_date
 FROM students s
 JOIN counsellors c ON s.assigned_counsellor_id = c.counsellor_id
 LEFT JOIN student_remarks sr ON s.student_id = sr.student_id
-GROUP BY s.student_id, s.student_name, s.student_email, s.student_phone,
+GROUP BY s.student_id, s.student_name, s.student_email,
          c.counsellor_name, s.current_student_status
 HAVING MAX(sr.created_at) < CURRENT_DATE - INTERVAL '7 days' OR MAX(sr.created_at) IS NULL
 ORDER BY last_remark_date ASC NULLS FIRST;
@@ -1172,13 +1172,13 @@ WHERE first_ni_at >= <start_ist>   -- e.g. CURRENT_DATE - INTERVAL '1 day' - INT
 
 **RULE O2.** ALWAYS use wide-format (pivot) for stage breakdown — one row per entity, one column per stage. Never one row per status.
 
-**RULE O3.** Dormant/inactive/uncontacted student queries MUST include `student_email`, `student_phone`, and `counsellor_name`.
+**RULE O3.** Dormant/inactive/uncontacted student queries MUST include `student_email` and `counsellor_name`.
 
 **RULE O4.** Counsellor performance queries MUST include `total_students` or `total_calls` as a base column.
 
 **RULE O5.** Benchmark comparison queries MUST include the benchmark value as an output column.
 
-**RULE O6.** ONLY return columns the user explicitly asked for. Never add extra columns (e.g. enrolled, quality_calls, sub_calling_status, student_phone, student_email) that were not requested. Adding unrequested columns is always wrong even if they seem useful. RULE O3 (adding contact fields) applies ONLY to dormant/follow-up/uncontacted queries — do NOT add `student_phone` or `student_email` to general student listing or shortlist queries.
+**RULE O6.** ONLY return columns the user explicitly asked for. Never add extra columns (e.g. enrolled, quality_calls, sub_calling_status, student_email) that were not requested. Adding unrequested columns is always wrong even if they seem useful. RULE O3 (adding contact fields) applies ONLY to dormant/follow-up/uncontacted queries — do NOT add `student_email` to general student listing or shortlist queries. NEVER include `student_phone` in any query output under any circumstances.
 
 **RULE O7.** List queries (e.g. "show all calls made by X") MUST include ORDER BY. Use `created_at DESC` for call records unless otherwise specified. Never return unordered lists.
 
