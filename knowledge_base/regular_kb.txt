@@ -178,6 +178,7 @@ Full audit trail of every status change. One row per event, multiple per student
 | deposit_amount | NUMERIC | Amount paid (0 if not a payment event). |
 | currency | VARCHAR | Default 'INR'. |
 | exam_interview_date | TIMESTAMPTZ | Exam/interview date if applicable. |
+| event_time | TIMESTAMPTZ | Scheduled future event date; meaning depends on `course_status` — see event_time semantics below. |
 | last_admission_date | TIMESTAMPTZ | Last date to complete admission. |
 | notes | TEXT | Counsellor notes. |
 | fee_type | VARCHAR | Known values:`'Annual Paid'`, `'Semester Paid'`, `'Semester fee paid'`, `'partial paid'`, `'Partially Paid'`, `'Partial Done'`, `'Registration done'`, `'one year fee paid'`, `'1st Year Fee Paid'`, `'full fee paid'`. |
@@ -202,13 +203,35 @@ Full audit trail of every status change. One row per event, multiple per student
 The following `course_status` values all indicate a student has "applied" / "filled the form" in the Regular LMS:
 - `'Form Submitted – Portal Pending'` — form submitted, awaiting portal processing
 - `'Form Submitted – Completed'` — form submitted and portal processing complete
-- `'Walkin Completed'` — student walked in to the institution
+- `'Walkin Completed'` — student **has walked in** to the institution (walkin happened) → **counts as application**
 - `'Exam/Interview Scheduled'` — exam or interview has been scheduled
 - `'Offer Letter/Results Pending'` — awaiting offer letter or exam results
 - `'Offer Letter/Results Released'` — offer letter or results have been released
 - `'Ready For Admission'` — student is ready to proceed with admission
 
 **CRITICAL:** In the Regular LMS, `course_status = 'Application'` does NOT exist. NEVER query `course_status = 'Application'` for Regular LMS. Always use the IN list above when the user asks about form filled / applications.
+
+### Walkin Scheduled vs Walkin Completed — CRITICAL DISTINCTION:
+- `'Walkin Scheduled'` — counsellor has **scheduled** a walkin; student is **going to** visit the college. This is a **pre-application** status. **NOT counted as an application. NEVER include in the application IN list.**
+- `'Walkin Completed'` — student **has actually walked in** to the college. This IS an application. Always include in the application IN list.
+
+**Rule:** When the user asks about "walkin" without further qualifier, count only `'Walkin Completed'` (application stage). If the user explicitly asks about "walkin scheduled" or "upcoming walkins", use `course_status = 'Walkin Scheduled'` — but NEVER include it in application counts.
+
+### event_time — Semantics per course_status:
+`event_time` stores the scheduled/expected date for the next milestone event. Its meaning varies by `course_status`:
+
+| course_status | event_time meaning |
+|---|---|
+| `'Walkin Scheduled'` | Date/time the walkin is planned to happen |
+| `'Exam/Interview Scheduled'` | Date/time of the scheduled exam or interview |
+| `'Offer Letter/Results Pending'` | Expected date of receiving the offer letter / results |
+| `'Offer Letter/Results Released'` | Date the offer letter / results were released |
+| Other statuses | May be NULL or not applicable |
+
+**Rules for event_time:**
+- Use `event_time` when the user asks "when is the walkin", "walkin date", "exam date", "interview date", "when will offer letter come", "offer letter expected date".
+- Always convert `event_time` to IST using `AT TIME ZONE 'Asia/Kolkata'` before displaying.
+- NEVER confuse `event_time` with `created_at` — `created_at` is when the status row was logged; `event_time` is the future event being tracked.
 
 ---
 
