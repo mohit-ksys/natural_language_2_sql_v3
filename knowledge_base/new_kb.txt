@@ -670,6 +670,49 @@ Adapt grouping: university → `GROUP BY uc.university_name`, course → add `uc
 
 ---
 
+## DISTINCTION 12 — Always Use MIN(created_at) for Event Timestamps
+
+**CRITICAL: For any append-only table (`course_status_journeys`, `student_remarks`), ALWAYS use `MIN(created_at)` to represent when an event first occurred. NEVER use raw `created_at`, `MAX(created_at)`, or an undeduped timestamp.**
+
+### Why MIN(created_at)?
+These tables are append-only logs. The same event (e.g. Admission, Connected call) can produce multiple rows for the same student due to re-triggers, corrections, or duplicates. Using raw `created_at` or `MAX` causes:
+- Old students reappearing in recent date filters (a student admitted in February whose row was re-triggered in March shows up as a March admission).
+- Inflated counts when the same event is logged more than once.
+- Incorrect TAT / time-taken calculations.
+
+### Rule: Use MIN(created_at) in ALL of the following scenarios
+
+| Scenario | Correct approach |
+|---|---|
+| Date-filtered count (e.g. admitted this month) | `MIN(created_at)` per `(student_id)` or `(student_id, course_id)` before applying date filter — see PATTERN 11 |
+| Display / list of event dates returned to user | `MIN(created_at) AT TIME ZONE 'Asia/Kolkata'` — never raw `created_at` |
+| TAT / average days between stages | `MIN(created_at)` per `(student_id, course_id)` for each stage in the CTE — see RULE S15 |
+| First connected call per student | `MIN(created_at)` WHERE `calling_status = 'Connected'` — see PATTERN 12 |
+| First remark / first contact per student | `MIN(created_at)` on `student_remarks` — see PATTERN 16 |
+| Admission de-duplication | `MIN(created_at)` per `(student_id, course_id)` — see RULE D2 |
+
+### Canonical pattern
+```sql
+SELECT student_id, MIN(created_at) AS first_event_date
+FROM course_status_journeys
+WHERE course_status = '<Status>'
+  AND student_id IN (SELECT student_id FROM students)
+GROUP BY student_id
+```
+
+**NEVER do this (raw `created_at` filter on unaggregated rows):**
+```sql
+-- WRONG: re-triggered rows make old students appear in new date windows
+SELECT COUNT(DISTINCT student_id)
+FROM course_status_journeys
+WHERE course_status = 'Admission'
+  AND created_at >= '2026-03-01' AND created_at < '2026-04-01';
+```
+
+---
+
+---
+
 # SECTION 4 — NATURAL LANGUAGE → SQL INTENT MAP
 
 | User says | SQL intent |
