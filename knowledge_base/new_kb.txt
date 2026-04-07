@@ -127,9 +127,7 @@ Snapshot — current application status per student-course pair. One row per stu
 | id | INTEGER PK | |
 | student_id | VARCHAR → students | |
 | course_id | VARCHAR → university_courses | |
-| created_by | VARCHAR | Counsellor who shortlisted. |
 | latest_course_status | VARCHAR | Current course-application status. |
-| is_shortlisted | BOOLEAN | True if counsellor marked as serious option. |
 | college_api_sent_status | VARCHAR | 'Success', 'Failed due to Technical Issues', 'Do Not Proceed'. |
 | created_at | TIMESTAMPTZ | When shortlisted (UTC). |
 | updated_at | TIMESTAMPTZ | When record was last updated (UTC). |
@@ -1527,3 +1525,55 @@ When generating clarifying questions for ambiguous queries, consider these patte
 
 ## University / Course Scope
 - Options: All universities, Specific university, Top universities by enrollment, Partner universities onlya
+
+---
+
+# SECTION 8 — SHORTLISTED QUERY PATTERNS
+
+---
+
+## PATTERN SL-1 — How many shortlisted (total shortlisted course-entries per counsellor today)
+Use when: "how many shortlisted", "shortlisted count per counsellor", "shortlisted courses by counsellor"
+
+```sql
+SELECT
+    c.counsellor_name,
+    COUNT(DISTINCT lcs.id) AS total_shortlisted_courses
+FROM counsellors c
+JOIN students s ON c.counsellor_id = s.assigned_counsellor_id
+JOIN latest_course_statuses lcs ON s.student_id = lcs.student_id
+WHERE lcs.latest_course_status = 'Shortlisted'
+  AND lcs.updated_at >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+  AND lcs.updated_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+GROUP BY c.counsellor_id, c.counsellor_name
+ORDER BY total_shortlisted_courses DESC;
+```
+
+**Notes:**
+- `COUNT(DISTINCT lcs.id)` counts shortlisted course entries (one per student-course pair).
+- Date window (`CURRENT_DATE ± IST offset`) scopes to today in IST.
+- Use `students.assigned_counsellor_id` for L2 counsellor attribution.
+
+---
+
+## PATTERN SL-2 — How many uniquely shortlisted (distinct students shortlisted per counsellor today)
+Use when: "how many uniquely shortlisted", "unique students shortlisted", "distinct students shortlisted per counsellor"
+
+```sql
+SELECT
+    c.counsellor_name,
+    COUNT(DISTINCT s.student_id) AS total_shortlisted_students
+FROM counsellors c
+JOIN students s ON c.counsellor_id = s.assigned_counsellor_id
+JOIN latest_course_statuses lcs ON s.student_id = lcs.student_id
+WHERE lcs.latest_course_status = 'Shortlisted'
+  AND lcs.updated_at >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+  AND lcs.updated_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+GROUP BY c.counsellor_id, c.counsellor_name
+ORDER BY total_shortlisted_students DESC;
+```
+
+**Notes:**
+- `COUNT(DISTINCT s.student_id)` counts unique students (a student shortlisted for 3 courses counts as 1).
+- Differs from SL-1 only in the COUNT — use SL-1 for course volume, SL-2 for student reach.
+- Same IST date window applies.
