@@ -14,7 +14,7 @@ export default function Hero({ isHidden, onSendChip }) {
     <div className={`hero ${isHidden ? 'hidden' : ''}`} id="hero">
       <div className="hero-badge">◈ Text-to-SQL</div>
       <h1 className="hero-title">
-        ChatWith<span className="accent">DB</span>
+        GrepSQL <span className="accent">AI</span>
       </h1>
       <p className="hero-sub">Chat · Query · Discover</p>
 

@@ -492,7 +492,7 @@ function ChatApp({ currentUser, onLogout, registerSave }) {
       <div className="app loading">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
           <div style={{ textAlign: 'center', color: '#999' }}>
-            <div style={{ fontSize: '24px', marginBottom: '10px' }}>Initializing DataWhisper...</div>
+            <div style={{ fontSize: '24px', marginBottom: '10px' }}>Initializing GrepSQL AI...</div>
             <div style={{ fontSize: '12px' }}>Connecting to backend...</div>
           </div>
         </div>

@@ -380,7 +380,7 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings, cur
     <div className="message msg-ai" data-id={id}>
       <div className="msg-ai-header">
         <div className="ai-avatar">◈</div>
-        <span className="ai-name">ChatWithDB</span>
+        <span className="ai-name">GrepSQL AI</span>
         <span className="ai-model-tag">{model}</span>
         {isRegen && <span className="regen-badge">✦ Regenerated</span>}
         {sql_auto_fixed && (

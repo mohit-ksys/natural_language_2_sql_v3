@@ -93,7 +93,7 @@ export default function Thread({ messages, addToast, onFix, onRegen, onSubmitMCQ
               <div key={m.id || i} className="message msg-ai">
                 <div className="msg-ai-header">
                   <div className="ai-avatar">⚠</div>
-                  <span className="ai-name">ChatWithDB</span>
+                  <span className="ai-name">GrepSQL AI</span>
                   <span className="msg-ai-error-label">Error</span>
                 </div>
                 <div className="msg-ai-error-body">{m.error}</div>
@@ -121,7 +121,7 @@ export default function Thread({ messages, addToast, onFix, onRegen, onSubmitMCQ
           <div className="message msg-ai">
             <div className="msg-ai-header">
               <div className="ai-avatar loading-avatar">◈</div>
-              <span className="ai-name">ChatWithDB</span>
+              <span className="ai-name">GrepSQL AI</span>
               <div className="think-pulse" style={{ marginLeft: '6px' }}>
                 <span></span><span></span><span></span>
               </div>

@@ -1,8 +1,8 @@
 /**
- * Backend API service for DataWhisper — with JWT auth and silent refresh.
+ * Backend API service for GrepSQL AI — with JWT auth and silent refresh.
  */
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = 'https://api-sql.degreefyd.com';
 const LMS_API_BASE = 'http://localhost:5000';
 
 function setCookie(name, value, days = 7) {
