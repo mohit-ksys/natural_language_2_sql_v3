@@ -152,6 +152,7 @@ def generate_sql(
     thinking_level: str = "high",
     include_thoughts: bool = False,
     lms_type: str = "online",
+    extra_context: str = "",
 ) -> tuple[str, str]:
     """Returns (sql, thoughts). thoughts is empty unless include_thoughts=True."""
     knowledge_base = get_knowledge_base_prompt(lms_type=lms_type)
@@ -160,6 +161,8 @@ def generate_sql(
     now = datetime.now()
     date_str = now.strftime("%A, %d %B %Y")
     time_str = now.strftime("%I:%M %p")
+
+    extra_context_block = f"\n{extra_context}\n" if extra_context else ""
 
     prompt = f"""{knowledge_base}
 {learned_rules}
@@ -174,7 +177,7 @@ def generate_sql(
 2. MANDATORY: JOIN with 'counsellors' table using 'counsellor_name' whenever a staff/counsellor name is mentioned. Never guess IDs.
 3. MANDATORY: For Admissions count, always use COUNT(DISTINCT student_id) to avoid duplicates.
 4. MANDATORY: Apply date, time, month, day and year filters ONLY if specified in the user query explicitly. Otherwise do not filter by date.
-5. MANDATORY: Do NOT add LIMIT unless the user explicitly says "top N", "limit to", or gives a specific number. Summary and aggregation queries must have NO LIMIT. 
+5. MANDATORY: Do NOT add LIMIT unless the user explicitly says "top N", "limit to", or gives a specific number. Summary and aggregation queries must have NO LIMIT.
 6. MANDATORY: Add limit 5 for all queries that return a list of records or rows more than 50.
 7. TIMEZONE for 'created_at' (stored UTC, CURRENT_DATE is IST) — two cases only:
     - Rolling windows (last N days/hours/months): use plain `NOW() - INTERVAL 'X days'` — NO timezone offset needed.
@@ -183,8 +186,7 @@ def generate_sql(
 8. For year-based queries, always use EXTRACT(YEAR FROM CURRENT_DATE) or DATE_TRUNC('year', CURRENT_DATE). NEVER hardcode a numeric year literal.
 9. NEVER use ILIKE on IDs. Always join by name.
 10. Output ONLY raw SQL. No markdown, no comments, no explanation.
-
-
+{extra_context_block}
 User Question: "{user_query}"
 SQL:"""
 

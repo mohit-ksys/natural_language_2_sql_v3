@@ -330,14 +330,11 @@ def _generate_and_respond(
     turns_count = len(session.get("turns", []))
     should_show_context_alert = turns_count >= 5
 
-    combined_history = session_history
-    if extra_context:
-        combined_history = session_history + "\n" + extra_context
-
     try:
         generated_sql, thoughts, sql_usage = llm_service.generate_sql(
-            user_query=user_query, session_history=combined_history,
+            user_query=user_query, session_history=session_history,
             learned_rules="", model=req_model, lms_type=lms_type,
+            extra_context=extra_context,
         )
     except Exception as e:
         traceback.print_exc()
