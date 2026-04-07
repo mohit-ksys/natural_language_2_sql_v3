@@ -8,6 +8,9 @@
 ---
 
 ## TABLE: students
+One row per student/lead. 
+
+## TABLE: students
 One row per student/lead. Primary funnel record.
 
 | Column | Type | Notes |
@@ -18,8 +21,8 @@ One row per student/lead. Primary funnel record.
 | student_phone | VARCHAR | Unique. |
 | current_student_status | VARCHAR | **Only source of truth for funnel stage.** |
 | current_student_ni_sub_status | VARCHAR | Sub-reason for NI. Only populated when `current_student_status = 'NotInterested'`. Valid values: 'Not Enquired', 'Multiple Attempts made', 'Reason not shared', 'Course Not Available', 'Already Enrolled_NP', 'Only_Regular course', 'Invalid number / Wrong Number', 'First call Not Interested', 'Next Year', 'Budget issue', 'Not Eligible', 'Already Enrolled_Partner', 'Language Barrier', 'Reason Not Shared', 'Counselling Yet to be Done', 'Location issue', 'Not Reachable Tried Multiple Times', 'College Rejected', 'Student Reject', 'Dublicate_Same student exists', 'Budget Issue', 'Initial Counselling Completed', 'Duplicate_Same student exists', 'Only_Online course', 'College Reject'. |
-| assigned_counsellor_id | VARCHAR → counsellors | L2 counsellor. Handles lead from creation up to (not including) application stage. Use for all pre-application counsellor queries. |
-| assigned_counsellor_l3_id | VARCHAR → counsellors | L3 counsellor. Handles from application stage through admission. Use for application/admission-stage counsellor queries or when question specifies L3. |
+| assigned_counsellor_id | VARCHAR → counsellors | L2 counsellor. Use for all general counsellor queries. |
+| assigned_counsellor_l3_id | VARCHAR → counsellors | L3 counsellor. Use only when question specifies L3. |
 | enrollment_counsellor_id | VARCHAR → counsellors | Use only for enrollment-phase queries. |
 | **"first_Icc_Date"** | **TIMESTAMPTZ** | Date of first Initial Counselling Call. **SQL Hint: Use double quotes to preserve case sensitivity.** | SELECT "first_Icc_Date" FROM students LIMIT 10; |
 | is_connected_yet | BOOLEAN | True once any L2 counsellor connected. |
@@ -41,21 +44,21 @@ One row per student/lead. Primary funnel record.
 
 ---
 
+
+
 ### Funnel stages handled by this table:
 Fresh, Pre Application, Initial Counselling Completed, NotInterested (before application)
-**L2 counsellor (`assigned_counsellor_id`) owns all stages in this table.**
 
 ### Stages handled by `course_status_journeys` table:
-Application (form submitted / walkin / exam / offer letter / ready for admission), Admission, Document Pending, Document Submitted, Enrolled, NotInterested (after application)
-**L3 counsellor (`assigned_counsellor_l3_id`) owns all stages in this table.**
+Application, Admission, Document Pending, Document Submitted, Enrolled, NotInterested (after application)
 
-### Full funnel order (Regular LMS):
-Fresh → Pre Application → Initial Counselling Completed → [L3 takes over] → Application (Form Submitted) → Exam/Interview → Offer Letter → Ready For Admission → Admission → Document Pending → Document Submitted → Enrolled
+### Full funnel order:
+Fresh → Pre Application → Initial Counselling Completed → Application → Admission → Document Pending → Document Submitted → Enrolled
 
 ### Business rules:
-- `current_student_status` covers early funnel stages: Fresh, Pre Application, Initial Counselling Completed, and NotInterested (before application). These are owned by **L2** (`assigned_counsellor_id`).
+- `current_student_status` covers early funnel stages: Fresh, Pre Application, Initial Counselling Completed, and NotInterested (before application).
 - `current_student_ni_sub_status` gives the sub-reason for NI. Use this column ONLY when the query asks for NI breakdown by reason, NI category, or why students went NI. Always filter `current_student_status = 'NotInterested'` .
-- For Application, Admission, Document Pending, Document Submitted, Enrolled queries → use `course_status_journeys.course_status`. These are owned by **L3** (`assigned_counsellor_l3_id`).
+- For Application, Admission, Document Pending, Document Submitted, Enrolled queries → use `course_status_journeys.course_status`.
 - For university-specific queries: join path = `students → latest_course_statuses → university_courses`.
 - `preferred_university` and `preferred_course` are PostgreSQL arrays — always use `ANY()`.
 - Always use `COUNT(DISTINCT student_id)` after any JOIN, never `COUNT(*)`.
@@ -78,8 +81,8 @@ One row per staff member or partner.
 | updated_at | TIMESTAMPTZ | When record was last updated (UTC). |
 
 ### Counsellor FK selection:
-- Pre-application queries (Fresh, Pre Application, ICC, NI before application) → `students.assigned_counsellor_id` (L2)
-- Application / admission queries (form filled, exam scheduled, offer letter, ready for admission) → `students.assigned_counsellor_l3_id` (L3)
+- General queries → `students.assigned_counsellor_id`
+- L3-specific → `students.assigned_counsellor_l3_id`
 - Enrollment phase → `students.enrollment_counsellor_id`
 - "Supervisor" / "Team Owner" → `role = 'to'`
 - Team of a manager → `WHERE assigned_to = '<manager_counsellor_id>'`
@@ -158,7 +161,6 @@ Snapshot — current application status per student-course pair. One row per stu
 ### Business rules:
 - Use this table ONLY for shortlisted courses/universities. When user asks about shortlisted courses or universities, query `is_shortlisted = true` from this table.
 - For Application, Admission, Enrolled, NotInterested (after application) queries → use `course_status_journeys` instead.
-- Any payment: `latest_course_status ILIKE '%Paid%'`
 
 ---
 
@@ -175,7 +177,6 @@ Full audit trail of every status change. One row per event, multiple per student
 | deposit_amount | NUMERIC | Amount paid (0 if not a payment event). |
 | currency | VARCHAR | Default 'INR'. |
 | exam_interview_date | TIMESTAMPTZ | Exam/interview date if applicable. |
-| event_time | TIMESTAMPTZ | Scheduled future event date; meaning depends on `course_status` — see event_time semantics below. |
 | last_admission_date | TIMESTAMPTZ | Last date to complete admission. |
 | notes | TEXT | Counsellor notes. |
 | fee_type | VARCHAR | Known values:`'Annual Paid'`, `'Semester Paid'`, `'Semester fee paid'`, `'partial paid'`, `'Partially Paid'`, `'Partial Done'`, `'Registration done'`, `'one year fee paid'`, `'1st Year Fee Paid'`, `'full fee paid'`. |
@@ -185,8 +186,7 @@ Full audit trail of every status change. One row per event, multiple per student
 
 ### Business rules:
 - **Primary table for Application, Admission, Document Pending, Document Submitted, Enrolled, and NotInterested (after application) queries.** Use `course_status` column.
-- **This table is owned by L3 counsellors (`assigned_counsellor_l3_id`).** Use `course_status_journeys.counsellor_id` or join via `students.assigned_counsellor_l3_id` for L3-level queries.
-- When user asks "form filled" / "form fills" / "applied" / "walkin" / "exam scheduled" / "offer letter" / "ready for admission" → query `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')` from this table. These are the application-stage statuses for the Regular LMS.
+- When user asks "form filled" / "form fills" → query `course_status = 'Application'` from this table.
 - When user asks "admitted" / "got admission" → query `course_status = 'Admission'` from this table. **ALWAYS exclude partial-payment rows:** add `AND ( fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done'))`. These are partial fee events logged under Admission status, not actual admissions.
 - When user asks "document pending" / "docs pending" → query `course_status = 'Document Pending'` from this table.
 - When user asks "document submitted" / "docs submitted" → query `course_status = 'Document Submitted'` from this table.
@@ -195,40 +195,6 @@ Full audit trail of every status change. One row per event, multiple per student
 - No "Shortlisted" status exists in this table — for shortlisted queries use `latest_course_statuses.is_shortlisted`.
 - Latest per student-course: `DISTINCT ON (student_id, course_id) ORDER BY student_id, course_id, created_at DESC`.
 - Total fees collected: `SUM(deposit_amount) WHERE deposit_amount > 0`.
-
-### Application-stage statuses (Regular LMS — course_status_journeys):
-The following `course_status` values all indicate a student has "applied" / "filled the form" in the Regular LMS:
-- `'Form Submitted – Portal Pending'` — form submitted, awaiting portal processing
-- `'Form Submitted – Completed'` — form submitted and portal processing complete
-- `'Walkin Completed'` — student **has walked in** to the institution (walkin happened) → **counts as application**
-- `'Exam/Interview Scheduled'` — exam or interview has been scheduled
-- `'Offer Letter/Results Pending'` — awaiting offer letter or exam results
-- `'Offer Letter/Results Released'` — offer letter or results have been released
-- `'Ready For Admission'` — student is ready to proceed with admission
-
-**CRITICAL:** In the Regular LMS, `course_status = 'Application'` does NOT exist. NEVER query `course_status = 'Application'` for Regular LMS. Always use the IN list above when the user asks about form filled / applications.
-
-### Walkin Scheduled vs Walkin Completed — CRITICAL DISTINCTION:
-- `'Walkin Scheduled'` — counsellor has **scheduled** a walkin; student is **going to** visit the college. This is a **pre-application** status. **NOT counted as an application. NEVER include in the application IN list.**
-- `'Walkin Completed'` — student **has actually walked in** to the college. This IS an application. Always include in the application IN list.
-
-**Rule:** When the user asks about "walkin" without further qualifier, count only `'Walkin Completed'` (application stage). If the user explicitly asks about "walkin scheduled" or "upcoming walkins", use `course_status = 'Walkin Scheduled'` — but NEVER include it in application counts.
-
-### event_time — Semantics per course_status:
-`event_time` stores the scheduled/expected date for the next milestone event. Its meaning varies by `course_status`:
-
-| course_status | event_time meaning |
-|---|---|
-| `'Walkin Scheduled'` | Date/time the walkin is planned to happen |
-| `'Exam/Interview Scheduled'` | Date/time of the scheduled exam or interview |
-| `'Offer Letter/Results Pending'` | Expected date of receiving the offer letter / results |
-| `'Offer Letter/Results Released'` | Date the offer letter / results were released |
-| Other statuses | May be NULL or not applicable |
-
-**Rules for event_time:**
-- Use `event_time` when the user asks "when is the walkin", "walkin date", "exam date", "interview date", "when will offer letter come", "offer letter expected date".
-- Always convert `event_time` to IST using `AT TIME ZONE 'Asia/Kolkata'` before displaying.
-- NEVER confuse `event_time` with `created_at` — `created_at` is when the status row was logged; `event_time` is the future event being tracked.
 
 ---
 
@@ -319,21 +285,20 @@ course_status_journeys.course_id  → university_courses.course_id
 
 ## DISTINCTION 1 — Table Split by Stage
 
-| User asks about... | Table | Column | Filter | Counsellor |
-|---|---|---|---|---|
-| Fresh / Pre Application / Initial Counselling Completed | students | `current_student_status` | `= 'Fresh'`, `= 'Pre Application'`, `= 'Initial Counselling Completed'` | L2 (`assigned_counsellor_id`) |
-| Application / "form filled" / "applied" / "walkin" / "exam scheduled" / "offer letter" / "ready for admission" | course_status_journeys | `course_status` | `IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')` | L3 (`assigned_counsellor_l3_id`) |
-| Admission / "got admission" | course_status_journeys | `course_status` | `= 'Admission'` | L3 (`assigned_counsellor_l3_id`) |
-| Document Pending / "docs pending" | course_status_journeys | `course_status` | `= 'Document Pending'` | L3 |
-| Document Submitted / "docs submitted" | course_status_journeys | `course_status` | `= 'Document Submitted'` | L3 |
-| Enrolled / "enrollment count" | course_status_journeys | `course_status` | `= 'Enrolled'` | L3 |
-| NotInterested before application | students | `current_student_status` | `= 'NotInterested'` | L2 |
-| NotInterested after application | course_status_journeys | `course_status` | `= 'NotInterested'` | L3 |
-| Shortlisted courses/universities | latest_course_statuses | `is_shortlisted` | `= true` | — |
+| User asks about... | Table | Column | Filter |
+|---|---|---|---|
+| Fresh / Pre Application / Initial Counselling Completed | students | `current_student_status` | `= 'Fresh'`, `= 'Pre Application'`, `= 'Initial Counselling Completed'` |
+| Application / "form filled" / "applied" | course_status_journeys | `course_status` | `= 'Application'` |
+| Admission / "got admission" | course_status_journeys | `course_status` | `= 'Admission'` |
+| Document Pending / "docs pending" | course_status_journeys | `course_status` | `= 'Document Pending'` |
+| Document Submitted / "docs submitted" | course_status_journeys | `course_status` | `= 'Document Submitted'` |
+| Enrolled / "enrollment count" | course_status_journeys | `course_status` | `= 'Enrolled'` |
+| NotInterested before application | students | `current_student_status` | `= 'NotInterested'` |
+| NotInterested after application | course_status_journeys | `course_status` | `= 'NotInterested'` |
+| Shortlisted courses/universities | latest_course_statuses | `is_shortlisted` | `= true` |
 
-- "form filled" / "form fills" / "applied" / "walkin" / "exam scheduled" / "offer letter" / "ready for admission" = `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')` on `course_status_journeys`. **NEVER use `course_status = 'Application'` in Regular LMS — that status does not exist here.**
+- "form filled" / "form fills" = `course_status = 'Application'` on `course_status_journeys`. NEVER use `latest_course_statuses` for this.
 - Early funnel stages (Fresh, Pre Application, ICC) = `students.current_student_status`. NEVER use `course_status_journeys` for these.
-- **L2 owns pre-application stages; L3 owns application-and-beyond stages.**
 
 ---
 
@@ -341,13 +306,56 @@ course_status_journeys.course_id  → university_courses.course_id
 
 | Column | Table | Use for |
 |--------|-------|---------|
-| `current_student_status` | students | Early funnel stages: Fresh, Pre Application, Initial Counselling Completed, and NotInterested (before application) |
+| `current_student_status` | students | Early funnel stages: Fresh, Pre Application, Initial Counselling Completed, NotInterested (before application) |
 | `is_shortlisted` | latest_course_statuses | Whether a course/university has been shortlisted by counsellor |
-| `course_status` | course_status_journeys | Application-stage statuses (Form Submitted – Portal Pending, Form Submitted – Completed, Walkin Completed, Exam/Interview Scheduled, Offer Letter/Results Pending, Offer Letter/Results Released, Ready For Admission), Admission, Document Pending, Document Submitted, Enrolled, NotInterested (after application), payment events |
+| `course_status` | course_status_journeys | Application, Admission, Document Pending, Document Submitted, Enrolled, NotInterested (after application), payment events |
 
 ---
 
-## DISTINCTION 3 — Three Meanings of "Connected"
+## DISTINCTION 3 — "Success Rate" / "Performance" / "Efficiency"
+
+**When asked about counsellor/team performance with no explicit student context → ALWAYS means call connection rate from student_remarks. NEVER the students table.**
+
+| User asks... | Correct table | Correct metric |
+|---|---|---|
+| "success rate", "efficiency", "performing well/best/worst", "how is X performing" (counsellor/team context) | student_remarks | `COUNT(calling_status='Connected') / COUNT(all remarks)` |
+| "conversion rate", "admission rate", "how many students converted" (explicit student outcome) | course_status_journeys | `COUNT(DISTINCT student_id WHERE course_status IN ('Admission','Enrolled'))` |
+| "best/worst time slot", "peak performance hour" | student_remarks | `COUNT(calling_status='Connected') / COUNT(*)` by hour — NOT quality call rate |
+
+**Example: "What is the success rate of each counsellor?"**
+```sql
+SELECT c.counsellor_name,
+       COUNT(sr.remark_id) AS total_calls,
+       COUNT(CASE WHEN sr.calling_status = 'Connected' THEN 1 END) AS connected_calls,
+       ROUND(COUNT(CASE WHEN sr.calling_status = 'Connected' THEN 1 END) * 100.0
+             / NULLIF(COUNT(sr.remark_id), 0), 2) AS success_rate
+FROM counsellors c
+LEFT JOIN student_remarks sr ON c.counsellor_id = sr.counsellor_id
+GROUP BY c.counsellor_id, c.counsellor_name
+ORDER BY success_rate DESC;
+```
+
+---
+
+## DISTINCTION 4 — Post-Application Stage Meanings
+
+Full post-application flow on `course_status_journeys`:
+
+| Status | Meaning |
+|---|---|
+| `'Application'` | Student applied to a course |
+| `'Admission'` | Seat confirmed, documents/fee not yet fully processed |
+| `'Document Pending'` | Admission done, awaiting document submission from student |
+| `'Document Submitted'` | Documents received, being verified |
+| `'Enrolled'` | Fully enrolled and active |
+
+- `course_status IN ('Admission', 'Document Pending', 'Document Submitted', 'Enrolled')` → conversions (use when question says "converted", "admitted or beyond", or all post-admission stages).
+- `course_status IN ('Document Pending', 'Document Submitted', 'Enrolled')` → students who have completed admission and are in document/enrollment phase.
+- Do NOT mix stages unless user explicitly asks for a combined count.
+
+---
+
+## DISTINCTION 6 — Three Meanings of "Connected"
 
 | User says... | Filter |
 |---|---|
@@ -357,17 +365,17 @@ course_status_journeys.course_id  → university_courses.course_id
 
 ---
 
-## DISTINCTION 4 — students.source vs student_lead_activities.source
+## DISTINCTION 7 — students.source vs student_lead_activities.source
 
 | User says... | Table |
 |---|---|
 | "leads from Facebook / Google / IVR" | `students.source ILIKE '...'` |
 | "activities / touchpoints / form submits from Facebook" | `student_lead_activities.source ILIKE '...'` |
-| "applications by source" | JOIN `course_status_journeys` + `students`, filter `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')`, group by `students.source`. |
+| "applications by source" | JOIN `course_status_journeys` + `students`, filter `course_status = 'Application'`, group by `students.source`. |
 
 ---
 
-## DISTINCTION 5 — "Interest" vs "Preference" vs "Shortlisted"
+## DISTINCTION 8 — "Interest" vs "Preference" vs "Shortlisted"
 
 | User asks... | Table | Logic |
 |---|---|---|
@@ -388,7 +396,7 @@ course_status_journeys.course_id  → university_courses.course_id
 
 ---
 
-## DISTINCTION 6 — NotInterested (NI)
+## DISTINCTION 9 — NotInterested (NI)
 
 ### Three NI Variants — Quick Reference
 
@@ -509,7 +517,7 @@ WITH never_progressed AS (
       AND s.student_id NOT IN (
           SELECT DISTINCT student_id
           FROM course_status_journeys
-          WHERE course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')
+          WHERE course_status IN ('Application', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')
       )
 )
 SELECT COUNT(DISTINCT np.student_id) AS pre_ni_count
@@ -541,7 +549,7 @@ Apply the standard IST date window (see TIMEZONE RULES) for today / yesterday / 
 
 ---
 
-## DISTINCTION 7 — Fee Column Selection
+## DISTINCTION 10 — Fee Column Selection
 
 **CRITICAL: There are two different fee concepts — course fee and payment collected. Never confuse them.**
 
@@ -559,7 +567,7 @@ Apply the standard IST date window (see TIMEZONE RULES) for today / yesterday / 
 - NEVER use `deposit_amount` to answer questions about course pricing — it is actual money paid, not the listed course fee.
 - NEVER use `total_fees` to answer questions about payments collected — it is the catalog price, not actual collected amount.
 
-## DISTINCTION 8 - DEPOSIT AMOUNT — CRITICAL RULES
+## DISTINCTION 11 - DEPOSIT AMOUNT — CRITICAL RULES
 
 ---
 
@@ -659,18 +667,63 @@ Adapt grouping: university → `GROUP BY uc.university_name`, course → add `uc
 
 ---
 
+---
+
+## DISTINCTION 12 — Always Use MIN(created_at) for Event Timestamps
+
+**CRITICAL: For any append-only table (`course_status_journeys`, `student_remarks`), ALWAYS use `MIN(created_at)` to represent when an event first occurred. NEVER use raw `created_at`, `MAX(created_at)`, or an undeduped timestamp.**
+
+### Why MIN(created_at)?
+These tables are append-only logs. The same event (e.g. Admission, Connected call) can produce multiple rows for the same student due to re-triggers, corrections, or duplicates. Using raw `created_at` or `MAX` causes:
+- Old students reappearing in recent date filters (a student admitted in February whose row was re-triggered in March shows up as a March admission).
+- Inflated counts when the same event is logged more than once.
+- Incorrect TAT / time-taken calculations.
+
+### Rule: Use MIN(created_at) in ALL of the following scenarios
+
+| Scenario | Correct approach |
+|---|---|
+| Date-filtered count (e.g. admitted this month) | `MIN(created_at)` per `(student_id)` or `(student_id, course_id)` before applying date filter — see PATTERN 11 |
+| Display / list of event dates returned to user | `MIN(created_at) AT TIME ZONE 'Asia/Kolkata'` — never raw `created_at` |
+| TAT / average days between stages | `MIN(created_at)` per `(student_id, course_id)` for each stage in the CTE — see RULE S15 |
+| First connected call per student | `MIN(created_at)` WHERE `calling_status = 'Connected'` — see PATTERN 12 |
+| First remark / first contact per student | `MIN(created_at)` on `student_remarks` — see PATTERN 16 |
+| Admission de-duplication | `MIN(created_at)` per `(student_id, course_id)` — see RULE D2 |
+
+### Canonical pattern
+```sql
+SELECT student_id, MIN(created_at) AS first_event_date
+FROM course_status_journeys
+WHERE course_status = '<Status>'
+  AND student_id IN (SELECT student_id FROM students)
+GROUP BY student_id
+```
+
+**NEVER do this (raw `created_at` filter on unaggregated rows):**
+```sql
+-- WRONG: re-triggered rows make old students appear in new date windows
+SELECT COUNT(DISTINCT student_id)
+FROM course_status_journeys
+WHERE course_status = 'Admission'
+  AND created_at >= '2026-03-01' AND created_at < '2026-04-01';
+```
+
+---
+
+---
+
 # SECTION 4 — NATURAL LANGUAGE → SQL INTENT MAP
 
 | User says | SQL intent |
 |---|---|
-| "applied" / "application stage" / "form filled" / "form fills" / "walkin" / "exam scheduled" / "offer letter" / "ready for admission" | `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')` on `course_status_journeys` |
-| "at least applied / ever applied or beyond" | `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')` on `course_status_journeys` |
+| "applied" / "application stage" / "form filled" / "form fills" | `course_status = 'Application'` on `course_status_journeys` |
+| "at least applied / ever applied or beyond" | `course_status IN ('Application', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')` on `course_status_journeys` |
 | "admitted" / "got admission" | `course_status = 'Admission'` on `course_status_journeys` |
 | "document pending" / "docs pending" / "documents awaited" | `course_status = 'Document Pending'` on `course_status_journeys` |
 | "document submitted" / "docs submitted" / "documents received" | `course_status = 'Document Submitted'` on `course_status_journeys` |
 | "enrolled" / "enrollment count" | `course_status = 'Enrolled'` on `course_status_journeys` |
 | "converted" / "conversion" / "admitted or beyond" | `course_status IN ('Admission', 'Document Pending', 'Document Submitted', 'Enrolled')` on `course_status_journeys` |
-| "applications by source" | JOIN `course_status_journeys` + `students`, filter `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')`, group by `students.source` |
+| "applications by source" | JOIN `course_status_journeys` + `students`, filter `course_status = 'Application'`, group by `students.source` |
 | "connected call" / "raw connection" | `calling_status = 'Connected'` only |
 | "success rate" / "performance" / "efficiency" (counsellor/team) | `COUNT(Connected)/COUNT(all)` from student_remarks — NOT conversion |
 | "conversion rate" / "admission rate" (student outcomes) | `COUNT(DISTINCT student_id WHERE course_status IN ('Admission','Document Pending','Document Submitted','Enrolled'))` from `course_status_journeys` |
@@ -685,8 +738,8 @@ Adapt grouping: university → `GROUP BY uc.university_name`, course → add `uc
 | "overdue callback" | `callback_date < CURRENT_DATE` on student_remarks |
 | "upcoming callback" | `callback_date >= CURRENT_DATE` on student_remarks |
 | "dormant" / "no recent follow-up" | `HAVING MAX(sr.created_at) < CURRENT_DATE - INTERVAL '7 days' OR MAX(sr.created_at) IS NULL` |
-| "forward movement" / "progressed" | `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')` on `course_status_journeys` |
-| "NI" / "not interested" (general, no stage given) | Use BOTH tables UNION, COUNT(DISTINCT student_id) — see NI-3 in DISTINCTION 6 |
+| "forward movement" / "progressed" | `course_status IN ('Application', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')` on `course_status_journeys` |
+| "NI" / "not interested" (general, no stage given) | Use BOTH tables UNION, COUNT(DISTINCT student_id) — see NI-3 in DISTINCTION 9 |
 | "NI before application" / "NI who never applied" | `students.current_student_status = 'NotInterested'` — see NI-1 |
 | "NI after application" / "NI who applied" | `course_status_journeys.course_status = 'NotInterested'` — see NI-2 |
 | "NI students at [stage]" / "NI students marked as [stage]" | NI always from `course_status_journeys.course_status = 'NotInterested'`, stage as subquery IN — see NI-4. NEVER query NI and stage both from students table |
@@ -705,7 +758,7 @@ Adapt grouping: university → `GROUP BY uc.university_name`, course → add `uc
 | "which time slot performs best/worst" | `calling_status='Connected'` rate by hour — NOT quality call rate |
 | "first connected" / "first time connected" / "first connected count" | CTE with `MIN(created_at)` per student WHERE `calling_status='Connected'` on `student_remarks` — see PATTERN 12 |
 | "first connected counsellor wise" / "who connected first" (counsellor breakdown) | Correlated subquery on `student_remarks` for first connected event per student, then GROUP BY counsellor — see PATTERN 12 |
-| "pre NI" / "NI with no ICC" / "NI who never progressed" | `current_student_status='NotInterested'` + `"first_Icc_Date" IS NULL` + NOT IN course_status_journeys progression — see NI-6 in DISTINCTION 6 and PATTERN 13 |
+| "pre NI" / "NI with no ICC" / "NI who never progressed" | `current_student_status='NotInterested'` + `"first_Icc_Date" IS NULL` + NOT IN course_status_journeys progression — see NI-6 in DISTINCTION 9 and PATTERN 13 |
 | "attempted calls on new leads" / "calls made to students added yesterday" / "leads attempted yesterday" | COUNT(DISTINCT sr.student_id) joining students filtered by `created_at` yesterday window — see PATTERN 14 |
 | "total leads today" / "attempted leads today" / "leads and attempts today" (counsellor wise) | Two COUNT(DISTINCT) on students and student_remarks filtered by today's IST window — see PATTERN 15 |
 
@@ -726,7 +779,7 @@ SELECT 'Pre Application', COUNT(DISTINCT student_id) FROM students WHERE current
 UNION ALL
 SELECT 'Initial Counselling Completed', COUNT(DISTINCT student_id) FROM students WHERE current_student_status = 'Initial Counselling Completed'
 UNION ALL
-SELECT 'Application (Form Submitted)', COUNT(DISTINCT student_id) FROM course_status_journeys WHERE course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')
+SELECT 'Application', COUNT(DISTINCT student_id) FROM course_status_journeys WHERE course_status = 'Application'
 UNION ALL
 SELECT 'Admission', COUNT(DISTINCT student_id) FROM course_status_journeys WHERE course_status = 'Admission'
 UNION ALL
@@ -749,7 +802,7 @@ SELECT
     c.counsellor_name,
     COUNT(DISTINCT s.student_id) AS total_students,
     COUNT(DISTINCT CASE WHEN s.current_student_status = 'Pre Application' THEN s.student_id END) AS pre_application,
-    COUNT(DISTINCT CASE WHEN csj.course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission') THEN csj.student_id END) AS applications,
+    COUNT(DISTINCT CASE WHEN csj.course_status = 'Application' THEN csj.student_id END) AS applications,
     COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' THEN csj.student_id END) AS admissions,
     COUNT(DISTINCT CASE WHEN csj.course_status = 'Document Pending' THEN csj.student_id END) AS document_pending,
     COUNT(DISTINCT CASE WHEN csj.course_status = 'Document Submitted' THEN csj.student_id END) AS document_submitted,
@@ -814,39 +867,6 @@ SELECT
     ROUND(COUNT(CASE WHEN sr.calling_status = 'Connected' THEN 1 END) * 100.0
           / NULLIF(COUNT(sr.remark_id), 0), 2) AS success_rate
 FROM counsellors manager
-LEFT JOIN counsellors team_member ON manager.counsellor_id = team_member.assigned_to
-LEFT JOIN student_remarks sr ON team_member.counsellor_id = sr.counsellor_id
-WHERE manager.role = 'to'
-GROUP BY manager.counsellor_id, manager.counsellor_name,
-         team_member.counsellor_id, team_member.counsellor_name
-ORDER BY success_rate DESC;
-```
-
----
-
-### PATTERN 5 — Individual counsellor stage breakdown (pivot)
-
-One row per counsellor, one column per funnel stage. NEVER long format.
-Early stages from `students`, later stages from `course_status_journeys`.
-
-```sql
-SELECT
-    c.counsellor_name,
-    COUNT(DISTINCT s.student_id) AS total_students,
-    COUNT(DISTINCT CASE WHEN s.current_student_status = 'Pre Application'               THEN s.student_id END) AS pre_application,
-    COUNT(DISTINCT CASE WHEN s.current_student_status = 'Initial Counselling Completed' THEN s.student_id END) AS icc,
-    COUNT(DISTINCT CASE WHEN csj.course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission') THEN csj.student_id END) AS applications,
-    COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission'          THEN csj.student_id END) AS admissions,
-    COUNT(DISTINCT CASE WHEN csj.course_status = 'Document Pending'   THEN csj.student_id END) AS document_pending,
-    COUNT(DISTINCT CASE WHEN csj.course_status = 'Document Submitted' THEN csj.student_id END) AS document_submitted,
-    COUNT(DISTINCT CASE WHEN csj.course_status = 'Enrolled'           THEN csj.student_id END) AS enrolled
-FROM counsellors c
-LEFT JOIN students s ON c.counsellor_id = s.assigned_counsellor_id
-LEFT JOIN course_status_journeys csj ON s.student_id = csj.student_id
-GROUP BY c.counsellor_id, c.counsellor_name
-ORDER BY total_students DESC;
-```
-
 ---
 
 ### PATTERN 6 — Benchmark / above-average comparison
@@ -908,7 +928,7 @@ WITH stage_priority AS (
             WHEN csj.course_status = 'Document Submitted' THEN 5
             WHEN csj.course_status = 'Document Pending'   THEN 4
             WHEN csj.course_status = 'Admission'          THEN 3
-            WHEN csj.course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission') THEN 2
+            WHEN csj.course_status = 'Application'        THEN 2
             ELSE 0
         END AS stage_rank
     FROM university_courses uc
@@ -929,6 +949,35 @@ FROM final_stage
 GROUP BY university_name ORDER BY admissions DESC;
 ```
 
+### PATTERN 11 — Date-filtered count from course_status_journeys (ANY status)
+
+Use this for ALL queries like for "for all admission/enrolled/application/document_pending/document_submitted" related queries like "admitted in last N days", "enrolled this month", "applications this week", etc.
+Always wrap in a subquery with `MIN(created_at)` per student to get their first event date, then apply the IST-adjusted date filter.
+
+```sql
+SELECT COUNT(DISTINCT student_id) AS count
+FROM (
+    SELECT student_id, MIN(created_at) AS first_event_date
+    FROM course_status_journeys
+    WHERE course_status = '<Status>'
+      AND student_id IN (SELECT student_id FROM students)
+    GROUP BY student_id
+) sub
+WHERE first_event_date >= CURRENT_DATE - interval 'N days' - interval '5 hours 30 minutes'
+  AND first_event_date <  CURRENT_DATE + interval '1 day'  - interval '5 hours 30 minutes';
+```
+
+**Applies to all statuses:** `'Application'`, `'Admission'`, `'Document Pending'`, `'Document Submitted'`, `'Enrolled'`, `'NotInterested'` (after application).
+**Why MIN?** `course_status_journeys` is append-only — a student can have multiple rows for the same `course_status` (re-triggers, duplicates). Without MIN, duplicates inflate counts and old students reappear in recent-period filters.
+
+**⚠️ CRITICAL — NEVER do this (direct `created_at` filter on raw rows):**
+```sql
+-- WRONG — a student admitted in February whose row was re-triggered in March
+-- will be counted as a March admission. This produces incorrect results.
+SELECT COUNT(DISTINCT student_id)
+FROM course_status_journeys
+WHERE course_status = 'Admission'
+  AND created_at >= '2026-03-01' AND created_at < '2026-04-01';
 ---
 
 ### PATTERN 9 — Conversion rate from application to admission
@@ -937,11 +986,11 @@ Use `course_status_journeys` for both Application and Admission counts:
 
 ```sql
 SELECT
-    COUNT(DISTINCT CASE WHEN csj.course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission') THEN csj.student_id END) AS applications,
+    COUNT(DISTINCT CASE WHEN csj.course_status = 'Application' THEN csj.student_id END) AS applications,
     COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' THEN csj.student_id END) AS admissions,
     ROUND(
         COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' THEN csj.student_id END) * 100.0 /
-        NULLIF(COUNT(DISTINCT CASE WHEN csj.course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission') THEN csj.student_id END), 0), 2
+        NULLIF(COUNT(DISTINCT CASE WHEN csj.course_status = 'Application' THEN csj.student_id END), 0), 2
     ) AS conversion_rate
 FROM course_status_journeys csj;
 ```
@@ -979,39 +1028,6 @@ LEFT JOIN student_remarks sr ON team_member.counsellor_id = sr.counsellor_id
 WHERE manager.role = 'to'
 GROUP BY manager.counsellor_id, manager.counsellor_name
 ORDER BY success_rate DESC;
-```
-
----
-
-### PATTERN 11 — Date-filtered count from course_status_journeys (ANY status)
-
-Use this for ALL queries like "admitted in last N days", "enrolled this month", "applications this week", etc.
-Always wrap in a subquery with `MIN(created_at)` per student to get their first event date, then apply the IST-adjusted date filter.
-
-```sql
-SELECT COUNT(DISTINCT student_id) AS count
-FROM (
-    SELECT student_id, MIN(created_at) AS first_event_date
-    FROM course_status_journeys
-    WHERE course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')
-      AND student_id IN (SELECT student_id FROM students)
-    GROUP BY student_id
-) sub
-WHERE first_event_date >= CURRENT_DATE - interval 'N days' - interval '5 hours 30 minutes'
-  AND first_event_date <  CURRENT_DATE + interval '1 day'  - interval '5 hours 30 minutes';
-```
-
-**Applies to all statuses:** application-stage IN list, `'Admission'`, `'Document Pending'`, `'Document Submitted'`, `'Enrolled'`, `'NotInterested'` (after application).
-**Why MIN?** `course_status_journeys` is append-only — a student can have multiple rows for the same `course_status`. Without MIN, duplicates inflate counts and old students reappear in recent-period filters.
-
-**⚠️ CRITICAL — NEVER do this (direct `created_at` filter on raw rows):**
-```sql
--- WRONG — a student admitted in February whose row was re-triggered in March
--- will be counted as a March admission. This produces incorrect results.
-SELECT COUNT(DISTINCT student_id)
-FROM course_status_journeys
-WHERE course_status = 'Admission'
-  AND created_at >= '2026-03-01' AND created_at < '2026-04-01';
 ```
 
 ---
@@ -1080,7 +1096,7 @@ WITH never_progressed AS (
       AND s.student_id NOT IN (
           SELECT DISTINCT student_id
           FROM course_status_journeys
-          WHERE course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')
+          WHERE course_status IN ('Application', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')
       )
 )
 SELECT COUNT(DISTINCT np.student_id) AS pre_ni_count
@@ -1104,7 +1120,7 @@ WHERE s.current_student_status = 'NotInterested'
   AND s.student_id NOT IN (
       SELECT DISTINCT student_id
       FROM course_status_journeys
-      WHERE course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')
+      WHERE course_status IN ('Application', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')
   )
   AND s.created_at >= <start_ist>
   AND s.created_at <  <end_ist>
@@ -1202,10 +1218,6 @@ WHERE first_ni_at >= <start_ist>   -- e.g. CURRENT_DATE - INTERVAL '1 day' - INT
 
 ---
 
-# SECTION 6 — CRITICAL RULES
-
----
-
 **RULE O1.** Output ONLY raw PostgreSQL SQL — no markdown fences, no comments, no explanations.
 
 **RULE O2.** ALWAYS use wide-format (pivot) for stage breakdown — one row per entity, one column per stage. Never one row per status.
@@ -1263,7 +1275,7 @@ WHERE first_ni_at >= <start_ist>   -- e.g. CURRENT_DATE - INTERVAL '1 day' - INT
 
 **RULE T8.** Team performance queries route through: manager → team_member (counsellors self-join) → student_remarks. Do NOT route through students table for call metrics.
 
-**RULE T9.** "Applications by source" MUST use `course_status_journeys JOIN students`, filter `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')`, group by `students.source`. NEVER use `student_lead_activities` or `latest_course_statuses` for this.
+**RULE T9.** "Applications by source" MUST use `course_status_journeys JOIN students`, filter `course_status = 'Application'`, group by `students.source`. NEVER use `student_lead_activities` or `latest_course_statuses` for this.
 
 **RULE T10.** When a query involves university courses and mentions delivery format (online / regular / hybrid / distance / in-person), ALWAYS use `university_courses.study_mode`. `students.mode` is the student's personal study preference and must NEVER appear in course or university-level analysis. These two columns share similar values but are entirely different — they are not interchangeable.
 
@@ -1283,7 +1295,7 @@ WHERE first_ni_at >= <start_ist>   -- e.g. CURRENT_DATE - INTERVAL '1 day' - INT
 
 **RULE S1.** `students.current_student_status` is the source for early funnel stages (Fresh, Pre Application, Initial Counselling Completed, NotInterested before application). For Application, Admission, Document Pending, Document Submitted, Enrolled, and NotInterested after application → use `course_status_journeys.course_status`.
 
-**RULE S2.** When user asks "form filled" or "form fills" or "applied" → query `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')` from `course_status_journeys`. NEVER use `latest_course_statuses` for this. NEVER use `course_status = 'Application'` in Regular LMS — that status does not exist.
+**RULE S2.** When user asks "form filled" or "form fills" → query `course_status = 'Application'` from `course_status_journeys`. NEVER use `latest_course_statuses` for this.
 
 **RULE S3.** Count callbacks using `remark_id`, not `student_id`.
 
@@ -1315,7 +1327,7 @@ For date-filtered queries on `course_status_journeys` (Application, Admission, D
 
 **RULE S5.** ALWAYS use `COUNT(DISTINCT student_id)` when counting students — never `COUNT(*)` after a JOIN.
 
-**RULE S6.** "Form filled" / "form fills" / "applied" → `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')` on `course_status_journeys`. Do NOT use `latest_course_statuses` for form fill queries. NEVER use `course_status = 'Application'` in Regular LMS.
+**RULE S6.** "Form filled" / "form fills" → `course_status = 'Application'` on `course_status_journeys`. Do NOT use `latest_course_statuses` for form fill queries.
 
 **RULE S8.** For time-slot / hourly performance queries ("best time", "worst time", "perform best at what hour", "connected at 9 AM"):
 - ALWAYS use `EXTRACT(HOUR FROM created_at AT TIME ZONE 'Asia/Kolkata')` on `student_remarks`.
