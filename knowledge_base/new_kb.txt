@@ -1388,6 +1388,34 @@ This is the canonical way to count total ICC. Never use `COUNT(DISTINCT student_
 
 **⚠️ RULE S17-A. ALWAYS use `MIN(created_at)` when counting or dating admissions.** When counting admitted students or computing their admission date from `course_status_journeys`, ALWAYS group by `student_id` (and `course_id` if applicable) and select `MIN(created_at)` as the event date. **NEVER use raw `created_at` directly from `course_status_journeys` for admission rows** — the table is append-only and the same admission event can produce multiple rows due to re-triggers or updates. Using `MIN(created_at)` ensures you reference the **first/true admission date** and prevents duplicate-inflated counts. This applies to counts, lists, date filters, and TAT calculations involving `course_status = 'Admission'`.
 
+❌ WRONG — filters raw `created_at`, counts inflate due to duplicate rows:
+```sql
+SELECT COUNT(DISTINCT student_id) AS admissions_today
+FROM course_status_journeys
+WHERE course_status = 'Admission'
+  AND fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done')
+  AND student_id IN (SELECT student_id FROM students)
+  AND created_at >= <start_date> - INTERVAL '5 hours 30 minutes'
+  AND created_at < <end_date> - INTERVAL '5 hours 30 minutes';
+```
+
+✅ CORRECT — use `MIN(created_at)` in a CTE to get the first/true admission date per student-course, then filter:
+```sql
+WITH first_admissions AS (
+  SELECT student_id, course_id, MIN(created_at) AS first_admission_at
+  FROM course_status_journeys
+  WHERE course_status = 'Admission'
+    AND fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done')
+    AND student_id IN (SELECT student_id FROM students)
+  GROUP BY student_id, course_id
+)
+SELECT COUNT(DISTINCT student_id) AS admission_count
+FROM first_admissions
+WHERE (first_admission_at AT TIME ZONE 'Asia/Kolkata')::date >= <start_date>
+  AND (first_admission_at AT TIME ZONE 'Asia/Kolkata')::date < <end_date>;
+```
+Replace `<start_date>` and `<end_date>` with the user's requested date range (e.g. `'2025-04-01'` and `'2025-04-08'`). For "this month" use `DATE_TRUNC('month', CURRENT_DATE)` and `DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'`. For a single day use the same date for both with a 1-day interval on `<end_date>`.
+
 **RULE S15.** **TAT / Average Days Calculation.** For any query involving "average days," "how long," "time taken," or "TAT," it is **strictly forbidden** to join the raw `course_status_journeys` table directly. You **MUST** use a subquery or CTE with `MIN(created_at) GROUP BY student_id, course_id` to find the **first** time they reached that status before calculating the date difference. This prevents overcounting from status updates and re-triggers.
 
 For date-filtered queries on `course_status_journeys` (Application, Admission, Document Pending, Document Submitted, Enrolled, NotInterested after application), use `MIN(created_at)` per student to get their first event date, then apply the date filter on that. This ensures accurate counts by avoiding duplicate rows for the same `course_status` (re-triggers, duplicates). Use PATTERN 11 — subquery with `MIN(created_at)` grouped by `student_id`, then filter on `first_event_date`.
@@ -1526,4 +1554,4 @@ When generating clarifying questions for ambiguous queries, consider these patte
 - Options: All NI reasons, Budget issue, Not eligible, Already enrolled, Other reasons
 
 ## University / Course Scope
-- Options: All universities, Specific university, Top universities by enrollment, Partner universities onlya
+- Options: All universities, Specific university, Top universities by enrollment, Partner universities only
