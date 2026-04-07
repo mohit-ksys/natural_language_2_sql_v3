@@ -3,7 +3,7 @@
  */
 
 const API_BASE = 'https://api-sql.degreefyd.com';
-const LMS_API_BASE = 'http://localhost:5000';
+const LMS_API_BASE = 'https://central-lms-api-test.degreefyd.com';
 
 function setCookie(name, value, days = 7) {
   const date = new Date();
