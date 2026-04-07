@@ -2,12 +2,35 @@
  * Backend API service for DataWhisper — with JWT auth and silent refresh.
  */
 
-const API_BASE = 'http://localhost:8001';
+const API_BASE = 'http://localhost:8000';
+const LMS_API_BASE = 'http://localhost:5000';
 
-// ─── Auth helpers ─────────────────────────────────────────────────────────────
+function setCookie(name, value, days = 7) {
+  const date = new Date();
+  date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+  const expires = "; expires=" + date.toUTCString();
+  document.cookie = name + "=" + (value || "") + expires + "; path=/; SameSite=Lax";
+}
+
+function getCookie(name) {
+  const nameEQ = name + "=";
+  const ca = document.cookie.split(';');
+  for (let i = 0; i < ca.length; i++) {
+    let c = ca[i];
+    while (c.charAt(0) === ' ') c = c.substring(1, c.length);
+    if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
+  }
+  return null;
+}
+
+function eraseCookie(name) {
+  document.cookie = name + '=; Max-Age=-99999999; path=/; SameSite=Lax';
+}
+
+
 
 export function getAccessToken() {
-  return localStorage.getItem('access_token');
+  return getCookie('degreefyd_nlp_token') || localStorage.getItem('access_token');
 }
 
 export function getUser() {
@@ -35,6 +58,7 @@ export function logout() {
   localStorage.removeItem('access_token');
   localStorage.removeItem('refresh_token');
   localStorage.removeItem('user');
+  eraseCookie('degreefyd_nlp_token');
   window.location.reload();
 }
 
@@ -85,20 +109,27 @@ async function apiFetch(url, options = {}, _retry = false) {
 
 export async function login(username, password) {
   try {
-    const res = await fetch(`${API_BASE}/auth/login`, {
+    // Calling Unified LMS Login instead of local NLP login
+    const res = await fetch(`${LMS_API_BASE}/api/auth/login/staff`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ email: username, password }),
     });
+    
     if (res.ok) {
       const data = await res.json();
-      localStorage.setItem('access_token', data.access_token);
-      localStorage.setItem('refresh_token', data.refresh_token);
+      // Store token in cookie as requested
+      setCookie('degreefyd_nlp_token', data.token, 7);
+      
+      // Store in localStorage for backward compatibility with existing components
+      localStorage.setItem('access_token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
+      
       return { ok: true, user: data.user };
     }
+    
     const err = await res.json();
-    return { ok: false, error: err.detail || 'Login failed' };
+    return { ok: false, error: err.error || 'Login failed' };
   } catch (e) {
     return { ok: false, error: e.message };
   }

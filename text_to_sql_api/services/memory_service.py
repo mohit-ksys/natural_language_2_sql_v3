@@ -91,12 +91,17 @@ def save_feedback(
     chat_id: str = "",
     mcq_questions: list = None,
     mcq_answers: list = None,
-    user_id: str = None,
-    lms_type: str = None,
-    model: str = None,
     token_usage: dict = None,
     chart_type: str = None,
+    user_name: str = None,
+    user_email: str = None,
+    user_role: str = None,
+    user_id: str = None,
+    model: str = None,
+    lms_type: str = None,
 ) -> str:
+
+
     """Insert a query/response pair into query_logs table."""
     from config.database import get_auth_engine
 
@@ -131,12 +136,12 @@ def save_feedback(
         with engine.begin() as conn:
             conn.execute(text("""
                 INSERT INTO query_logs (
-                    id, user_id, session_id, chat_id, user_query, generated_sql,
+                    id, user_id, user_name, user_email, user_role, session_id, chat_id, user_query, generated_sql,
                     answer, execution_time, error_message, model, lms_type,
                     token_usage, chart_type, mcq_data,
                     created_at_utc, created_at_ist
                 ) VALUES (
-                    :id, :user_id, :session_id, :chat_id, :user_query, :generated_sql,
+                    :id, :user_id, :user_name, :user_email, :user_role, :session_id, :chat_id, :user_query, :generated_sql,
                     :answer, :execution_time, :error_message, :model, :lms_type,
                     CAST(:token_usage AS jsonb), :chart_type, CAST(:mcq_data AS jsonb),
                     :now, :now AT TIME ZONE 'Asia/Kolkata'
@@ -144,6 +149,9 @@ def save_feedback(
             """), {
                 "id": feedback_id,
                 "user_id": user_id,
+                "user_name": user_name,
+                "user_email": user_email,
+                "user_role": user_role,
                 "session_id": session_id,
                 "chat_id": chat_id or "",
                 "user_query": user_query,
@@ -158,6 +166,8 @@ def save_feedback(
                 "mcq_data": mcq_data,
                 "now": now_utc,
             })
+
+
         _db_saved = True
     except Exception as e:
         log.error("Failed to save query log to DB (id=%s will not persist): %s", feedback_id[:8], e)
@@ -340,8 +350,11 @@ def format_session_for_prompt(session_id: str) -> str:
     lines = ["\n### CONVERSATION HISTORY (use this for follow-up questions):\n"]
     for t in recent:
         lines.append(f'User: {t.get("user_query", "")}')
-        lines.append(f'SQL: {t.get("generated_sql", "")}')
+        sql = t.get("generated_sql")
+        if sql:
+            lines.append(f'SQL: {sql}')
         lines.append(f'Answer: {t.get("answer", "")}\n')
+
     return "\n".join(lines)
 
 

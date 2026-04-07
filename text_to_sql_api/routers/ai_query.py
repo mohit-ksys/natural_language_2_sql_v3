@@ -97,6 +97,7 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
             include_thoughts=req.include_thoughts,
             lms_type=lms_type,
         )
+
     except Exception as e:
         traceback.print_exc()
         log.error("SQL generation failed: %s", str(e))
@@ -104,7 +105,11 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
             session_id=req.session_id, user_query=req.user_query,
             error_message=f"SQL generation failed: {str(e)}",
             chat_id=req.chat_id or "", user_id=user_id, lms_type=lms_type, model=req_model,
+            user_name=current_user.get("full_name"), user_email=current_user.get("email"),
+            user_role=current_user.get("role"),
         )
+
+
         _emsg = str(e)
         if "429" in _emsg or "RESOURCE_EXHAUSTED" in _emsg:
             raise HTTPException(status_code=429, detail="LLM quota exhausted. Please wait and retry.")
@@ -115,7 +120,10 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
             session_id=req.session_id, user_query=req.user_query, generated_sql=generated_sql,
             error_message="Security block: non-read-only SQL generated.",
             chat_id=req.chat_id or "", user_id=user_id, lms_type=lms_type, model=req_model,
+            user_name=current_user.get("full_name"), user_email=current_user.get("email"),
+            user_role=current_user.get("role"),
         )
+
         raise HTTPException(status_code=403, detail={
             "message": "Generated SQL is not read-only. Operation blocked.",
             "sql": generated_sql, "feedback_id": fid,
@@ -126,7 +134,10 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
         session_id=req.session_id, user_query=req.user_query, generated_sql=generated_sql,
         execution_time=execution_time, chat_id=req.chat_id or "",
         user_id=user_id, lms_type=lms_type, model=req_model,
+        user_name=current_user.get("full_name"), user_email=current_user.get("email"),
+        user_role=current_user.get("role"),
     )
+
 
     if not req.execute:
         _token_usage = {'model': req_model, **sql_usage} if sql_usage else None
@@ -163,7 +174,9 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
                     session_id=req.session_id, user_query=req.user_query, generated_sql=generated_sql,
                     error_message=f"[auto-fix attempt] {final_error}", chat_id=req.chat_id or "",
                     user_id=user_id, lms_type=lms_type, model=req_model,
+                    user_name=current_user.get("name"), user_email=current_user.get("email"),
                 )
+
                 _token_usage = {'model': req_model, **sql_usage} if sql_usage else None
                 return QueryResponse(
                     feedback_id=fid, session_id=req.session_id, sql=generated_sql,
@@ -181,7 +194,9 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
                 session_id=req.session_id, user_query=req.user_query, generated_sql=generated_sql,
                 error_message=original_error, chat_id=req.chat_id or "",
                 user_id=user_id, lms_type=lms_type, model=req_model,
+                user_name=current_user.get("name"), user_email=current_user.get("email"),
             )
+
             _token_usage = {'model': req_model, **sql_usage} if sql_usage else None
             return QueryResponse(
                 feedback_id=fid, session_id=req.session_id, sql=generated_sql,
@@ -306,6 +321,7 @@ def _generate_and_respond(
     start_time: float,
     lms_type: str,
     user_id: str,
+    current_user: dict,
     mcq_questions: list = None,
     mcq_answers: list = None,
 ) -> QueryResponse:
@@ -330,7 +346,9 @@ def _generate_and_respond(
             error_message=f"SQL generation failed: {str(e)}", chat_id=chat_id,
             mcq_questions=mcq_questions, mcq_answers=mcq_answers,
             user_id=user_id, lms_type=lms_type, model=req_model,
+            user_name=current_user.get("name"), user_email=current_user.get("email"),
         )
+
         _emsg = str(e)
         if "429" in _emsg or "RESOURCE_EXHAUSTED" in _emsg:
             raise HTTPException(status_code=429, detail="LLM quota exhausted. Please wait and retry.")
@@ -342,6 +360,7 @@ def _generate_and_respond(
             error_message="Security block: non-read-only SQL generated.", chat_id=chat_id,
             mcq_questions=mcq_questions, mcq_answers=mcq_answers,
             user_id=user_id, lms_type=lms_type, model=req_model,
+            user_name=current_user.get("name"), user_email=current_user.get("email"),
         )
         raise HTTPException(status_code=403, detail={
             "message": "Generated SQL is not read-only. Operation blocked.",
@@ -354,6 +373,7 @@ def _generate_and_respond(
         execution_time=execution_time, chat_id=chat_id,
         mcq_questions=mcq_questions, mcq_answers=mcq_answers,
         user_id=user_id, lms_type=lms_type, model=req_model,
+        user_name=current_user.get("name"), user_email=current_user.get("email"),
     )
 
     if not execute:
@@ -361,7 +381,7 @@ def _generate_and_respond(
         return QueryResponse(
             feedback_id=fid, session_id=session_id, sql=generated_sql,
             execution_time=execution_time, cached=False, executed=False,
-            session_context_alert="\u26a0\ufe0f Session context limited to last 5 queries" if should_show_context_alert else None,
+            session_context_alert="⚠️ Session context limited to last 5 queries" if should_show_context_alert else None,
             token_usage=_token_usage,
         )
 
@@ -388,7 +408,9 @@ def _generate_and_respond(
                     error_message=f"[auto-fix attempt] {final_error}", chat_id=chat_id,
                     mcq_questions=mcq_questions, mcq_answers=mcq_answers,
                     user_id=user_id, lms_type=lms_type, model=req_model,
+                    user_name=current_user.get("name"), user_email=current_user.get("email"),
                 )
+
                 _token_usage = {'model': req_model, **sql_usage} if sql_usage else None
                 return QueryResponse(
                     feedback_id=fid2, session_id=session_id, sql=generated_sql,
@@ -406,7 +428,9 @@ def _generate_and_respond(
                 error_message=original_error, chat_id=chat_id,
                 mcq_questions=mcq_questions, mcq_answers=mcq_answers,
                 user_id=user_id, lms_type=lms_type, model=req_model,
+                user_name=current_user.get("name"), user_email=current_user.get("email"),
             )
+
             _token_usage = {'model': req_model, **sql_usage} if sql_usage else None
             return QueryResponse(
                 feedback_id=fid2, session_id=session_id, sql=generated_sql,
@@ -442,11 +466,13 @@ def _generate_and_respond(
 
 @router.post("/disambiguate", response_model=DisambiguateResponse)
 def disambiguate_query(req: DisambiguateRequest, current_user: dict = Depends(get_current_user)):
-    if not req.user_query.strip():
-        raise HTTPException(status_code=400, detail="user_query is required.")
-
     _enforce_query_rate_limit(req.session_id)
+    
+    if (current_user.get("role") or "").lower() == "counsellor":
+        raise HTTPException(status_code=403, detail="Counsellors do not have access to SQL disambiguation.")
+        
     req_model = _validate_model(req.model)
+
 
     log.info("DISAMBIGUATE session=%s query=%r", req.session_id, req.user_query[:100])
 
@@ -490,10 +516,11 @@ def answer_mcq(req: MCQAnswerRequest, current_user: dict = Depends(get_current_u
     if not ctx:
         raise HTTPException(status_code=404, detail="Query context not found or expired. Please start a new query.")
 
-    if ctx.get("user_id") != str(current_user["id"]):
-        raise HTTPException(status_code=403, detail="Access denied to this query context.")
+    if (current_user.get("role") or "").lower() == "counsellor":
+        raise HTTPException(status_code=403, detail="Counsellors do not have access to SQL-based MCQ answering.")
 
     questions = ctx["questions"]
+
     original_query = ctx["original_query"]
     session_id = ctx["session_id"]
     chat_id = req.chat_id or ctx.get("chat_id", "")
@@ -513,6 +540,7 @@ def answer_mcq(req: MCQAnswerRequest, current_user: dict = Depends(get_current_u
         user_query=original_query, session_id=session_id, chat_id=chat_id,
         extra_context=enhanced_context, req_model=req_model, execute=req.execute,
         start_time=start_time, lms_type=lms_type, user_id=user_id,
+        current_user=current_user,
         mcq_questions=questions, mcq_answers=req.answers,
     )
 
@@ -525,13 +553,11 @@ def english_feedback(req: EnhancedFeedbackRequest, current_user: dict = Depends(
     if not ctx:
         raise HTTPException(status_code=404, detail="Query context not found or expired. Please start a new query.")
 
-    if ctx.get("user_id") != str(current_user["id"]):
-        raise HTTPException(status_code=403, detail="Access denied to this query context.")
-
-    if not req.feedback.strip():
-        raise HTTPException(status_code=400, detail="feedback text is required.")
+    if (current_user.get("role") or "").lower() == "counsellor":
+        raise HTTPException(status_code=403, detail="Counsellors do not have access to SQL-based feedback.")
 
     original_query = ctx["original_query"]
+
     session_id = ctx["session_id"]
     chat_id = req.chat_id or ctx.get("chat_id", "")
     questions = ctx.get("questions")
@@ -548,4 +574,5 @@ def english_feedback(req: EnhancedFeedbackRequest, current_user: dict = Depends(
         user_query=original_query, session_id=session_id, chat_id=chat_id,
         extra_context=feedback_context, req_model=req_model, execute=req.execute,
         start_time=start_time, lms_type=lms_type, user_id=user_id,
+        current_user=current_user,
     )

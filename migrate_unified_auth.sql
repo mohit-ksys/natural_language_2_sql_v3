@@ -1,0 +1,13 @@
+alter table query_logs drop constraint if exists query_logs_user_id_fkey;
+alter table query_logs alter column user_id type text;
+alter table query_logs add column if not exists user_name text;
+alter table query_logs add column if not exists user_email text;
+alter table query_logs add column if not exists user_role text;
+alter table sessions drop constraint if exists sessions_user_id_fkey;
+alter table sessions alter column user_id type text;
+alter table user_chats drop constraint if exists user_chats_user_id_fkey;
+alter table user_chats alter column user_id type text;
+alter table refresh_tokens drop constraint if exists refresh_tokens_user_id_fkey;
+alter table refresh_tokens alter column user_id type text;
+alter table users drop constraint if exists users_created_by_fkey;
+alter table users alter column created_by type text;

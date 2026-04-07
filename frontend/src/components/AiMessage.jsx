@@ -217,7 +217,8 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings, cur
   const [isEdited, setIsEdited] = useState(false);
   const [showAllData, setShowAllData] = useState(false);
 
-  const isSuperAdmin = currentUser?.role === 'super_admin';
+  const isSuperAdmin = currentUser?.role === 'super_admin' || currentUser?.role === 'Supervisor';
+
   const isAdminRole = currentUser?.role === 'admin';
 
   const [fixPanelOpen, setFixPanelOpen] = useState(false);
