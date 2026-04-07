@@ -161,7 +161,6 @@ Snapshot — current application status per student-course pair. One row per stu
 ### Business rules:
 - Use this table ONLY for shortlisted courses/universities. When user asks about shortlisted courses or universities, query `is_shortlisted = true` from this table.
 - For Application, Admission, Enrolled, NotInterested (after application) queries → use `course_status_journeys` instead.
-- Any payment: `latest_course_status ILIKE '%Paid%'`
 
 ---
 
