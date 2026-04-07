@@ -427,6 +427,7 @@ function ChatApp({ currentUser, onLogout, registerSave }) {
     setMessages([]);
     setChatStarted(false);
     setMsgCounter(0);
+    navigate('/');
   };
 
   const renameChat = (chatId, newTitle) => {
@@ -482,6 +483,7 @@ function ChatApp({ currentUser, onLogout, registerSave }) {
       setMessages(chatMessages);
       setChatStarted(chatMessages.length > 0);
       setMsgCounter(chatMessages.length);
+      navigate('/');
     }
   };
 
