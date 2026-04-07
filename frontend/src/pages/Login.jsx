@@ -37,7 +37,7 @@ export default function Login({ onLogin }) {
             </svg>
           </div>
 
-          <h1 style={s.brand}>ChatWithDB</h1>
+          <h1 style={s.brand}>GrepSQL AI</h1>
           <p style={s.tagline}>Ask your data<br/>anything — in plain English.</p>
 
           <div style={s.pills}>

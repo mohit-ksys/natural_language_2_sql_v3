@@ -5,14 +5,14 @@ CREATE TYPE user_role AS ENUM ('super_admin', 'admin', 'analyser');
 CREATE TYPE lms_type AS ENUM ('online', 'regular');
 
 CREATE TABLE users (
-  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id                TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
   username          TEXT UNIQUE NOT NULL,
   hashed_password   TEXT NOT NULL,
   full_name         TEXT NOT NULL,
   role              user_role NOT NULL DEFAULT 'admin',
   lms_type          lms_type,               -- NULL for super_admin
   is_active         BOOLEAN DEFAULT true,
-  created_by        UUID REFERENCES users(id),
+  created_by        TEXT,
   created_at_utc    TIMESTAMPTZ DEFAULT now(),
   created_at_ist    TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata'),
   last_login_at_utc TIMESTAMPTZ,
@@ -21,7 +21,7 @@ CREATE TABLE users (
 
 CREATE TABLE refresh_tokens (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id         UUID REFERENCES users(id) ON DELETE CASCADE,
+  user_id         TEXT,
   token_hash      TEXT UNIQUE NOT NULL,     -- bcrypt hash of the refresh token
   expires_at_utc  TIMESTAMPTZ NOT NULL,
   expires_at_ist  TIMESTAMPTZ NOT NULL,
@@ -32,7 +32,7 @@ CREATE TABLE refresh_tokens (
 
 CREATE TABLE query_logs (
   id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id               UUID REFERENCES users(id),
+  user_id               TEXT,
   session_id            TEXT NOT NULL,
   chat_id               TEXT,
   user_query            TEXT,
@@ -42,6 +42,9 @@ CREATE TABLE query_logs (
   error_message         TEXT,
   model                 TEXT,
   lms_type              TEXT,
+  user_name             TEXT,
+  user_email            TEXT,
+  user_role             TEXT,
   token_usage           JSONB,
   chart_type            TEXT,
   mcq_data              JSONB,
@@ -70,7 +73,7 @@ CREATE TABLE query_logs (
 
 CREATE TABLE sessions (
   id              TEXT PRIMARY KEY,
-  user_id         UUID REFERENCES users(id),
+  user_id         TEXT,
   title           TEXT,
   created_at_utc  TIMESTAMPTZ DEFAULT now(),
   created_at_ist  TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata'),
@@ -88,7 +91,7 @@ CREATE TABLE session_turns (
 );
 
 CREATE TABLE user_chats (
-  user_id         UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  user_id         TEXT PRIMARY KEY,
   chats_blob      JSONB,
   last_chat_id    TEXT,
   updated_at_utc  TIMESTAMPTZ DEFAULT now(),

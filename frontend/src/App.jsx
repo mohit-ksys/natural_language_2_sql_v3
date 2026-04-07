@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Hero from './components/Hero';
 import Thread from './components/Thread';
@@ -10,49 +11,53 @@ import Dashboard from './pages/Dashboard';
 import { sendQuery, checkHealth, loadChatsFromBackend, saveChatsToBackend, requestMCQs, submitMCQAnswers, submitEnglishFeedback, formatUtcTimestamp, isLoggedIn, getUser, logout } from './services/api';
 
 export default function App() {
-  // ─── Auth state ───────────────────────────────────────────────────────────
   const [authed, setAuthed] = useState(isLoggedIn);
   const [currentUser, setCurrentUser] = useState(getUser);
-  const [page, setPage] = useState('chat'); // 'chat' | 'dashboard'
+  const navigate = useNavigate();
 
   const handleLogin = (user) => {
     setCurrentUser(user);
     setAuthed(true);
+    navigate('/');
   };
 
-  // Save chats to DB then log out — prevents chat loss on logout
   const handleLogout = async () => {
-    // ChatApp exposes a save ref so we can await it
     if (chatSaveRef.current) {
       try { await chatSaveRef.current(); } catch {}
     }
     logout();
+    setAuthed(false);
+    setCurrentUser(null);
+    navigate('/login');
   };
 
-  // Ref that ChatApp will populate with its save function
   const chatSaveRef = React.useRef(null);
 
-  if (!authed) {
-    return <Login onLogin={handleLogin} />;
-  }
-
-  if (page === 'dashboard') {
-    return <Dashboard onBack={() => setPage('chat')} />;
-  }
-
   return (
-    <ChatApp
-      currentUser={currentUser}
-      onLogout={handleLogout}
-      onDashboard={currentUser?.role === 'super_admin' ? () => setPage('dashboard') : null}
-      registerSave={(fn) => { chatSaveRef.current = fn; }}
-    />
+    <Routes>
+      <Route path="/login" element={!authed ? <Login onLogin={handleLogin} /> : <Navigate to="/" />} />
+      <Route
+        path="/*"
+        element={
+          authed ? (
+            <ChatApp
+              currentUser={currentUser}
+              onLogout={handleLogout}
+              registerSave={(fn) => { chatSaveRef.current = fn; }}
+            />
+          ) : (
+            <Navigate to="/login" />
+          )
+        }
+      />
+    </Routes>
   );
 }
 
+
 // ─── Main chat app (only rendered when authenticated) ─────────────────────────
 
-function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
+function ChatApp({ currentUser, onLogout, registerSave }) {
   const [messages, setMessages] = useState([]);
   const [chatStarted, setChatStarted] = useState(false);
   const [chats, setChats] = useState([]);
@@ -61,6 +66,10 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
+
+  const navigate = useNavigate();
+  const role = (currentUser?.role || "").toLowerCase();
+  const canViewDashboard = role === 'super_admin' || role === 'supervisor';
 
   const DEFAULT_SETTINGS = { datahubConnected: false, autoRunQuery: false, hideQuery: false, mcqEnabled: false };
   const [settings, setSettings] = useState(() => {
@@ -265,10 +274,13 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
 
   const _directQuery = async (sessionId, text, chatIdToUse, isFirstQuery, userMsgCounter) => {
     try {
-      const res = await sendQuery(sessionId, text, model, settings.autoRunQuery, chatIdToUse, lmsType);
+      const canAutoRun = settings.autoRunQuery || (currentUser?.role !== 'super_admin' && currentUser?.role !== 'Supervisor');
+      const res = await sendQuery(sessionId, text, model, canAutoRun, chatIdToUse, lmsType);
+
       if (res.ok) {
         const { sql, answer, chart_type, data, execution_time, session_context_alert, sql_auto_fixed, sql_error } = res.data;
         _updateTitleOnFirst(isFirstQuery, chatIdToUse, text);
+        
         setMsgCounter(prev => prev + 1);
         setMessages(prev => [...prev, {
           id: `ai-${userMsgCounter + 1}`, type: 'ai', model, isRegen: false, sql, answer,
@@ -292,7 +304,9 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
     const sessionId = currentChatId?.replace('chat-', 'session-');
     if (!sessionId) return;
     try {
-      const res = await submitMCQAnswers(queryId, sessionId, answers, model, settings.autoRunQuery, currentChatId);
+      const canAutoRun = settings.autoRunQuery || (currentUser?.role !== 'super_admin' && currentUser?.role !== 'Supervisor');
+      const res = await submitMCQAnswers(queryId, sessionId, answers, model, canAutoRun, currentChatId);
+
       if (res.ok) {
         const { sql, answer, chart_type, data, execution_time, session_context_alert, sql_auto_fixed, sql_error } = res.data;
         const nextCounter = msgCounter + 1;
@@ -322,7 +336,9 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
     const sessionId = currentChatId?.replace('chat-', 'session-');
     if (!sessionId || !originalQuery) return;
     try {
-      const res = await sendQuery(sessionId, originalQuery, model, settings.autoRunQuery, currentChatId, lmsType);
+      const canAutoRun = settings.autoRunQuery || (currentUser?.role !== 'super_admin' && currentUser?.role !== 'Supervisor');
+      const res = await sendQuery(sessionId, originalQuery, model, canAutoRun, currentChatId, lmsType);
+
       if (res.ok) {
         const { sql, answer, chart_type, data, execution_time, session_context_alert, sql_auto_fixed, sql_error } = res.data;
         const nextCounter = msgCounter + 1;
@@ -351,8 +367,10 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
     setTimeout(async () => {
       let res;
       if (mcqQueryId) {
-        res = await submitEnglishFeedback(mcqQueryId, sessionId, fixText, model, settings.autoRunQuery, currentChatId);
+        const canAutoRun = settings.autoRunQuery || (currentUser?.role !== 'super_admin' && currentUser?.role?.toLowerCase() !== 'supervisor');
+        res = await submitEnglishFeedback(mcqQueryId, sessionId, fixText, model, canAutoRun, currentChatId);
       } else {
+
         res = await sendQuery(sessionId, fixText, model, true, currentChatId, lmsType);
       }
       if (res.ok) {
@@ -409,6 +427,7 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
     setMessages([]);
     setChatStarted(false);
     setMsgCounter(0);
+    navigate('/');
   };
 
   const renameChat = (chatId, newTitle) => {
@@ -464,6 +483,7 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
       setMessages(chatMessages);
       setChatStarted(chatMessages.length > 0);
       setMsgCounter(chatMessages.length);
+      navigate('/');
     }
   };
 
@@ -472,7 +492,7 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
       <div className="app loading">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
           <div style={{ textAlign: 'center', color: '#999' }}>
-            <div style={{ fontSize: '24px', marginBottom: '10px' }}>Initializing DataWhisper...</div>
+            <div style={{ fontSize: '24px', marginBottom: '10px' }}>Initializing GrepSQL AI...</div>
             <div style={{ fontSize: '12px' }}>Connecting to backend...</div>
           </div>
         </div>
@@ -492,31 +512,44 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
         pinChat={pinChat}
         renameChat={renameChat}
         currentUser={currentUser}
-        onDashboard={onDashboard}
+        onDashboard={canViewDashboard ? () => navigate('/dashboard') : null}
         onAdmin={currentUser?.role === 'super_admin' ? () => setIsAdminOpen(true) : null}
         onLogout={onLogout}
       />
 
       <main className="main">
-        <Hero isHidden={chatStarted} onSendChip={(text) => handleSendMessage(text, false)} />
-        <Thread
-          messages={messages}
-          addToast={addToast}
-          onFix={handleFix}
-          onRegen={handleRegen}
-          onSubmitMCQAnswers={handleSubmitMCQAnswers}
-          onSkipMCQ={handleSkipMCQ}
-          settings={settings}
-          currentUser={currentUser}
-        />
-        <InputDock
-          onSendMessage={t => handleSendMessage(t, false)}
-          model={model}
-          setModel={setModel}
-          thinkOn={thinkOn}
-          setThinkOn={setThinkOn}
-          chatStarted={chatStarted}
-        />
+        <Routes>
+          <Route
+            path="/"
+            element={
+              <>
+                <Hero isHidden={chatStarted} onSendChip={(text) => handleSendMessage(text, false)} />
+                <Thread
+                  messages={messages}
+                  addToast={addToast}
+                  onFix={handleFix}
+                  onRegen={handleRegen}
+                  onSubmitMCQAnswers={handleSubmitMCQAnswers}
+                  onSkipMCQ={handleSkipMCQ}
+                  settings={settings}
+                  currentUser={currentUser}
+                />
+                <InputDock
+                  onSendMessage={t => handleSendMessage(t, false)}
+                  model={model}
+                  setModel={setModel}
+                  thinkOn={thinkOn}
+                  setThinkOn={setThinkOn}
+                  chatStarted={chatStarted}
+                />
+              </>
+            }
+          />
+          <Route
+            path="/dashboard"
+            element={canViewDashboard ? <Dashboard onBack={() => navigate('/')} /> : <Navigate to="/" />}
+          />
+        </Routes>
       </main>
 
       <SettingsModal
@@ -528,9 +561,11 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
         currentUser={currentUser}
       />
 
+
       {isAdminOpen && <AdminPanel onClose={() => setIsAdminOpen(false)} />}
 
       <div className={`toast ${showToast ? 'show' : ''}`} id="toast">{toastMsg}</div>
     </div>
   );
 }
+

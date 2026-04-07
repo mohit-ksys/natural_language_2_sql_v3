@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from typing import Optional
 
-from auth.dependencies import require_super_admin
+from auth.dependencies import require_admin_or_supervisor
+
 from config.database import get_auth_engine
 
 
@@ -25,7 +26,8 @@ router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 
 @router.get("/stats")
-def get_stats(_: dict = Depends(require_super_admin)):
+def get_stats(_: dict = Depends(require_admin_or_supervisor)):
+
     """Summary cards — counts for last 24 hours and all time."""
     engine = get_auth_engine()
     with engine.connect() as conn:
@@ -37,14 +39,14 @@ def get_stats(_: dict = Depends(require_super_admin)):
         total_all = conn.execute(text("SELECT COUNT(*) FROM query_logs")).scalar()
 
         most_active_row = conn.execute(text("""
-            SELECT u.username, COUNT(*) as cnt
-            FROM query_logs ql
-            JOIN users u ON u.id = ql.user_id
-            WHERE ql.created_at_utc >= now() - interval '24 hours'
-            GROUP BY u.username
+            SELECT user_name as username, COUNT(*) as cnt
+            FROM query_logs
+            WHERE created_at_utc >= now() - interval '24 hours'
+            GROUP BY user_name
             ORDER BY cnt DESC
             LIMIT 1
         """)).fetchone()
+
 
         errors_24h = conn.execute(text("""
             SELECT COUNT(*) FROM query_logs
@@ -69,7 +71,8 @@ def get_stats(_: dict = Depends(require_super_admin)):
 
 @router.get("/logs")
 def get_logs(
-    _: dict = Depends(require_super_admin),
+    _: dict = Depends(require_admin_or_supervisor),
+
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     username: Optional[str] = Query(None),
@@ -90,8 +93,9 @@ def get_logs(
     params: dict = {"limit": page_size, "offset": (page - 1) * page_size}
 
     if username:
-        conditions.append("u.username = :username")
+        conditions.append("ql.user_name = :username")
         params["username"] = username
+
 
     if feedback_type == "logic":
         conditions.append("ql.has_logic_feedback = true")
@@ -128,27 +132,27 @@ def get_logs(
     query = f"""
         SELECT
             ql.id, ql.session_id, ql.chat_id,
-            u.username,
+            ql.user_name as username, ql.user_email as email, ql.user_role as role,
             ql.user_query, ql.generated_sql, ql.answer,
+
             ql.execution_time, ql.error_message, ql.model, ql.lms_type,
             ql.chart_type, ql.token_usage, ql.mcq_data,
             ql.has_logic_feedback, ql.logic_feedback_text,
             ql.has_sql_feedback, ql.corrected_sql,
-            ql.has_english_feedback, ql.english_feedback_text, ql.regenerated_sql,
             ql.has_any_feedback,
             ql.created_at_utc, ql.created_at_ist
         FROM query_logs ql
-        LEFT JOIN users u ON u.id = ql.user_id
         {where_clause}
         ORDER BY ql.created_at_utc DESC
         LIMIT :limit OFFSET :offset
     """
 
+
     count_query = f"""
         SELECT COUNT(*) FROM query_logs ql
-        LEFT JOIN users u ON u.id = ql.user_id
         {where_clause}
     """
+
 
     with engine.connect() as conn:
         rows = conn.execute(text(query), params).fetchall()

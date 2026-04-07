@@ -36,9 +36,9 @@ export default function SettingsModal({ isOpen, onClose, settings, setSettings, 
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="ChatWithDB Settings">
+      <div className="modal-content" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="GrepSQL AI Settings">
         <div className="modal-header">
-          <h2>ChatWithDB Settings</h2>
+          <h2>GrepSQL AI Settings</h2>
           <button className="modal-close-btn" onClick={onClose} aria-label="Close settings">✕</button>
         </div>
 
