@@ -164,7 +164,7 @@ def refresh_token(req: RefreshRequest):
             SELECT rt.id, rt.token_hash, rt.expires_at_utc, rt.revoked,
                    u.id as user_id, u.username, u.full_name, u.role, u.lms_type, u.is_active
             FROM refresh_tokens rt
-            JOIN users u ON u.id = rt.user_id
+            JOIN users u ON u.id = rt.user_id::uuid
             WHERE rt.id = :token_id AND rt.revoked = false AND rt.expires_at_utc > now()
         """), {"token_id": token_id}).fetchone()
 

@@ -718,6 +718,7 @@ Adapt grouping: university → `GROUP BY uc.university_name`, course → add `uc
 | "pre NI" / "NI with no ICC" / "NI who never progressed" | `current_student_status='NotInterested'` + `"first_Icc_Date" IS NULL` + NOT IN course_status_journeys progression — see NI-6 in DISTINCTION 9 and PATTERN 13 |
 | "attempted calls on new leads" / "calls made to students added yesterday" / "leads attempted yesterday" | COUNT(DISTINCT sr.student_id) joining students filtered by `created_at` yesterday window — see PATTERN 14 |
 | "total leads today" / "attempted leads today" / "leads and attempts today" (counsellor wise) | Two COUNT(DISTINCT) on students and student_remarks filtered by today's IST window — see PATTERN 15 |
+| "form fills today" / "applications today" / "how many applied today" / "portal pending today" / "status breakdown today" / any date-bounded count of specific `course_status` values by university or counsellor | Use PATTERN 17 — `DISTINCT ON (student_id, course_id, course_status) ORDER BY ... ASC` to get first occurrence of each status per student, then apply the IST date filter on that first-occurrence timestamp |
 
 ---
 
@@ -1175,6 +1176,43 @@ WHERE first_ni_at >= <start_ist>   -- e.g. CURRENT_DATE - INTERVAL '1 day' - INT
 
 ---
 
+### PATTERN 17 — First-Time Date Range: Status Count by University (or any entity)
+
+Use when the user asks how many students reached a specific `course_status` **for the first time** within a date window — e.g. "how many form fills today", "portal pending today by university", "applications today".
+
+**Why this pattern is needed:**
+`course_status_journeys` is append-only. A student who moved from `Form Submitted – Portal Pending` → `Form Submitted – Completed` has **two rows**. Filtering raw `created_at` on both rows would count the student in both columns simultaneously, inflating the "Portal Pending" count with students who have already moved forward. This pattern uses `DISTINCT ON (student_id, course_id, course_status) ORDER BY ... ASC` to capture the **first time** a student ever reached each status, then applies the date filter on that first-occurrence timestamp.
+
+**Rule:** NEVER filter directly on raw `course_status_journeys.created_at` when counting per-status breakdowns for a date window. Always pick the earliest event per (student_id, course_id, course_status) first.
+
+```sql
+SELECT
+    uc.university_name,
+    COUNT(DISTINCT CASE WHEN fs.course_status = 'Form Submitted – Portal Pending' THEN fs.student_id END) AS form_submitted_portal_pending,
+    COUNT(DISTINCT CASE WHEN fs.course_status = 'Form Submitted – Completed'      THEN fs.student_id END) AS form_submitted_completed
+FROM (
+    SELECT DISTINCT ON (student_id, course_id, course_status)
+        student_id, course_id, course_status, created_at
+    FROM course_status_journeys
+    WHERE course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed')
+      AND student_id IN (SELECT student_id FROM students)
+    ORDER BY student_id, course_id, course_status, created_at ASC
+) fs
+JOIN university_courses uc ON fs.course_id = uc.course_id
+WHERE uc.university_name IN ('University A', 'University B')
+  AND fs.created_at >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+  AND fs.created_at <  CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+GROUP BY uc.university_name;
+```
+
+**Key rules:**
+- `DISTINCT ON (student_id, course_id, course_status) ORDER BY ... created_at ASC` → picks the **first time** each student reached each status. A student who progressed from Portal Pending → Completed will appear in **Completed only** when the date filter is applied, because their Portal Pending first-occurrence date is earlier (and outside today's window).
+- The date filter goes on the outer query (on the already-deduplicated `fs.created_at`), not inside the subquery.
+- Replace the `university_name IN (...)` filter and `GROUP BY` as needed — this pattern works for any grouping entity (counsellor, course, etc.).
+- Always include `AND student_id IN (SELECT student_id FROM students)` inside the subquery to exclude orphaned test records.
+
+---
+
 **RULE O1.** Output ONLY raw PostgreSQL SQL — no markdown fences, no comments, no explanations.
 
 **RULE O2.** ALWAYS use wide-format (pivot) for stage breakdown — one row per entity, one column per stage. Never one row per status.
@@ -1277,6 +1315,14 @@ This is the canonical way to count total ICC. Never use `COUNT(DISTINCT student_
 **RULE S17.** **Admission Counts Must Be Deduplicated.** `course_status_journeys` is append-only — the same student can have multiple `course_status = 'Admission'` rows for the same course (re-triggers, updates, corrections). ALWAYS use `COUNT(DISTINCT student_id)` for admission counts. NEVER use `COUNT(*)` or `COUNT(remark_id)` on admission rows. For any query returning a list or detail of admitted students, wrap in a CTE using `MIN(created_at)` or `DISTINCT ON (student_id, course_id)` to ensure one row per student-course pair before joining or displaying results.
 - Correct: `COUNT(DISTINCT student_id) WHERE course_status = 'Admission' AND fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done')`
 - Wrong: `COUNT(*) WHERE course_status = 'Admission'` — this inflates counts due to duplicate rows for the same student.
+
+**RULE S18.** **course_status_journeys is Append-Only — Always Deduplicate Before Filtering by Date.** For ANY query that filters `course_status_journeys` by a date window to count or list students at a specific status, you MUST deduplicate first using one of these two approaches:
+- **`MIN(created_at)` per `(student_id, course_id)`** — use when you only need one status (e.g. "admitted today", "enrolled this week"). Get the first event date, then apply the date filter outside. See PATTERN 11.
+- **`DISTINCT ON (student_id, course_id, course_status) ORDER BY ... created_at ASC`** — use when you need multiple statuses in a pivot/breakdown (e.g. "portal pending vs completed today"). Get the first occurrence of each status per student, then apply the date filter outside. See PATTERN 17.
+
+**Why:** The same student-course-status combination can have many rows due to re-triggers, corrections, and updates. Without deduplication, a student first admitted in February whose row was re-triggered in March will be counted as a March admission. A student who moved from Portal Pending → Completed will appear in both Portal Pending AND Completed columns.
+
+**NEVER filter raw `course_status_journeys.created_at` directly** without first deduplicating. This is a global rule with no exceptions.
 
 **RULE S15.** **TAT / Average Days Calculation.** For any query involving "average days," "how long," "time taken," or "TAT," it is **strictly forbidden** to join the raw `course_status_journeys` table directly. You **MUST** use a subquery or CTE with `MIN(created_at) GROUP BY student_id, course_id` to find the **first** time they reached that status before calculating the date difference. This prevents overcounting from status updates and re-triggers.
 
