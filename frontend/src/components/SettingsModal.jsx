@@ -5,6 +5,16 @@ import { checkHealth } from '../services/api';
 export default function SettingsModal({ isOpen, onClose, settings, setSettings, backendStatus = 'disconnected', currentUser }) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
+  const [liveStatus, setLiveStatus] = useState(backendStatus);
+
+  // Re-check health every time the modal opens
+  useEffect(() => {
+    if (!isOpen) return;
+    setLiveStatus(backendStatus); // reset to current prop first
+    checkHealth().then(res => {
+      setLiveStatus(res.ok ? 'connected' : 'disconnected');
+    }).catch(() => setLiveStatus('disconnected'));
+  }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close on Escape key
   useEffect(() => {
@@ -22,6 +32,7 @@ export default function SettingsModal({ isOpen, onClose, settings, setSettings, 
     try {
       const res = await checkHealth();
       setTestResult(res.ok ? 'connected' : 'failed');
+      setLiveStatus(res.ok ? 'connected' : 'disconnected');
       setSettings(prev => ({ ...prev, datahubConnected: res.ok }));
     } catch {
       setTestResult('failed');
@@ -47,8 +58,8 @@ export default function SettingsModal({ isOpen, onClose, settings, setSettings, 
             <h3>System Status</h3>
             <div className="connection-box">
               <div className="connection-status">
-                <div className={`status-dot ${backendStatus === 'connected' ? 'connected' : ''}`}></div>
-                <span>{backendStatus === 'connected' ? '✅ Backend Connected' : '❌ Backend Offline'}</span>
+                <div className={`status-dot ${liveStatus === 'connected' ? 'connected' : ''}`}></div>
+                <span>{liveStatus === 'connected' ? '✅ Backend Connected' : '❌ Backend Offline'}</span>
               </div>
               <button
                 className={`test-btn ${testing ? 'testing' : ''} ${testResult === 'connected' ? 'connected' : testResult === 'failed' ? 'failed' : ''}`}

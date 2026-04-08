@@ -88,6 +88,11 @@ One row per staff member or partner.
 - Team of a manager → `WHERE assigned_to = '<manager_counsellor_id>'`
 - NEVER OR across two counsellor FK columns in one JOIN (Rule J1).
 
+### L2 vs L3 ownership (Regular LMS):
+- **L2 counsellor** (`assigned_counsellor_id` on `students`) owns the student from **Fresh through all pre-application stages** (Fresh → Pre Application → Initial Counselling Completed → NotInterested before application). All these stages live in the `students` table.
+- **L3 counsellor** (`assigned_counsellor_l3_id` on `students`) takes over from **Application stage through Admission and beyond** (Form Submitted → Exam/Interview → Offer Letter → Ready For Admission → Admission → Document Pending → Document Submitted → Enrolled → NotInterested after application). All these stages live in `course_status_journeys`.
+- **CRITICAL — Regular LMS counsellors are course-wise:** In the Regular LMS, the L3 counsellor assignment is **per course**, not per student. A single student can have a different L3 counsellor for each course they applied to. When querying L3 counsellor performance, always join via `course_status_journeys.counsellor_id` (which tracks who handled each course-level event) rather than relying solely on `students.assigned_counsellor_l3_id`. For L2, the assignment is at the student level (`students.assigned_counsellor_id`).
+
 ---
 
 ## TABLE: student_remarks

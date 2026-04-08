@@ -167,7 +167,7 @@ function ChatApp({ currentUser, onLogout, onDashboard, registerSave }) {
 
   useEffect(() => {
     try {
-      const { datahubConnected, lmsTypeOverride, ...persistable } = settings;
+      const { datahubConnected, ...persistable } = settings;
       localStorage.setItem('dw-settings', JSON.stringify(persistable));
     } catch {}
   }, [settings]);
