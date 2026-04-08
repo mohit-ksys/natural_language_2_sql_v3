@@ -203,9 +203,13 @@ SQL:"""
 
 def generate_answer(user_query: str, data: list[dict], model: str = None) -> tuple[str, str]:
     import json
+    from datetime import datetime, timezone, timedelta
+    IST = timezone(timedelta(hours=5, minutes=30))
+    current_date = datetime.now(IST).strftime("%d %b %Y, %I:%M %p IST")
     data_str = json.dumps(data[:100], indent=2, default=str)
 
     prompt = f"""You are a professional Business Intelligence Analyst for a Lead Management System used in India.
+Current date and time: {current_date}
 
 User Question: "{user_query}"
 Database Result:
