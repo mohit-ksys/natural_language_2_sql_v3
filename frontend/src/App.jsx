@@ -68,7 +68,6 @@ function MainLayout({ currentUser, onLogout, registerSave }) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
 
-  // Promoting settings and model state to App for consistency
   const [model, setModel] = useState('gemini-3.1-flash-lite-preview');
   const [thinkOn, setThinkOn] = useState(false);
 

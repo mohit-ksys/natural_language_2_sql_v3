@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import PropTypes from 'prop-types';
-import { executeSql } from '../services/api';
+import { executeSql, sendQuery, submitEnglishFeedback, exportExcel } from '../services/api';
 import { calcCost, formatCost, formatUsd, formatTokens } from '../services/tokenCost';
 import * as XLSX from 'xlsx';
 
@@ -372,13 +372,16 @@ const AiMessage = React.memo(({ msg, addToast, onFix, onRegen, onUpdate, setting
     }
   };
 
-  const handleExportExcel = () => {
-    if (!displayData || displayData.length === 0) return;
-    const ws = XLSX.utils.json_to_sheet(displayData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Results');
-    const fileName = `query_results_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.xlsx`;
-    XLSX.writeFile(wb, fileName);
+  const handleExportExcel = async () => {
+    if (!sql) return;
+    try {
+      const fileName = `query_results_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.xlsx`;
+      await exportExcel(sql, msg.lms_type, fileName);
+      addToast('Full results exported to Excel', 'success');
+    } catch (err) {
+      console.error('Export error:', err);
+      addToast(`❌ Export failed: ${err.message}`);
+    }
   };
 
   // Table sort logic
@@ -632,12 +635,15 @@ const AiMessage = React.memo(({ msg, addToast, onFix, onRegen, onUpdate, setting
       {displayData && displayData.length > 0 && (
         <div className="whisper-data">
           <div className="data-header">
-            <span className="data-icon">📊</span>
-            <span className={`row-count-badge ${rowBadgeClass(displayData.length)}`}>
-              {displayData.length} {displayData.length === 1 ? 'row' : 'rows'}
-            </span>
-
-            {execBar && (
+              <div className={`query-stat count-stat ${msg.total_rows > (displayData?.length || 0) ? 'stat-warning' : ''}`}>
+                <span className="stat-icon">📊</span>
+                <span className="stat-value">
+                  {msg.total_rows && msg.total_rows > (displayData?.length || 0) 
+                    ? `${displayData.length} of ${msg.total_rows.toLocaleString()}` 
+                    : (displayData?.length || 0)} 
+                  {displayData?.length === 1 ? ' row' : ' rows'}
+                </span>
+              </div>{execBar && (
               <div className="exec-bar-wrap" title={`Executed in ${resultExecTime}s`}>
                 <div className="exec-bar">
                   <div className="exec-bar-fill" style={{ width: `${execBar.pct}%`, background: execBar.color }} />

@@ -23,6 +23,34 @@ function getCookie(name) {
   return null;
 }
 
+export async function exportExcel(sql, lmsType, fileName) {
+  const token = getAccessToken();
+  const response = await fetch(`${API_BASE}/export-excel`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify({
+      sql,
+      lms_type: lmsType,
+      filename: fileName
+    })
+  });
+
+  if (!response.ok) throw new Error('Export failed');
+
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  a.remove();
+}
+
 function eraseCookie(name) {
   document.cookie = name + '=; Max-Age=-99999999; path=/; SameSite=Lax';
 }

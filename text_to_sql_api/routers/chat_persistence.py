@@ -135,7 +135,7 @@ def load_chat_messages(
     """Load paginated messages for a specific chat in descending order."""
     engine = get_auth_engine()
     user_id = str(current_user["id"])
-    print({chat_id, limit,offset })
+    print("chats", {chat_id, limit, offset})
     try:
         with engine.connect() as conn:
             chat_status = conn.execute(
@@ -180,7 +180,7 @@ def load_chat_messages(
                 msg = {
                     "id": r.id,
                     "type": r.type,
-                    "text": r.text, # User prompt or AI plain-language answer
+                    "text": r.text,
                     "isFix": r.is_fix,
                     "isRegen": r.is_regenerate,
                     "sql": r.sql if r.type == 'ai' else (extra.get('sql') if r.type == 'ai' else None),
@@ -220,7 +220,6 @@ def load_chat_messages(
                         legacy_chats = legacy_row.chats_blob if isinstance(legacy_row.chats_blob, list) else json.loads(legacy_row.chats_blob)
                         log.info("Checking legacy fallback for %s. Found %d chats in blob.", chat_id, len(legacy_chats))
                         
-                        # Flexible matching: try exact match OR match without 'chat-' prefix
                         target_chat = None
                         stripped_id = chat_id.replace("chat-", "")
                         for c in legacy_chats:

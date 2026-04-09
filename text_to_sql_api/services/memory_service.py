@@ -42,13 +42,12 @@ def _setup_logger() -> logging.Logger:
 log = _setup_logger()
 
 
-# ─────────────────────────── MCQ QUERY CONTEXT (in-memory) ────────────────────
 
 import time as _time
 
 _query_contexts: dict[str, dict] = {}
 _query_ctx_lock = threading.Lock()
-_CTX_MAX_AGE = 600  # 10 minutes
+_CTX_MAX_AGE = 600  
 
 
 def store_query_context(query_id: str, context: dict):
@@ -79,7 +78,6 @@ def _cleanup_stale_contexts():
         del _query_contexts[qid]
 
 
-# ─────────────────────────── QUERY LOG (DB) ────────────────────────────────────
 
 def save_feedback(
     session_id: str,
@@ -104,6 +102,9 @@ def save_feedback(
     user_msg_id: str = None,
     data: list = None,
     existing_feedback_id: str = None,
+    sql_auto_fixed: bool = False,
+    sql_error: str = None,
+    extra: dict = None,
 ) -> str:
     """Insert a query/response pair into query_logs table and track token usage."""
     from config.database import get_auth_engine
@@ -130,9 +131,9 @@ def save_feedback(
                 "selected_answer": ans,
                 "selected_text": selected_text,
             })
-        mcq_data = json.dumps({"questions": mcq_log})
+        mcq_data = json.dumps({"questions": mcq_log}, default=str)
 
-    token_usage_json = json.dumps(token_usage) if token_usage else None
+    token_usage_json = json.dumps(token_usage, default=str) if token_usage else None
 
     _db_saved = False
     try:
@@ -207,65 +208,54 @@ def save_feedback(
                             "text": user_query,
                             "now": now_utc,
                         })
-
-                    # 2. Insert AI Message
-                    ai_msg_id = f"a-{feedback_id}"
-                    
-                    # If this is an answer to an MCQ, we might want to store MCQ metadata in extra
-                    extra_data = {}
-                    if thoughts:
-                        extra_data["thoughts"] = thoughts
-                    if is_mcq_answer:
-                        extra_data["is_mcq_answer"] = True
-                    if mcq_questions and mcq_answers:
-                         extra_data["mcq_answered"] = True
-                    
-                    # Store query results (data) in extra bucket as there is no 'data' column
-                    if data:
-                        extra_data["data"] = data
-                    if chart_type:
-                        extra_data["chart_type"] = chart_type
-                    if execution_time:
-                        extra_data["execution_time"] = execution_time
-                    
-                    log.info("PRE-SAVE extra_data keys: %s data_len: %d", list(extra_data.keys()), len(data) if data else 0)
-                    log.info("UPSERT chat_messages ID=%s chat_id=%s data_len=%d", ai_msg_id, chat_id, len(data) if data else 0)
-                    conn.execute(text("""
-                        INSERT INTO chat_messages (
-                            id, chat_id, type, text, sql, answer, chart_type, 
-                            execution_time, model, session_id, user_query, 
-                            feedback_id, token_usage, created_at_utc, created_at_ist, extra
-                        ) VALUES (
-                            :id, :cid, 'ai', :text, :sql, :answer, :chart,
-                            :exec_time, :model, :sid, :q,
-                            :fid, CAST(:tokens AS jsonb), :now, :now AT TIME ZONE 'Asia/Kolkata', CAST(:extra AS jsonb)
-                        )
-                        ON CONFLICT (id) DO UPDATE SET
-                            text = EXCLUDED.text,
-                            sql = EXCLUDED.sql,
-                            answer = EXCLUDED.answer,
-                            chart_type = EXCLUDED.chart_type,
-                            execution_time = EXCLUDED.execution_time,
-                            token_usage = EXCLUDED.token_usage,
-                            extra = EXCLUDED.extra
-                    """), {
-                        "id": ai_msg_id,
-                        "cid": chat_id,
-                        "text": answer or thoughts or "", # Main text content
-                        "sql": generated_sql,
-                        "answer": answer,
-                        "chart": chart_type,
-                        "exec_time": execution_time,
-                        "model": model,
-                        "sid": session_id,
-                        "q": user_query,
-                        "fid": feedback_id,
-                        "tokens": json.dumps(token_usage) if token_usage else None,
-                        "now": now_utc,
-                        "extra": json.dumps(extra_data)
-                    })
                 except Exception as e:
-                    log.error("Failed to auto-populate chat_messages in save_feedback: %s", e)
+                    log.error("Failed to auto-populate chat entry in save_feedback: %s", e)
+
+            target_msg_id = user_msg_id or (f"a-{feedback_id}" if not is_mcq_answer else f"m-{feedback_id}")
+            
+            rich_extra = extra or {}
+            if data is not None: rich_extra["data"] = data
+            if thoughts: rich_extra["thoughts"] = thoughts
+            if mcq_data: rich_extra["mcq_data"] = json.loads(mcq_data)
+            
+            conn.execute(text("""
+                INSERT INTO chat_messages (
+                    id, chat_id, type, text, sql, answer, chart_type, execution_time, 
+                    model, session_id, user_query, feedback_id, token_usage, 
+                    sql_auto_fixed, error, extra, created_at_utc, created_at_ist
+                ) VALUES (
+                    :id, :cid, :type, :text, :sql, :ans, :chart, :etime,
+                    :model, :sid, :q, :fid, CAST(:tokens AS jsonb),
+                    :saf, :err, CAST(:extra AS jsonb), :now, :now AT TIME ZONE 'Asia/Kolkata'
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                    sql = EXCLUDED.sql,
+                    answer = EXCLUDED.answer,
+                    chart_type = EXCLUDED.chart_type,
+                    execution_time = EXCLUDED.execution_time,
+                    token_usage = EXCLUDED.token_usage,
+                    sql_auto_fixed = EXCLUDED.sql_auto_fixed,
+                    error = EXCLUDED.error,
+                    extra = EXCLUDED.extra
+            """), {
+                "id": target_msg_id,
+                "cid": chat_id,
+                "type": "ai" if not is_mcq_answer else "mcq",
+                "text": answer,
+                "sql": generated_sql,
+                "ans": answer,
+                "chart": chart_type,
+                "etime": execution_time,
+                "model": model,
+                "sid": session_id,
+                "q": user_query,
+                "fid": feedback_id,
+                "tokens": token_usage_json,
+                "saf": sql_auto_fixed,
+                "err": sql_error or error_message,
+                "extra": json.dumps(rich_extra, default=str),
+                "now": now_utc
+            })
 
 
         _db_saved = True
@@ -300,7 +290,6 @@ def save_feedback(
     else:
         log.info("feedback[%s] session=%s exec=%.3fs query=%r", feedback_id[:8], session_id, execution_time, user_query[:80])
 
-    # Append to session memory only when DB save succeeded (feedback_id must exist in query_logs)
     if _db_saved:
         append_session_turn(session_id, user_query, generated_sql, answer, feedback_id, user_id=user_id)
 
@@ -367,6 +356,7 @@ def _ensure_session(conn, session_id: str, user_id: str = None):
 def get_session(session_id: str) -> dict:
     """Return session dict with 'turns' list (for backward compatibility)."""
     from config.database import get_auth_engine
+    print(f"Fetching session {session_id} from DB")
     try:
         engine = get_auth_engine()
         with engine.connect() as conn:
@@ -383,6 +373,8 @@ def get_session(session_id: str) -> dict:
                 turns.append(turn)
             except Exception:
                 pass
+        
+        turns.reverse()
         return {"turns": turns}
     except Exception as e:
         log.error("get_session error: %s", e)
@@ -402,7 +394,9 @@ def append_session_turn(session_id: str, user_query: str, generated_sql: str, an
     try:
         engine = get_auth_engine()
         with engine.begin() as conn:
+            # Force ensure session exists using the session_id (which will be the chat_id)
             _ensure_session(conn, session_id, user_id)
+            
             conn.execute(text("""
                 INSERT INTO session_turns (id, session_id, role, content, created_at_utc, created_at_ist)
                 VALUES (:id, :sid, 'turn', :content, :now, :now AT TIME ZONE 'Asia/Kolkata')
@@ -477,7 +471,7 @@ def format_session_for_prompt(session_id: str) -> str:
         if sql:
             lines.append(f'SQL: {sql}')
         lines.append(f'Answer: {t.get("answer", "")}\n')
-
+    print(f"Formatted session {session_id} for prompt with {len(recent)} turns")
     return "\n".join(lines)
 
 

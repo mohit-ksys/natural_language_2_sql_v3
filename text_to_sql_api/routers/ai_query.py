@@ -4,8 +4,12 @@ import time
 import traceback
 import uuid
 from datetime import datetime, timezone
+from typing import Optional, List
 
+import io
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 
 from auth.dependencies import get_current_user
 from config.database import execute_sql
@@ -25,7 +29,9 @@ from models.schemas import (
     QueryResponse,
     SessionsResponse,
 )
+from pydantic import BaseModel
 from services import llm_service, mcq_service, memory_service
+from config.settings import settings
 
 log = logging.getLogger("text2sql")
 
@@ -132,9 +138,11 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
         })
 
     chat_id = req.chat_id
+    chat_id = req.chat_id
     if not chat_id:
         chat_id = str(uuid.uuid4())
-        log.info("Generating new Chat ID: %s", chat_id)
+        log.warning("Frontend did not provide chat_id. Falling back to generated ID: %s", chat_id)
+        req.session_id = chat_id
 
     execution_time = round(time.time() - start_time, 3)
     fid = memory_service.save_feedback(
@@ -177,7 +185,6 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
             token_usage=_token_usage, thoughts=thoughts
         )
 
-    # Hand off to execute endpoint logic but reuse the feedback_id
     res = execute_query(
         ExecuteRequest(
             sql=generated_sql,
@@ -186,7 +193,8 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
             feedback_id=fid,
             model=req_model,
             lms_type=lms_type,
-            chat_id=req.chat_id
+            chat_id=req.chat_id,
+            thoughts=thoughts
         ),
         current_user=current_user
     )
@@ -246,49 +254,93 @@ def execute_query(req: ExecuteRequest, current_user: dict = Depends(get_current_
     if sql_err_msg:
         answer = f"The query failed with an error: `{sql_err_msg}`. You can try refining your question."
         chart_type = "Table"
+        total_rows = len(results)
+        truncated_results = results[:settings.DATA_LIMIT]
     else:
         try:
+            total_rows = len(results)
+            truncated_results = results[:settings.DATA_LIMIT]
+            
             answer, chart_type, _exec_thoughts, _exec_ans_usage = llm_service.generate_answer(
-                req.original_query or req.sql, results, model=_exec_model,
+                user_query=req.original_query,
+                data=truncated_results,
+                total_rows=total_rows,
+                model=_exec_model
             )
-        except Exception:
-            answer = f"Query returned {len(results)} rows."
+        except Exception as e:
+            import traceback
+            log.error("Failed to generate answer from results: %s\n%s", e, traceback.format_exc())
+            answer = f"The query was successful ({len(results)} rows), but I failed to generate a summary."
             chart_type = "Table"
+            truncated_results = results[:500]
+            total_rows = len(results)
+            _exec_ans_usage = {}
+            _exec_thoughts = ""
 
-    # CRITICAL: Persist the execution result to the database!
-    # Reuse existing_feedback_id if provided by process_query
-    log.info("Manual RUN persisting feedback. feedback_id=%s session=%s chat_id=%s has_results=%s", 
-             req.feedback_id, req.session_id, req.chat_id, results is not None)
-    memory_service.save_feedback(
-        session_id=req.session_id, 
-        user_query=req.original_query or req.sql, 
-        generated_sql=req.sql,
-        answer=answer, 
-        chart_type=chart_type, 
-        data=results,
+    
+
+    fid = memory_service.save_feedback(
+        session_id=req.session_id, user_query=req.original_query or req.sql, generated_sql=req.sql,
+        answer=answer, chart_type=chart_type, data=truncated_results, # Save truncated data to avoid blowing up DB/Memory
         execution_time=execution_time, 
-        chat_id=req.chat_id or "",
-        user_id=user_id, 
-        lms_type=lms_type, 
-        model=_exec_model,
-        user_name=current_user.get("full_name"), 
-        user_email=current_user.get("email"),
+        chat_id=req.chat_id or "", user_id=user_id, lms_type=lms_type, model=_exec_model,
+        user_name=current_user.get("full_name"), user_email=current_user.get("email"),
         user_role=current_user.get("role"),
         token_usage=_exec_ans_usage,
-        thoughts=_exec_thoughts,
-        error_message=sql_err_msg,
-        user_msg_id=None,
-        existing_feedback_id=req.feedback_id
+        thoughts=_exec_thoughts or req.thoughts,
+        sql_auto_fixed=sql_auto_fixed,
+        sql_error=sql_err_msg,
+        existing_feedback_id=req.feedback_id,
+        extra={"total_rows": total_rows} 
     )
 
     _exec_token_usage = {'model': _exec_model, **_exec_ans_usage} if _exec_ans_usage else None
     return ExecuteResponse(
-        answer=answer, chart_type=chart_type, data=results,
-        execution_time=execution_time, feedback_id=req.feedback_id,
+        answer=answer, chart_type=chart_type, data=truncated_results,
+        execution_time=execution_time, feedback_id=fid,
         sql=req.sql, session_id=req.session_id,
         token_usage=_exec_token_usage,
-        thoughts=_exec_thoughts
+            thoughts=_exec_thoughts or req.thoughts,
+        total_rows=total_rows 
     )
+
+
+class ExportRequest(BaseModel):
+    sql: str
+    lms_type: Optional[str] = None
+    filename: Optional[str] = "query_results.xlsx"
+
+
+@router.post("/export-excel")
+def export_excel(req: ExportRequest, current_user: dict = Depends(get_current_user)):
+    """Expert full result set to Excel directly from backend to avoid frontend freezes."""
+    try:
+        lms_type = _resolve_lms_type(current_user, req.lms_type)
+        results = execute_sql(req.sql, lms_type)
+        
+        if not results:
+            raise HTTPException(status_code=404, detail="No data found for export.")
+
+        df = pd.DataFrame(results)
+        
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Results')
+        
+        output.seek(0)
+        
+        headers = {
+            'Content-Disposition': f'attachment; filename="{req.filename}"'
+        }
+        
+        return StreamingResponse(
+            output, 
+            headers=headers, 
+            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    except Exception as e:
+        log.error("Deep export failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
 @router.get("/history", response_model=HistoryResponse)
@@ -430,7 +482,8 @@ def _generate_and_respond(
             feedback_id=fid,
             model=req_model,
             lms_type=lms_type,
-            chat_id=chat_id
+            chat_id=chat_id,
+            thoughts=thoughts
         ),
         current_user=current_user
     )

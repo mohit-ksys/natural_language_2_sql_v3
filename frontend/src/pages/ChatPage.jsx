@@ -20,6 +20,10 @@ export default function ChatPage({
   const [chatStarted, setChatStarted] = useState(!!urlId);
   const [msgCounter, setMsgCounter] = useState(0);
   const isNavigatingNewChat = useRef(false);
+  
+  // Use a stable requestId for the initial message, but always use chatId as sessionId once available
+  const [initialRequestId] = useState(() => crypto.randomUUID());
+  const sessionId = chatId || initialRequestId;
 
   useEffect(() => {
     const targetId = urlId || null;
@@ -195,29 +199,37 @@ export default function ChatPage({
   };
 
   const handleSendMessage = async (text, isFix = false) => {
+    let chatIdToUse = chatId;
+    
+    // NEW: If this is the start of a new chat, generate the Chat ID RIGHT NOW
+    // to prevent backend foreign key race conditions.
+    if (!chatIdToUse) {
+      chatIdToUse = crypto.randomUUID();
+      setChatId(chatIdToUse);
+      isNavigatingNewChat.current = true;
+    }
+
+    // Unify session_id with the chatId
+    const currentSessionId = chatIdToUse;
+    
     if (!chatStarted) setChatStarted(true);
     
-    // UI-only temporary ID for the user message
     const userMsgId = `u-${crypto.randomUUID()}`;
     const userMsg = { id: userMsgId, type: 'user', text, isFix, timestamp: new Date().toISOString() };
     safeSetMessages(prev => [...prev, userMsg]);
     
-    const sessionId = chatId ? chatId.replace('chat-', 'session-') : `session-${Date.now()}`;
-
     if (settings.mcqEnabled && !isFix) {
       setTimeout(async () => {
         try {
-          const res = await requestMCQs(sessionId, text, model, chatId, lmsType, userMsgId);
+          // Pass the proactively generated chatIdToUse
+          const res = await requestMCQs(currentSessionId, text, model, chatIdToUse, lmsType, userMsgId);
           console.log('[MCQ] requestMCQs Response:', res);
           if (res.ok && res.data.questions && res.data.questions.length > 0) {
-            const newChatId = res.data.chat_id;
             
-            // Sync URL and state if this is a new chat
-            if (!chatId && newChatId) {
-              isNavigatingNewChat.current = true;
-              updateChatListWithNewChat(newChatId, null, text);
-              setChatId(newChatId);
-              navigate(`/c/${newChatId}`, { replace: true });
+            // Sync URL if this is a new chat (using our stable ID)
+            if (isNavigatingNewChat.current) {
+              updateChatListWithNewChat(chatIdToUse, null, text);
+              window.history.replaceState(null, '', `/c/${chatIdToUse}`);
             }
 
             safeSetMessages(prev => [...prev, { 
@@ -293,7 +305,6 @@ export default function ChatPage({
   };
 
   const handleSubmitMCQAnswers = async (queryId, answers) => {
-    const sessionId = chatId?.replace('chat-', 'session-');
     if (!sessionId || !queryId) return;
     
     console.log(`[MCQ] Submitting answers for queryId: ${queryId}`);
@@ -307,7 +318,6 @@ export default function ChatPage({
       if (res.ok) {
         const { sql, answer, chart_type, data, execution_time, session_context_alert, sql_auto_fixed, sql_error, thoughts } = res.data;
         
-        // Find original query to maintain context
         let originalQuery = '';
         const currentMsgs = messages; // Access snapshot or use safety
         const m = currentMsgs.find(msg => msg.query_id === queryId);
@@ -327,7 +337,7 @@ export default function ChatPage({
           session_context_alert, 
           sessionId,
           chatId: chatIdToUse,
-          userQuery: originalQuery,
+          userQuery: originalQuery, 
           feedbackId: res.data.feedback_id || '', 
           query_id: queryId,
           token_usage: res.data.token_usage || null,
@@ -360,7 +370,6 @@ export default function ChatPage({
   };
 
   const handleSkipMCQ = async (queryId, originalQuery) => {
-    const sessionId = chatId?.replace('chat-', 'session-');
     if (!sessionId || !originalQuery) return;
     
     console.log(`[MCQ] Skipping all for queryId: ${queryId}`);
@@ -418,8 +427,7 @@ export default function ChatPage({
   const handleFix = (aiMsgId, fixText, mcqQueryId) => {
     if (!chatStarted) setChatStarted(true);
     safeSetMessages(prev => [...prev, { id: `${chatId}-u-${Date.now()}`, type: 'user', text: fixText, isFix: true }]);
-    const sessionId = chatId.replace('chat-', 'session-');
-    setTimeout(async () => {
+   setTimeout(async () => {
       let res;
       if (mcqQueryId) {
         const canAutoRun = settings.autoRunQuery || (currentUser?.role !== 'super_admin' && currentUser?.role?.toLowerCase() !== 'supervisor');
@@ -445,7 +453,9 @@ export default function ChatPage({
   const handleRegen = () => {
     const lastUserMsg = [...messages].reverse().find(m => m.type === 'user');
     if (!lastUserMsg) return;
-    const sessionId = chatId.replace('chat-', 'session-');
+    
+    const currentSessionId = sessionId;
+    
     setTimeout(async () => {
       try {
         const res = await sendQuery(sessionId, lastUserMsg.text, model, true, chatId, lmsType);

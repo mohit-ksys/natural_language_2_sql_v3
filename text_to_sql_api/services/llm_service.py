@@ -213,7 +213,7 @@ SQL:"""
     return _clean_sql(raw), thoughts, usage
 
 
-def generate_answer(user_query: str, data: list[dict], model: str = None, include_thoughts: bool = True) -> tuple[str, str, str, dict]:
+def generate_answer(user_query: str, data: list[dict], total_rows: int = None, model: str = None, include_thoughts: bool = True) -> tuple[str, str, str, dict]:
     import json
     data_str = json.dumps(data[:100], indent=2, default=str)
 
@@ -222,6 +222,11 @@ def generate_answer(user_query: str, data: list[dict], model: str = None, includ
 User Question: "{user_query}"
 Database Result:
 {data_str}
+
+### IMPORTANT CONTEXT:
+- Total rows found in database: {total_rows if total_rows is not None else len(data)}
+- Rows provided for analysis: {len(data)} (this is a preview only)
+{f"- NOTE: Only the first {len(data)} rows are shown below, but the database has {total_rows} records. Please mention this in your summary." if total_rows and total_rows > len(data) else ""}
 
 ### DATABASE SCHEMA CONTEXT (for interpretation only):
 - students: Primary table for lead information — student_id, names, contact details, early funnel stages (Fresh, Pre Application, ICC), assigned_counsellor_id to link students to their L2 owners.

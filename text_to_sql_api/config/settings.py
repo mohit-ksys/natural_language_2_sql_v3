@@ -43,6 +43,6 @@ class Settings(BaseSettings):
 
     SESSION_MAX_TURNS: int = 5
     SESSION_PROMPT_TURNS: int = 5
-
+    DATA_LIMIT: int = 100
 
 settings = Settings()

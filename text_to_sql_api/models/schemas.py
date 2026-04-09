@@ -31,6 +31,7 @@ class QueryResponse(BaseModel):
     sql_auto_fixed: bool = False   # True when execution failed and LLM auto-fixed the SQL
     sql_error: Optional[str] = None  # Original DB error that triggered auto-fix (or final error)
     thoughts: Optional[str] = None
+    total_rows: Optional[int] = None
 
 
 class ExecuteRequest(BaseModel):
@@ -41,6 +42,7 @@ class ExecuteRequest(BaseModel):
     model: Optional[str] = None
     chat_id: Optional[str] = None
     lms_type: Optional[str] = None   # super_admin only
+    thoughts: Optional[str] = None
 
 
 class ExecuteResponse(BaseModel):
@@ -54,6 +56,7 @@ class ExecuteResponse(BaseModel):
     chat_id: Optional[str] = None
     token_usage: Optional[dict] = None
     thoughts: Optional[str] = None
+    total_rows: Optional[int] = None
 
 
 class LogicFeedbackRequest(BaseModel):
