@@ -25,16 +25,20 @@ def run_sql_file(conn, file_path):
 def setup():
     engine = create_engine(AUTH_DB_URL)
     
+    base_path = os.path.dirname(os.path.abspath(__file__))
+    schema_sql = os.path.join(base_path, "schema.sql")
+    migration_sql = os.path.join(base_path, "migrate_unified_auth.sql")
+
     with engine.begin() as conn:
-        if os.path.exists("schema.sql"):
-            run_sql_file(conn, "schema.sql")
+        if os.path.exists(schema_sql):
+            run_sql_file(conn, schema_sql)
         else:
-            print("schema.sql not found in current directory.")
+            print(f"{schema_sql} not found.")
         
-        if os.path.exists("migrate_unified_auth.sql"):
-            run_sql_file(conn, "migrate_unified_auth.sql")
+        if os.path.exists(migration_sql):
+            run_sql_file(conn, migration_sql)
         else:
-            print("migrate_unified_auth.sql not found, skipping.")
+            print(f"{migration_sql} not found, skipping.")
 
     print("\nDatabase setup complete (Seeding skipped).")
 

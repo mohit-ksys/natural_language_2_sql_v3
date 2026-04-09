@@ -205,7 +205,7 @@ export default function Sidebar({ startNewChat, onOpenSettings, chats = [], load
                 {visibleChats.map((chat) => (
                   <div
                     key={chat.id}
-                    className={`history-item ${currentChatId === chat.id ? 'active' : ''} ${chat.isPinned ? 'pinned' : ''}`}
+                    className={`history-item ${String(currentChatId) === String(chat.id) ? 'active' : ''} ${chat.isPinned ? 'pinned' : ''}`}
                     onClick={() => { if (renamingId !== chat.id) { loadChat(chat.id); setSearchQuery(''); setSearchOpen(false); } }}
                     title={renamingId === chat.id ? undefined : getDisplayTitle(chat)}
                   >

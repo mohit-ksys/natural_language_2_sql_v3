@@ -198,10 +198,10 @@ function execBarStyle(secs) {
   return { pct, color };
 }
 
-export default function AiMessage({ msg, addToast, onFix, onRegen, settings, currentUser }) {
+export default function AiMessage({ msg, addToast, onFix, onRegen, onUpdate, settings, currentUser }) {
   const { id, model, isRegen, sql: apiSql, answer: apiAnswer, chart_type, data, execution_time,
-          session_context_alert, sessionId, userQuery, feedbackId: msgFeedbackId, token_usage, timestamp,
-          query_id: mcqQueryId, sql_auto_fixed, sql_error } = msg;
+          session_context_alert, sessionId, chatId: msgChatId, userQuery, feedbackId: msgFeedbackId, token_usage, timestamp,
+          query_id: mcqQueryId, sql_auto_fixed, sql_error, thoughts: apiThoughts, lms_type: msgLmsType } = msg;
 
   const tokenCost = token_usage
     ? calcCost(token_usage.model || model, token_usage.input_tokens, token_usage.output_tokens)
@@ -236,6 +236,7 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings, cur
   const [resultData, setResultData] = useState(data);
   const [resultAnswer, setResultAnswer] = useState(apiAnswer);
   const [resultExecTime, setResultExecTime] = useState(execution_time);
+  const [resultThoughts, setResultThoughts] = useState(apiThoughts);
   const [savingFix, setSavingFix] = useState(false);
 
   // Table sorting
@@ -244,6 +245,13 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings, cur
 
   const fixInputRef = useRef(null);
   const editAreaRef = useRef(null);
+
+  useEffect(() => {
+    if (data) setResultData(data);
+    if (apiAnswer) setResultAnswer(apiAnswer);
+    if (execution_time) setResultExecTime(execution_time);
+    if (apiThoughts) setResultThoughts(apiThoughts);
+  }, [id, data, apiAnswer, execution_time, apiThoughts]);
 
   useEffect(() => {
     if (fixPanelOpen && fixInputRef.current) fixInputRef.current.focus();
@@ -280,11 +288,15 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings, cur
 
   // SQL undo/redo helpers
   const handleSaveEdit = () => {
-    const newHistory = sqlHistory.slice(0, historyIdx + 1).concat([editText]);
-    setSqlHistory(newHistory);
-    setHistoryIdx(newHistory.length - 1);
+    setHistoryIdx(sqlHistory.length);
+    setSqlHistory([...sqlHistory, editText]);
     setIsEditing(false);
     setIsEdited(true);
+
+    // Sync to parent state
+    if (onUpdate) {
+      onUpdate(id, { sql: editText, isEdited: true });
+    }
   };
 
   const handleUndo = () => {
@@ -323,16 +335,30 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings, cur
 
   const handleRun = async () => {
     if (!sql || !sessionId) return;
+    const lmsType = msgLmsType || msg.extra?.lmsType || msg.extra?.lms_type;
+    const chatId = msgChatId || msg.extra?.chatId || msg.extra?.chat_id;
     setRunText('⟳ Running...');
     setRunError('');
     try {
-      const res = await executeSql(sql, sessionId, userQuery, msgFeedbackId);
+      const res = await executeSql(sql, sessionId, userQuery, msgFeedbackId, lmsType, chatId);
       if (res.ok) {
-        const { answer, data: resultRows, execution_time: execTime } = res.data;
+        const { answer, data: resultRows, execution_time: execTime, thoughts: execThoughts } = res.data;
         setResultData(resultRows);
         setResultAnswer(answer);
         setResultExecTime(execTime);
+        setResultThoughts(execThoughts);
         setRunText(`✓ ${resultRows?.length || 0} rows`);
+        
+        // SYNC TO PARENT STATE TO PREVENT OVERWRITE ON NEXT SAVE
+        if (onUpdate) {
+          onUpdate(id, { 
+            answer, 
+            data: resultRows, 
+            execution_time: execTime, 
+            thoughts: execThoughts 
+          });
+        }
+
         setTimeout(() => setRunText('▶ Run'), 3000);
       } else {
         setRunText('▶ Run');
@@ -530,6 +556,25 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings, cur
           <div className="skeleton-line" style={{ width: '65%' }} />
           <div className="skeleton-line" style={{ width: '75%' }} />
           <div className="skeleton-line" style={{ width: '50%' }} />
+        </div>
+      )}
+
+      {/* EXPLANATION / THOUGHTS */}
+      {(resultThoughts || apiThoughts || msg.extra?.thoughts) && (
+        <div className={`whisper-explanation ${showExplain ? 'open' : ''}`}>
+          <div className="explanation-header" onClick={() => setShowExplain(!showExplain)}>
+            <span className="explanation-icon">⬡</span>
+            <span className="explanation-title">Explanation</span>
+            <span className="explanation-toggle">{showExplain ? '−' : '+'}</span>
+          </div>
+          {showExplain && (
+            <div className="explanation-body markdown-content">
+              {renderAnswer(resultThoughts || apiThoughts || msg.extra?.thoughts).map((seg, idx) => {
+                 if (seg.type === 'spacer') return <div key={idx} className="answer-spacer" />;
+                 return <p key={idx} dangerouslySetInnerHTML={{ __html: seg.html }} />;
+              })}
+            </div>
+          )}
         </div>
       )}
 

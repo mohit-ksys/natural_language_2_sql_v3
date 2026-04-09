@@ -2,7 +2,7 @@
  * Backend API service for GrepSQL AI — with JWT auth and silent refresh.
  */
 
-const API_BASE = 'https://api-sql.degreefyd.com';
+const API_BASE = 'http://localhost:8000';
 const LMS_API_BASE = 'https://central-lms-api-test.degreefyd.com';
 
 function setCookie(name, value, days = 7) {
@@ -199,9 +199,12 @@ export async function reactivateUser(username) {
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
-export async function fetchDashboardStats() {
+export async function fetchDashboardStats(params = {}) {
+   const qs = new URLSearchParams(
+    Object.entries(params).filter(([, v]) => v != null && v !== '')
+  ).toString();
   try {
-    const res = await apiFetch(`${API_BASE}/dashboard/stats`);
+    const res = await apiFetch(`${API_BASE}/dashboard/stats${qs ? '?' + qs : ''}`);
     if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
     return { ok: true, data: await res.json() };
   } catch (e) {
@@ -249,7 +252,7 @@ export async function checkHealth() {
 
 // ─── Query endpoints ──────────────────────────────────────────────────────────
 
-export async function sendQuery(sessionId, userQuery, model = 'gemini-3.1-flash-lite-preview', execute = true, chatId = '', lmsType = null) {
+export async function sendQuery(sessionId, userQuery, model = 'gemini-3.1-flash-lite-preview', execute = true, chatId = '', lmsType = null, userMsgId = null) {
   try {
     const res = await apiFetch(`${API_BASE}/query`, {
       method: 'POST',
@@ -258,6 +261,7 @@ export async function sendQuery(sessionId, userQuery, model = 'gemini-3.1-flash-
         session_id: sessionId,
         chat_id: chatId,
         user_query: userQuery,
+        user_msg_id: userMsgId,
         model,
         execute,
         lms_type: lmsType,
@@ -276,7 +280,7 @@ export async function sendQuery(sessionId, userQuery, model = 'gemini-3.1-flash-
   }
 }
 
-export async function executeSql(sql, sessionId, originalQuery = '', feedbackId = '', lmsType = null) {
+export async function executeSql(sql, sessionId, originalQuery = '', feedbackId = '', lmsType = null, chatId = '') {
   try {
     const res = await apiFetch(`${API_BASE}/execute`, {
       method: 'POST',
@@ -284,6 +288,7 @@ export async function executeSql(sql, sessionId, originalQuery = '', feedbackId 
       body: JSON.stringify({
         sql, session_id: sessionId, original_query: originalQuery,
         feedback_id: feedbackId, lms_type: lmsType,
+        chat_id: chatId
       }),
     });
     if (!res.ok) {
@@ -323,16 +328,29 @@ export async function saveChatsToBackend(chats, lastChatId) {
   }
 }
 
+export async function loadChatMessages(chatId, limit = 50, offset = 0) {
+  try {
+    const res = await apiFetch(`${API_BASE}/chats/${chatId}/messages?limit=${limit}&offset=${offset}`);
+    if (res.ok) {
+      const data = await res.json();
+      return { ok: true, messages: data.messages, hasMore: data.has_more };
+    }
+    return { ok: false, error: 'Failed to load messages', messages: [], hasMore: false };
+  } catch (e) {
+    return { ok: false, error: e.message, messages: [], hasMore: false };
+  }
+}
+
 export async function switchModel(modelId) {
   return { ok: true, model: modelId };
 }
 
-export async function requestMCQs(sessionId, userQuery, model = 'gemini-3.1-flash-lite-preview', chatId = '', lmsType = null) {
+export async function requestMCQs(sessionId, userQuery, model = 'gemini-3.1-flash-lite-preview', chatId = '', lmsType = null, userMsgId = null) {
   try {
     const res = await apiFetch(`${API_BASE}/disambiguate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_query: userQuery, session_id: sessionId, chat_id: chatId, model, lms_type: lmsType }),
+      body: JSON.stringify({ user_query: userQuery, session_id: sessionId, chat_id: chatId, model, lms_type: lmsType, user_msg_id: userMsgId }),
     });
     if (!res.ok) {
       const errData = await res.json();

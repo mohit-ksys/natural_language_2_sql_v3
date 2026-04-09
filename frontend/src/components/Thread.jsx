@@ -7,7 +7,7 @@ const SQL_HINTS = [
   'SELECT ...', 'JOIN tables ...', 'GROUP BY ...', 'WHERE ...', 'WITH cte AS (...)', 'ORDER BY ...', 'HAVING COUNT(...)',
 ];
 
-export default function Thread({ messages, addToast, onFix, onRegen, onSubmitMCQAnswers, onSkipMCQ, settings, currentUser }) {
+export default function Thread({ messages, addToast, onFix, onRegen, onUpdate, onSubmitMCQAnswers, onSkipMCQ, settings, currentUser, onLoadMore, hasMore, isFetchingMore, isMessagesLoading }) {
   const endRef = useRef(null);
   const convRef = useRef(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -15,11 +15,8 @@ export default function Thread({ messages, addToast, onFix, onRegen, onSubmitMCQ
   const [hintIdx, setHintIdx] = useState(0);
 
   const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
-  // Show loading when last message is a user message (AI hasn't responded yet)
-  // or when user messages exist but last non-user message is still being processed
   const isLoading = lastMsg && lastMsg.type === 'user';
 
-  // Rotate SQL hints while loading
   useEffect(() => {
     if (!isLoading) return;
     const interval = setInterval(() => {
@@ -27,24 +24,32 @@ export default function Thread({ messages, addToast, onFix, onRegen, onSubmitMCQ
     }, 1200);
     return () => clearInterval(interval);
   }, [isLoading]);
-
-  // Auto-scroll to bottom when messages change
   useEffect(() => {
     if (autoScroll && endRef.current) {
       setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 60);
     }
   }, [messages]);
 
-  // Detect manual scroll — show button whenever not at bottom
   const handleScroll = (e) => {
     const el = e.currentTarget;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    const atTop = el.scrollTop === 0;
+
     if (atBottom) {
       setAutoScroll(true);
       setShowScrollBtn(false);
     } else {
       setAutoScroll(false);
       setShowScrollBtn(true);
+    }
+
+    if (atTop && hasMore && !isFetchingMore && messages.length > 0) {
+      const prevScrollHeight = el.scrollHeight;
+      onLoadMore().then(() => {
+        setTimeout(() => {
+          el.scrollTop = el.scrollHeight - prevScrollHeight;
+        }, 50);
+      });
     }
   };
 
@@ -57,8 +62,22 @@ export default function Thread({ messages, addToast, onFix, onRegen, onSubmitMCQ
   return (
     <div className="conversation" id="conversation" ref={convRef} onScroll={handleScroll}>
       <div className="thread" id="thread">
+        {isMessagesLoading && (
+          <div className="initial-loading">
+            <div className="spinner-large" />
+            <p>Loading conversation...</p>
+          </div>
+        )}
 
-        {messages.map((m, i) => {
+       
+        {isFetchingMore && (
+          <div className="fetching-more">
+            <div className="spinner-small" />
+            Loading previous messages...
+          </div>
+        )}
+
+        {!isMessagesLoading && messages.map((m, i) => {
           if (m.type === 'user') {
             return (
               <div key={m.id || i} className="message msg-user">
@@ -108,6 +127,7 @@ export default function Thread({ messages, addToast, onFix, onRegen, onSubmitMCQ
                 addToast={addToast}
                 onFix={onFix}
                 onRegen={onRegen}
+                onUpdate={onUpdate}
                 settings={settings}
                 currentUser={currentUser}
               />
@@ -116,8 +136,8 @@ export default function Thread({ messages, addToast, onFix, onRegen, onSubmitMCQ
           return null;
         })}
 
-        {/* LOADING STATE */}
-        {isLoading && (
+        {/* AI IS THINKING (NEW QUERY) */}
+        {!isMessagesLoading && isLoading && (
           <div className="message msg-ai">
             <div className="msg-ai-header">
               <div className="ai-avatar loading-avatar">◈</div>

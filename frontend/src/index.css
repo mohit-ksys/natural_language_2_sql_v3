@@ -5,7 +5,7 @@
   --text:#f8fafc;--text-dim:#cbd5e1;--text-muted:#94a3b8;
   --red:#ff4f4f;--amber:#ffb347;--sidebar:260px;
 }
-html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-size:14px;overflow:hidden}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-size:14px}
 body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(0,255,178,0.04) 1px,transparent 1px),linear-gradient(90deg,rgba(0,255,178,0.04) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0}
 #root{display:flex;height:100vh;position:relative;z-index:1}
 .app{display:flex;height:100%;width:100%;position:relative;z-index:1}
@@ -179,7 +179,24 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 .fix-regen-btn:hover{background:rgba(255,179,71,0.18);box-shadow:0 0 14px rgba(255,179,71,0.15)}
 .fix-regen-btn.loading{opacity:.65;pointer-events:none}
 
-/* Explain */
+/* Explanation / Thoughts */
+.whisper-explanation{border:1px solid rgba(0,255,178,0.15);border-radius:12px;background:rgba(0,255,178,0.02);overflow:hidden;margin-bottom:8px}
+.explanation-header{display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;user-select:none;transition:background .15s;border-bottom:1px solid rgba(0,255,178,0.08)}
+.explanation-header:hover{background:rgba(0,255,178,0.04)}
+.explanation-icon{font-size:14px;color:var(--green);opacity:.8}
+.explanation-title{font-size:12px;font-weight:600;color:var(--text-dim);letter-spacing:.02em;text-transform:uppercase;flex:1}
+.explanation-toggle{font-size:14px;color:var(--text-muted);font-family:monospace}
+.explanation-body{padding:14px 16px;font-size:14px;line-height:1.75;color:var(--text-dim)}
+.explanation-body p+p{margin-top:10px}
+.explanation-body code{font-family:'JetBrains Mono',monospace;font-size:12.5px;background:rgba(0,255,178,0.08);border:1px solid rgba(0,255,178,0.15);padding:1px 6px;border-radius:4px;color:var(--green)}
+
+[data-theme="light"] .whisper-explanation { border-color: #C7D2FE; background: #F5F7FF; }
+[data-theme="light"] .explanation-header { border-bottom-color: #DDE3EC; }
+[data-theme="light"] .explanation-title { color: #4338CA; }
+[data-theme="light"] .explanation-body { color: var(--text); }
+[data-theme="light"] .explanation-body code { background: rgba(99,102,241,0.1); color: #4338CA; border-color: #C7D2FE; }
+
+/* WhisperExplain (legacy/audit) */
 .whisper-explain{font-size:14px;line-height:1.75;color:var(--text-dim)}
 .whisper-explain p+p{margin-top:10px}
 .whisper-explain code{font-family:'JetBrains Mono',monospace;font-size:12px;background:rgba(0,255,178,0.08);border:1px solid rgba(0,255,178,0.15);padding:1px 6px;border-radius:4px;color:var(--green)}
@@ -906,4 +923,56 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 /* ─── Respect prefers-reduced-motion ────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
+}
+.initial-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  color: #94a3b8;
+  gap: 16px;
+  animation: fadeIn 0.3s ease;
+}
+
+.spinner-large {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(16, 185, 129, 0.1);
+  border-top-color: #10b981;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.spinner-small {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(16, 185, 129, 0.1);
+  border-top-color: #10b981;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.fetching-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  gap: 8px;
+  font-size: 12px;
+  color: #94a3b8;
+  background: rgba(15, 17, 23, 0.5);
+  border-bottom: 1px solid #2a2d3a;
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
