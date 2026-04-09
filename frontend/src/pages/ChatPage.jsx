@@ -12,15 +12,86 @@ export default function ChatPage({
   currentUser, registerSave, chats, setChats, settings,
   model, setModel, thinkOn, setThinkOn, isInitialLoading
 }) {
-  const { chatId } = useParams();
+  const { chatId: urlId } = useParams();
   const navigate = useNavigate();
   
   const [messages, setMessages] = useState([]);
-  const [chatStarted, setChatStarted] = useState(false);
+  const [chatId, setChatId] = useState(urlId || null);
+  const [chatStarted, setChatStarted] = useState(!!urlId);
   const [msgCounter, setMsgCounter] = useState(0);
+  const isNavigatingNewChat = useRef(false);
+
+  useEffect(() => {
+    const targetId = urlId || null;
+    setChatId(targetId);
+    
+    if (!targetId) {
+       safeSetMessages([]);
+       setChatStarted(false);
+       setOffset(0);
+       setHasMore(false);
+       setNotFound(false);
+       return;
+    }
+
+    setChatStarted(true);
+    setNotFound(false);
+    
+    let isMounted = true;
+    const fetchMsgs = async () => {
+      if (isNavigatingNewChat.current) {
+        console.log('[Chat] Skipping initial fetch for newly created chat:', targetId);
+        isNavigatingNewChat.current = false;
+        return;
+      }
+      setIsMessagesLoading(true);
+      safeSetMessages([]); 
+      setOffset(0);
+      setHasMore(false);
+
+      try {
+        console.log('Fetching messages for chatId:', targetId);
+        const res = await loadChatMessages(targetId, LIMIT, 0);
+        console.log('loadChatMessages Response:', res);
+        if (isMounted) {
+          if (res.ok) {
+            const msgs = res.messages || [];
+            safeSetMessages(msgs);
+            setHasMore(res.hasMore || res.has_more); 
+            setOffset(msgs.length);
+            setMsgCounter(msgs.length);
+          } else {
+            // Only set not found if the API explicitly fails or returns 404
+            setNotFound(true);
+          }
+        }
+      } catch (err) {
+        console.error('Fetch msgs failed:', err);
+      } finally {
+        if (isMounted) setIsMessagesLoading(false);
+      }
+    };
+
+    fetchMsgs();
+    return () => { isMounted = false; };
+  }, [urlId]);
+
+  const safeSetMessages = useCallback((updater) => {
+    setMessages(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      if (!Array.isArray(next)) return next;
+      const seen = new Set();
+      return next.filter(m => {
+        if (!m.id) return true;
+        if (seen.has(m.id)) return false;
+        seen.add(m.id);
+        return true;
+      });
+    });
+  }, []);
 
   const updateMessage = (msgId, updates) => {
-    setMessages(prev => prev.map(m => m.id === msgId ? { ...m, ...updates } : m));
+    safeSetMessages(prev => prev.map(m => m.id === msgId ? { ...m, ...updates } : m));
   };
   const [hasMore, setHasMore] = useState(false);
   const [isFetchingMore, setIsFetchingMore] = useState(false);
@@ -38,62 +109,6 @@ export default function ChatPage({
   const lmsType = currentUser?.role === 'super_admin'
     ? (settings.lmsTypeOverride || 'online')
     : (currentUser?.lms_type || null);
-
-  useEffect(() => {
-    if (!chatId) {
-       setMessages([]);
-       setChatStarted(false);
-       setOffset(0);
-       setHasMore(false);
-       setNotFound(false);
-       return;
-    }
-   if (!isInitialLoading && chats && chats.length > 0) {
-      const exists = chats.some(c => c.id === chatId);
-      if (!exists) {
-        setNotFound(true);
-        return;
-      }
-    }
-
-    let isMounted = true;
-    const fetchMsgs = async () => {
-      setIsMessagesLoading(true);
-      setMessages([]); 
-      setChatStarted(false);
-      setOffset(0);
-      setHasMore(false);
-      setNotFound(false);
-
-   
-      try {
-        const res = await loadChatMessages(chatId, LIMIT, 0);
-        if (isMounted) {
-          if (res.ok) {
-            const msgs = res.messages || [];
-            if (msgs.length === 0 && !res.has_more) {
-                   
-            }
-            setMessages(msgs);
-            setHasMore(res.hasMore || res.has_more);
-            setOffset(msgs.length);
-            setChatStarted(msgs.length > 0);
-            setMsgCounter(msgs.length);
-          } else {
-            setNotFound(true);
-          }
-        }
-      } catch (err) {
-        console.error('Failed to load messages for chat:', chatId, err);
-        if (isMounted) setNotFound(true);
-      } finally {
-        if (isMounted) setIsMessagesLoading(false);
-      }
-    };
-
-    fetchMsgs();
-    return () => { isMounted = false; };
-  }, [chatId]);
 
   const saveChatsToBackendAsync = (chatsToSave, lastId) => {
     saveChatsToBackend(chatsToSave, lastId).catch(e => console.error('Failed to save chats:', e));
@@ -117,6 +132,20 @@ export default function ChatPage({
       return updatedChats;
     });
   }, [messages, chatId]);
+
+  const updateChatListWithNewChat = (newId, title, firstQueryMsg) => {
+    setChats(prev => {
+      if (prev.some(c => c.id === newId)) return prev;
+      const newChat = {
+        id: newId,
+        title: title || generateChatTitle(firstQueryMsg),
+        lastMessage: firstQueryMsg.slice(0, 50),
+        createdAt: new Date().toISOString(),
+        isPinned: false
+      };
+      return [newChat, ...prev];
+    });
+  };
 
   useEffect(() => {
     if (!registerSave) return;
@@ -151,29 +180,11 @@ export default function ChatPage({
   }, []);
 
   const generateChatTitle = (query) => {
-    const q = query.trim();
-    if (!q) return 'New Chat';
+    const q = query?.trim() || 'New Chat';
     if (q.length <= 38) return q;
     const cut = q.slice(0, 38);
     const lastSpace = cut.lastIndexOf(' ');
     return (lastSpace > 20 ? cut.slice(0, lastSpace) : cut) + '…';
-  };
-
-  const _ensureChat = (text) => {
-    let chatIdToUse = chatId;
-    let isFirstQuery = false;
-    if (!chatId) {
-      isFirstQuery = true;
-      chatIdToUse = `chat-${Date.now()}`;
-      const newChat = { id: chatIdToUse, title: 'Generating title...', messages: [], lastMessage: '', createdAt: new Date().toISOString(), isPinned: false };
-      setChats(prev => [newChat, ...prev]);
-    } else {
-      const currentChat = chats.find(c => c.id === chatId);
-      if (currentChat && (currentChat.title === 'New Chat' || currentChat.title === 'Generating title...')) {
-        isFirstQuery = true;
-      }
-    }
-    return { chatIdToUse, isFirstQuery };
   };
 
   const _updateTitleOnFirst = (isFirstQuery, chatIdToUse, text) => {
@@ -185,62 +196,82 @@ export default function ChatPage({
 
   const handleSendMessage = async (text, isFix = false) => {
     if (!chatStarted) setChatStarted(true);
-    const { chatIdToUse, isFirstQuery } = _ensureChat(text);
     
-    const userMsgId = `${chatIdToUse}-u-${Date.now()}`;
+    // UI-only temporary ID for the user message
+    const userMsgId = `u-${crypto.randomUUID()}`;
     const userMsg = { id: userMsgId, type: 'user', text, isFix, timestamp: new Date().toISOString() };
-    setMessages(prev => [...prev, userMsg]);
+    safeSetMessages(prev => [...prev, userMsg]);
     
-    const sessionId = chatIdToUse.replace('chat-', 'session-');
+    const sessionId = chatId ? chatId.replace('chat-', 'session-') : `session-${Date.now()}`;
 
     if (settings.mcqEnabled && !isFix) {
       setTimeout(async () => {
         try {
-          const res = await requestMCQs(sessionId, text, model, chatIdToUse, lmsType, userMsgId);
+          const res = await requestMCQs(sessionId, text, model, chatId, lmsType, userMsgId);
+          console.log('[MCQ] requestMCQs Response:', res);
           if (res.ok && res.data.questions && res.data.questions.length > 0) {
-            setMessages(prev => [...prev, { 
-              id: res.data.query_id || `mcq-${Date.now()}`, 
+            const newChatId = res.data.chat_id;
+            
+            // Sync URL and state if this is a new chat
+            if (!chatId && newChatId) {
+              isNavigatingNewChat.current = true;
+              updateChatListWithNewChat(newChatId, null, text);
+              setChatId(newChatId);
+              navigate(`/c/${newChatId}`, { replace: true });
+            }
+
+            safeSetMessages(prev => [...prev, { 
+              id: res.data.mcq_msg_id || res.data.query_id || `m-${Date.now()}`, 
               type: 'mcq', 
               questions: res.data.questions,
               original_query: text,
               query_id: res.data.query_id,
               model,
-              chatId: chatIdToUse,
+              chatId: newChatId,
+              loading: false, 
               timestamp: new Date().toISOString()
             }]);
           } else {
-            // Fallback if no questions returned or failed
-            _directQuery(sessionId, text, chatIdToUse, isFirstQuery, userMsgId);
+            _directQuery(sessionId, text, chatId, userMsgId);
           }
         } catch (e) {
-          _directQuery(sessionId, text, chatIdToUse, isFirstQuery, userMsgId);
+          console.error('[MCQ] requestMCQs failed:', e);
+          _directQuery(sessionId, text, chatId, userMsgId);
         }
       }, 500);
     } else {
-      _directQuery(sessionId, text, chatIdToUse, isFirstQuery, userMsgId);
+      _directQuery(sessionId, text, chatId, userMsgId);
     }
   };
 
-  const _directQuery = async (sessionId, text, chatIdToUse, isFirstQuery, userMsgId) => {
+  const _directQuery = async (sessionId, text, chatIdToUse, userMsgId) => {
     try {
       const canAutoRun = settings.autoRunQuery || (currentUser?.role !== 'super_admin' && currentUser?.role !== 'Supervisor');
       const res = await sendQuery(sessionId, text, model, canAutoRun, chatIdToUse, lmsType, userMsgId);
 
       if (res.ok) {
-        const { feedback_id, sql, execution_time, answer, chart_type, data, token_usage, session_context_alert, sql_auto_fixed, sql_error, thoughts } = res.data;
-        _updateTitleOnFirst(isFirstQuery, chatIdToUse, text);
-        const aiMsgId = feedback_id ? `ai-${feedback_id}` : `${chatIdToUse}-ai-${Date.now()}`;
-        setMessages(prev => [...prev, {
+        const { feedback_id, sql, execution_time, answer, chart_type, data, token_usage, session_context_alert, sql_auto_fixed, sql_error, thoughts, chat_id: newChatId } = res.data;
+        
+        // Sync URL and state if this is a new chat
+        if (!chatIdToUse && newChatId) {
+          isNavigatingNewChat.current = true;
+          updateChatListWithNewChat(newChatId, null, text);
+          setChatId(newChatId);
+          navigate(`/c/${newChatId}`, { replace: true });
+        }
+
+        const aiMsgId = feedback_id ? `a-${feedback_id}` : `a-${Date.now()}`;
+        safeSetMessages(prev => [...prev, {
           id: aiMsgId, 
           type: 'ai', 
-          model,
+          model, 
           sql, 
           answer, 
           chart_type, 
           data, 
           execution_time,
           sessionId, 
-          chatId: chatIdToUse,
+          chatId: newChatId || chatIdToUse,
           userQuery: text, 
           feedbackId: feedback_id,
           token_usage, 
@@ -251,11 +282,10 @@ export default function ChatPage({
           timestamp: new Date().toISOString(),
         }]);
         if (session_context_alert) addToast(session_context_alert, 3000);
-        if (isFirstQuery) navigate(`/c/${chatIdToUse}`, { replace: true });
       } else {
         addToast(`Error: ${res.error}`);
         setMsgCounter(prev => prev + 1);
-        setMessages(prev => [...prev, { id: `ai-${userMsgCounter + 1}`, type: 'ai-error', error: res.error }]);
+        safeSetMessages(prev => [...prev, { id: `err-${Date.now()}`, type: 'ai-error', error: res.error }]);
       }
     } catch (err) {
       addToast('Failed to generate query');
@@ -264,76 +294,130 @@ export default function ChatPage({
 
   const handleSubmitMCQAnswers = async (queryId, answers) => {
     const sessionId = chatId?.replace('chat-', 'session-');
-    if (!sessionId) return;
+    if (!sessionId || !queryId) return;
+    
+    console.log(`[MCQ] Submitting answers for queryId: ${queryId}`);
+    safeSetMessages(prev => prev.map(m => (m.query_id === queryId) ? { ...m, loading: true } : m));
+
     try {
       const chatIdToUse = chatId;
       const canAutoRun = settings.autoRunQuery || (currentUser?.role !== 'super_admin' && currentUser?.role !== 'Supervisor');
       const res = await submitMCQAnswers(queryId, sessionId, answers, model, canAutoRun, chatIdToUse);
 
       if (res.ok) {
-        const { sql, answer, chart_type, data, execution_time, session_context_alert, sql_auto_fixed, sql_error } = res.data;
-        const nextCounter = msgCounter + 1;
-        setMsgCounter(nextCounter);
-        setMessages(prev => {
-          const filtered = prev.filter(m => !(m.type === 'mcq' && m.query_id === queryId));
-          return [...filtered, {
-            id: `ai-${queryId}`, type: 'ai', model, isRegen: false, sql, answer,
-            chart_type, data, execution_time, session_context_alert, sessionId,
-            chatId: chatIdToUse,
-            userQuery: prev.find(m => m.type === 'mcq' && m.query_id === queryId)?.original_query || '',
-            feedbackId: res.data.feedback_id || '', query_id: queryId,
-            token_usage: res.data.token_usage || null,
-            sql_auto_fixed: sql_auto_fixed || false, sql_error: sql_error || null,
-            timestamp: new Date().toISOString(),
-          }];
+        const { sql, answer, chart_type, data, execution_time, session_context_alert, sql_auto_fixed, sql_error, thoughts } = res.data;
+        
+        // Find original query to maintain context
+        let originalQuery = '';
+        const currentMsgs = messages; // Access snapshot or use safety
+        const m = currentMsgs.find(msg => msg.query_id === queryId);
+        if (m) originalQuery = m.original_query || m.userQuery || '';
+
+        const aiMsgId = res.data.feedback_id ? `a-${res.data.feedback_id}` : `a-${queryId}-${Date.now()}`;
+        const newAiMsg = {
+          id: aiMsgId, 
+          type: 'ai', 
+          model, 
+          isRegen: false, 
+          sql, 
+          answer,
+          chart_type, 
+          data, 
+          execution_time, 
+          session_context_alert, 
+          sessionId,
+          chatId: chatIdToUse,
+          userQuery: originalQuery,
+          feedbackId: res.data.feedback_id || '', 
+          query_id: queryId,
+          token_usage: res.data.token_usage || null,
+          sql_auto_fixed: sql_auto_fixed || false, 
+          sql_error: sql_error || null,
+          thoughts: thoughts || res.data.thoughts || '',
+          timestamp: new Date().toISOString(),
+        };
+
+        safeSetMessages(prev => {
+          const filtered = prev.filter(m => {
+            const mQueryId = m.query_id || m.extra?.query_id;
+            const isMatch = mQueryId === queryId || m.id === queryId || (m.id && m.id.includes(queryId));
+            return !isMatch;
+          });
+          return [...filtered, newAiMsg];
         });
+
         if (session_context_alert) addToast(session_context_alert, 3000);
       } else {
         addToast(`Error: ${res.error}`);
-        const nextCounter = msgCounter + 1;
-        setMsgCounter(nextCounter);
-        setMessages(prev => [...prev, { id: `${chatId}-err-${Date.now()}`, type: 'ai-error', error: res.error }]);
+        safeSetMessages(prev => prev.map(m => (m.query_id === queryId) ? { ...m, loading: false } : m));
+        safeSetMessages(prev => [...prev, { id: `${chatId}-err-${Date.now()}`, type: 'ai-error', error: res.error }]);
       }
     } catch (err) {
+      console.error('[MCQ] Submission Error:', err);
       addToast('Failed to process MCQ answers');
+      safeSetMessages(prev => prev.map(m => (m.query_id === queryId) ? { ...m, loading: false } : m));
     }
   };
 
   const handleSkipMCQ = async (queryId, originalQuery) => {
     const sessionId = chatId?.replace('chat-', 'session-');
     if (!sessionId || !originalQuery) return;
+    
+    console.log(`[MCQ] Skipping all for queryId: ${queryId}`);
+    setMessages(prev => prev.map(m => (m.query_id === queryId) ? { ...m, loading: true } : m));
+
     try {
       const canAutoRun = settings.autoRunQuery || (currentUser?.role !== 'super_admin' && currentUser?.role !== 'Supervisor');
       const res = await sendQuery(sessionId, originalQuery, model, canAutoRun, chatId, lmsType);
 
       if (res.ok) {
-        const { sql, answer, chart_type, data, execution_time, session_context_alert, sql_auto_fixed, sql_error } = res.data;
-        const nextCounter = msgCounter + 1;
-        setMsgCounter(nextCounter);
-        setMessages(prev => {
-          const filtered = prev.filter(m => !(m.type === 'mcq' && m.query_id === queryId));
-          return [...filtered, {
-            id: `${chatId}-ai-${Date.now()}`, type: 'ai', model, isRegen: false, sql, answer,
-            chart_type, data, execution_time, session_context_alert, sessionId,
-            chatId: chatId,
-            userQuery: originalQuery, feedbackId: '', token_usage: res.data.token_usage || null,
-            sql_auto_fixed: sql_auto_fixed || false, sql_error: sql_error || null,
-            timestamp: new Date().toISOString(),
-          }];
+        const { sql, answer, chart_type, data, execution_time, session_context_alert, sql_auto_fixed, sql_error, thoughts } = res.data;
+        const newAiMsg = {
+          id: `ai-${Date.now()}`, 
+          type: 'ai', 
+          model, 
+          isRegen: false, 
+          sql, 
+          answer,
+          chart_type, 
+          data, 
+          execution_time, 
+          session_context_alert, 
+          sessionId,
+          chatId: chatId,
+          userQuery: originalQuery, 
+          feedbackId: res.data.feedback_id || '', 
+          token_usage: res.data.token_usage || null,
+          sql_auto_fixed: sql_auto_fixed || false, 
+          sql_error: sql_error || null,
+          thoughts: thoughts || '',
+          timestamp: new Date().toISOString(),
+        };
+
+        safeSetMessages(prev => {
+          const filtered = prev.filter(m => {
+            const mQueryId = m.query_id || m.extra?.query_id;
+            const isMatch = mQueryId === queryId || m.id === queryId || (m.id && m.id.includes(queryId));
+            return !isMatch;
+          });
+          return [...filtered, newAiMsg];
         });
+
         if (session_context_alert) addToast(session_context_alert, 3000);
       } else {
         addToast(`Error: ${res.error}`);
+        safeSetMessages(prev => prev.map(m => (m.query_id === queryId) ? { ...m, loading: false } : m));
       }
     } catch (err) {
+      console.error('[MCQ] Skip Error:', err);
       addToast('Failed to generate query');
+      safeSetMessages(prev => prev.map(m => (m.query_id === queryId) ? { ...m, loading: false } : m));
     }
   };
 
   const handleFix = (aiMsgId, fixText, mcqQueryId) => {
-    const fixMsgCounter = msgCounter + 1;
-    setMsgCounter(fixMsgCounter);
-    setMessages(prev => [...prev, { id: `${chatId}-u-${Date.now()}`, type: 'user', text: fixText, isFix: true }]);
+    if (!chatStarted) setChatStarted(true);
+    safeSetMessages(prev => [...prev, { id: `${chatId}-u-${Date.now()}`, type: 'user', text: fixText, isFix: true }]);
     const sessionId = chatId.replace('chat-', 'session-');
     setTimeout(async () => {
       let res;
@@ -346,7 +430,7 @@ export default function ChatPage({
       if (res.ok) {
         const { sql, answer, chart_type, data, execution_time } = res.data;
         setMsgCounter(prev => prev + 1);
-        setMessages(prev => [...prev, {
+        safeSetMessages(prev => [...prev, {
           id: `${chatId}-ai-fix-${Date.now()}`, type: 'ai', model, isRegen: true, sql, answer,
           chart_type, data, execution_time, sessionId, chatId: chatId, userQuery: fixText, feedbackId: '',
           query_id: mcqQueryId || undefined,
@@ -362,17 +446,20 @@ export default function ChatPage({
     const lastUserMsg = [...messages].reverse().find(m => m.type === 'user');
     if (!lastUserMsg) return;
     const sessionId = chatId.replace('chat-', 'session-');
-    const regenMsgCounter = msgCounter + 1;
-    setMsgCounter(regenMsgCounter);
     setTimeout(async () => {
-      const res = await sendQuery(sessionId, lastUserMsg.text, model, true, chatId, lmsType);
-      if (res.ok) {
-        const { sql, answer, chart_type, data, execution_time } = res.data;
-        setMessages(prev => [...prev, {
-          id: `${chatId}-ai-regen-${Date.now()}`, type: 'ai', model, isRegen: true, sql, answer,
-          chart_type, data, execution_time, sessionId, chatId: chatId, userQuery: lastUserMsg.text, feedbackId: '',
-          timestamp: new Date().toISOString(),
-        }]);
+      try {
+        const res = await sendQuery(sessionId, lastUserMsg.text, model, true, chatId, lmsType);
+        if (res.ok) {
+          const { sql, answer, chart_type, data, execution_time } = res.data;
+          safeSetMessages(prev => [...prev, {
+            id: `${chatId}-ai-regen-${Date.now()}`, type: 'ai', model, isRegen: true, sql, answer,
+            chart_type, data, execution_time, sessionId, chatId: chatId, userQuery: lastUserMsg.text, feedbackId: '',
+            timestamp: new Date().toISOString(),
+          }]);
+        }
+      } catch (err) {
+        console.error('[Chat] Regen failed:', err);
+        addToast('Regenerate failed');
       }
     }, 1400);
   };
@@ -383,7 +470,7 @@ export default function ChatPage({
     try {
       const res = await loadChatMessages(chatId, LIMIT, offset);
       if (res.ok && Array.isArray(res.messages)) {
-        setMessages(prev => [...res.messages, ...prev]);
+        safeSetMessages(prev => [...res.messages, ...prev]);
         setHasMore(res.hasMore || res.has_more); 
         setOffset(prev => prev + res.messages.length);
       }
@@ -394,7 +481,7 @@ export default function ChatPage({
     }
   };
 
-  if (notFound || (!isInitialLoading && !!chatId && chats.length > 0 && !chats.some(c => c.id === chatId))) {
+  if (notFound) {
     return (
       <div className="chat-not-found" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#9ca3af', background: '#050505', position: 'relative', zIndex: 10 }}>
          <div style={{ fontSize: '56px', marginBottom: '20px', background: 'rgba(239,68,68,0.1)', width: '100px', height: '100px', borderRadius: '50%', display: 'grid', placeItems: 'center', border: '1px solid rgba(239,68,68,0.2)', color: '#f87171' }}>◈</div>
@@ -409,7 +496,7 @@ export default function ChatPage({
 
   return (
     <>
-      <Hero isHidden={chatStarted || !!chatId} onSendChip={(text) => handleSendMessage(text, false)} />
+      <Hero isHidden={chatStarted || (chatId && chatId.length > 5)} onSendChip={(text) => handleSendMessage(text, false)} />
       {isMessagesLoading && !chatStarted && (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280' }}>
            <div className="spinner-small" style={{ marginRight: '10px' }} />
@@ -437,7 +524,7 @@ export default function ChatPage({
         setModel={setModel}
         thinkOn={thinkOn}
         setThinkOn={setThinkOn}
-        chatStarted={chatStarted || !!chatId}
+        chatStarted={chatStarted || (chatId && chatId.length > 5)}
       />
       <div className={`toast ${showToast ? 'show' : ''}`} id="toast">{toastMsg}</div>
     </>

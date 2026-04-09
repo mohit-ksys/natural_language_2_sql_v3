@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 
-export default function MCQMessage({ msg, onSubmitAnswers, onSkip }) {
-  const { id, query_id, questions, original_query, model, timestamp } = msg;
+const MCQMessage = React.memo(({ id, msg, onUpdate, onSubmitAnswers, onSkip, settings }) => {
+  console.log('[MCQ] Rendering message:', id, msg);
+  const { query_id, questions, original_query, model, timestamp } = msg;
   const totalQ = questions?.length || 0;
 
   // answers[i] = { type: 'option', value: optIdx } | { type: 'text', value: string } | null (skipped)
@@ -55,7 +56,7 @@ export default function MCQMessage({ msg, onSubmitAnswers, onSkip }) {
   };
 
   const handleGenerate = () => {
-    if (submitted) return;
+    if (submitted || msg.loading) return;
     setSubmitted(true);
     // Build final answers — null stays null for skipped questions
     const finalAnswers = answers.map((a, i) => {
@@ -67,7 +68,7 @@ export default function MCQMessage({ msg, onSubmitAnswers, onSkip }) {
   };
 
   const handleSkipAll = () => {
-    if (submitted) return;
+    if (submitted || msg.loading) return;
     setSkippingAll(true);
     onSkip(query_id, original_query);
   };
@@ -81,6 +82,8 @@ export default function MCQMessage({ msg, onSubmitAnswers, onSkip }) {
   const questionNumbers = ['\u2776', '\u2777', '\u2778', '\u2779', '\u277a'];
 
   const answeredCount = answers.filter((a, i) => a !== null || freeTexts[i].trim() !== '').length;
+
+  const showLoading = submitted || msg.loading;
 
   return (
     <div className="message msg-ai mcq-message" data-id={id}>
@@ -97,7 +100,7 @@ export default function MCQMessage({ msg, onSubmitAnswers, onSkip }) {
       </div>
 
       {/* Progress dots */}
-      {!submitted && (
+      {!showLoading && (
         <div className="mcq-progress">
           {(questions || []).map((_, i) => {
             const hasAns = answers[i] !== null || freeTexts[i].trim() !== '';
@@ -105,7 +108,7 @@ export default function MCQMessage({ msg, onSubmitAnswers, onSkip }) {
               <button
                 key={i}
                 className={`mcq-dot ${i === currentIdx ? 'active' : ''} ${hasAns ? 'answered' : ''}`}
-                onClick={() => !submitted && setCurrentIdx(i)}
+                onClick={() => !showLoading && setCurrentIdx(i)}
                 title={`Question ${i + 1}`}
               />
             );
@@ -117,7 +120,7 @@ export default function MCQMessage({ msg, onSubmitAnswers, onSkip }) {
       )}
 
       {/* Single question card */}
-      {!submitted && q && (
+      {!showLoading && q && (
         <div className="mcq-card">
           <div className="mcq-question-header">
             <span className="mcq-number">{questionNumbers[currentIdx] || `${currentIdx + 1}.`}</span>
@@ -174,14 +177,14 @@ export default function MCQMessage({ msg, onSubmitAnswers, onSkip }) {
         </div>
       )}
 
-      {submitted && (
+      {showLoading && (
         <div className="mcq-submitted-state">
           <span className="mcq-spinner">⟳</span> Generating SQL with your answers...
         </div>
       )}
 
       {/* Bottom actions */}
-      {!submitted && (
+      {!showLoading && (
         <div className="mcq-actions">
           <button
             className="mcq-skip-btn"
@@ -200,4 +203,6 @@ export default function MCQMessage({ msg, onSubmitAnswers, onSkip }) {
       )}
     </div>
   );
-}
+});
+
+export default MCQMessage;

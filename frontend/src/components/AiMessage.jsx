@@ -198,7 +198,7 @@ function execBarStyle(secs) {
   return { pct, color };
 }
 
-export default function AiMessage({ msg, addToast, onFix, onRegen, onUpdate, settings, currentUser }) {
+const AiMessage = React.memo(({ msg, addToast, onFix, onRegen, onUpdate, settings, currentUser }) => {
   const { id, model, isRegen, sql: apiSql, answer: apiAnswer, chart_type, data, execution_time,
           session_context_alert, sessionId, chatId: msgChatId, userQuery, feedbackId: msgFeedbackId, token_usage, timestamp,
           query_id: mcqQueryId, sql_auto_fixed, sql_error, thoughts: apiThoughts, lms_type: msgLmsType } = msg;
@@ -399,6 +399,10 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, onUpdate, set
     });
   }, [resultData, sortCol, sortDir]);
 
+  const highlightedSql = React.useMemo(() => highlightSql(sql), [sql]);
+  const renderedAnswer = React.useMemo(() => renderAnswer(resultAnswer || apiAnswer), [resultAnswer, apiAnswer]);
+  const renderedThoughts = React.useMemo(() => renderAnswer(resultThoughts || apiThoughts || msg.extra?.thoughts), [resultThoughts, apiThoughts, msg.extra?.thoughts]);
+
   const execBar = resultExecTime ? execBarStyle(resultExecTime) : null;
   const displayData = sortedData || resultData;
 
@@ -491,7 +495,7 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, onUpdate, set
           </div>
 
           {!isEditing ? (
-            <div className="query-code" dangerouslySetInnerHTML={{ __html: highlightSql(sql) }} />
+            <div className="query-code" dangerouslySetInnerHTML={{ __html: highlightedSql }} />
           ) : (
             <textarea
               className="query-edit-textarea"
@@ -569,7 +573,7 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, onUpdate, set
           </div>
           {showExplain && (
             <div className="explanation-body markdown-content">
-              {renderAnswer(resultThoughts || apiThoughts || msg.extra?.thoughts).map((seg, idx) => {
+              {renderedThoughts.map((seg, idx) => {
                  if (seg.type === 'spacer') return <div key={idx} className="answer-spacer" />;
                  return <p key={idx} dangerouslySetInnerHTML={{ __html: seg.html }} />;
               })}
@@ -587,7 +591,7 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, onUpdate, set
             <button className="query-btn answer-copy-btn" onClick={handleCopyAnswer}>{copyAnswerText}</button>
           </div>
           <div className="answer-text markdown-content">
-            {renderAnswer(resultAnswer || apiAnswer).map((seg, idx) => {
+            {renderedAnswer.map((seg, idx) => {
               if (seg.type === 'heading') {
                 const Tag = `h${seg.level + 2}`;
                 return <Tag key={idx} className="answer-heading" dangerouslySetInnerHTML={{ __html: seg.html }} />;
@@ -763,7 +767,7 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, onUpdate, set
       )}
     </div>
   );
-}
+});
 
 AiMessage.propTypes = {
   msg: PropTypes.shape({
@@ -786,3 +790,5 @@ AiMessage.propTypes = {
   settings: PropTypes.object,
   currentUser: PropTypes.object,
 };
+
+export default AiMessage;

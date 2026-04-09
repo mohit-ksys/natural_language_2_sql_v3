@@ -135,7 +135,7 @@ def load_chat_messages(
     """Load paginated messages for a specific chat in descending order."""
     engine = get_auth_engine()
     user_id = str(current_user["id"])
-
+    print({chat_id, limit,offset })
     try:
         with engine.connect() as conn:
             chat_status = conn.execute(
@@ -172,7 +172,6 @@ def load_chat_messages(
         messages = []
         if rows:
             for r in rows:
-                # Unpack extra data (jsonb) if present
                 extra = r.extra if hasattr(r, 'extra') and r.extra else {}
                 if isinstance(extra, str):
                     try: extra = json.loads(extra)
@@ -184,8 +183,8 @@ def load_chat_messages(
                     "text": r.text, # User prompt or AI plain-language answer
                     "isFix": r.is_fix,
                     "isRegen": r.is_regenerate,
-                    "sql": r.sql if r.type == 'ai' else None,
-                    "answer": r.answer if r.type == 'ai' else (r.text if r.type == 'ai' else None),
+                    "sql": r.sql if r.type == 'ai' else (extra.get('sql') if r.type == 'ai' else None),
+                    "answer": r.answer if r.answer else (r.text if r.type == 'ai' else None),
                     "chart_type": r.chart_type,
                     "execution_time": r.execution_time,
                     "model": r.model,
@@ -198,10 +197,12 @@ def load_chat_messages(
                     "lms_type": getattr(r, 'lms_type', None),
                     "timestamp": r.created_at_utc.isoformat() if r.created_at_utc else None,
                 }
-                if extra:
-                    log.info("LOADED extra keys for msg %s: %s has_data=%s", r.id, list(extra.keys()), 'data' in extra)
-                    # Unpack rich data (charts, results, thoughts) from JSON bucket
-                    msg.update(extra)
+                if r.extra:
+                    msg.update(r.extra)
+                    if 'data' in r.extra:
+                        msg['data'] = r.extra['data']
+                
+                msg['loading'] = False
                 messages.append(msg)
             
             has_more = (offset + len(messages)) < total_count
@@ -294,7 +295,9 @@ def save_chats(req: SaveChatsRequest, current_user: dict = Depends(get_current_u
                             "userQuery", "feedbackId", "token_usage", "error"
                         }
                         m_dict = m.model_dump()
-                        extra = {k: v for k, v in m_dict.items() if k not in base_fields}
+                        # UI-only fields we NEVER want to persist
+                        banned_fields = {"loading", "isNavigating"}
+                        extra = {k: v for k, v in m_dict.items() if k not in base_fields and k not in banned_fields}
                         
                         conn.execute(text("""
                             INSERT INTO chat_messages (

@@ -131,13 +131,18 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
             "sql": generated_sql, "feedback_id": fid,
         })
 
+    chat_id = req.chat_id
+    if not chat_id:
+        chat_id = str(uuid.uuid4())
+        log.info("Generating new Chat ID: %s", chat_id)
+
     execution_time = round(time.time() - start_time, 3)
     fid = memory_service.save_feedback(
         session_id=req.session_id, 
         user_query=req.user_query, 
         generated_sql=generated_sql,
         execution_time=execution_time, 
-        chat_id=req.chat_id or "",
+        chat_id=chat_id,
         user_id=user_id, 
         lms_type=lms_type, 
         model=req_model,
@@ -147,6 +152,20 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
         token_usage=sql_usage,
         thoughts=thoughts,
         user_msg_id=req.user_msg_id,
+    )
+
+    _token_usage = {'model': req_model, **sql_usage} if sql_usage else None
+    return QueryResponse(
+        feedback_id=fid, 
+        session_id=req.session_id, 
+        chat_id=chat_id,
+        sql=generated_sql,
+        execution_time=execution_time, 
+        cached=False, 
+        executed=False,
+        session_context_alert="⚠️ Session context limited to last 5 queries" if should_show_context_alert else None,
+        token_usage=_token_usage, 
+        thoughts=thoughts
     )
 
     if not req.execute:
@@ -324,7 +343,8 @@ def _generate_and_respond(
     start_time: float, lms_type: str, user_id: str,
     current_user: dict,
     mcq_questions: list = None, mcq_answers: list = None,
-    actual_llm_query: str = None
+    actual_llm_query: str = None,
+    user_msg_id: str = None
 ) -> QueryResponse:
     thoughts = ""
     sql_usage = {}
@@ -368,6 +388,10 @@ def _generate_and_respond(
         )
         raise HTTPException(status_code=403, detail="Non-read-only SQL generated.")
 
+    if not chat_id:
+        chat_id = str(uuid.uuid4())
+        log.info("Generating new Chat ID (MCQ context): %s", chat_id)
+
     execution_time = round(time.time() - start_time, 3)
     fid = memory_service.save_feedback(
         session_id=session_id, 
@@ -385,12 +409,13 @@ def _generate_and_respond(
         token_usage=sql_usage,
         thoughts=thoughts,
         is_mcq_answer=True,
+        user_msg_id=user_msg_id,
     )
 
     if not execute:
         _token_usage = {'model': req_model, **sql_usage} if sql_usage else None
         return QueryResponse(
-            feedback_id=fid, session_id=session_id, sql=generated_sql,
+            feedback_id=fid, session_id=session_id, chat_id=chat_id, sql=generated_sql,
             execution_time=execution_time, cached=False, executed=False,
             session_context_alert="⚠️ Session context limited to last 5 queries" if should_show_context_alert else None,
             token_usage=_token_usage, thoughts=thoughts
@@ -413,6 +438,7 @@ def _generate_and_respond(
     return QueryResponse(
         feedback_id=res.feedback_id,
         session_id=res.session_id,
+        chat_id=chat_id,
         sql=res.sql,
         answer=res.answer,
         chart_type=res.chart_type,
@@ -446,35 +472,40 @@ def disambiguate_query(req: DisambiguateRequest, current_user: dict = Depends(ge
         raise HTTPException(status_code=500, detail=f"Failed to generate MCQs: {error or 'empty response'}")
 
     query_id = str(uuid.uuid4())
+    chat_id = req.chat_id
+    if not chat_id:
+        chat_id = str(uuid.uuid4())
+        log.info("Generating new Chat ID (Disambiguate): %s", chat_id)
     
     # Persistence: Save MCQ step to chat_messages so it survives refresh
-    mcq_msg_id = None
-    if req.chat_id:
-        mcq_msg_id = f"mcq-{uuid.uuid4()}"
-        memory_service.save_mcq_step(
-            chat_id=req.chat_id, 
-            session_id=req.session_id, 
-            query_id=query_id, 
-            user_query=req.user_query, 
-            questions=questions, 
-            model=req_model,
-            user_id=user_id,
-            msg_id=mcq_msg_id,
-            user_msg_id=req.user_msg_id
-        )
+    mcq_msg_id = f"m-{uuid.uuid4()}"
+    memory_service.save_mcq_step(
+        chat_id=chat_id, 
+        session_id=req.session_id, 
+        query_id=query_id, 
+        user_query=req.user_query, 
+        questions=questions, 
+        model=req_model,
+        user_id=user_id,
+        msg_id=mcq_msg_id,
+        user_msg_id=req.user_msg_id
+    )
 
     memory_service.store_query_context(query_id, {
         "original_query": req.user_query,
         "questions": questions,
         "session_id": req.session_id,
-        "chat_id": req.chat_id or "",
+        "chat_id": chat_id,
         "user_id": user_id,
         "lms_type": lms_type_for_disambig,
+        "model": req_model,
+        "user_msg_id": req.user_msg_id
     })
 
     return DisambiguateResponse(
         query_id=query_id,
         session_id=req.session_id,
+        chat_id=chat_id,
         mcq_msg_id=mcq_msg_id,
         questions=[
             MCQQuestion(
@@ -521,6 +552,7 @@ def answer_mcq(req: MCQAnswerRequest, current_user: dict = Depends(get_current_u
         start_time=start_time, lms_type=lms_type, user_id=user_id,
         current_user=current_user,
         mcq_questions=questions, mcq_answers=req.answers,
+        user_msg_id=ctx.get("user_msg_id")
     )
 
 
@@ -555,5 +587,6 @@ def english_feedback(req: EnhancedFeedbackRequest, current_user: dict = Depends(
         start_time=start_time, lms_type=lms_type, user_id=user_id,
         current_user=current_user,
         mcq_questions=questions, mcq_answers=answers,
-        actual_llm_query=original_query
+        actual_llm_query=original_query,
+        user_msg_id=ctx.get("user_msg_id")
     )

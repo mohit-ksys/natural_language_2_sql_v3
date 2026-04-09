@@ -18,6 +18,7 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     feedback_id: str
     session_id: str
+    chat_id: str
     sql: str
     execution_time: float
     cached: bool
@@ -50,6 +51,7 @@ class ExecuteResponse(BaseModel):
     feedback_id: Optional[str] = None
     sql: Optional[str] = None
     session_id: Optional[str] = None
+    chat_id: Optional[str] = None
     token_usage: Optional[dict] = None
     thoughts: Optional[str] = None
 
@@ -120,6 +122,7 @@ class DisambiguateRequest(BaseModel):
 class DisambiguateResponse(BaseModel):
     query_id: str
     session_id: str
+    chat_id: str
     questions: list[MCQQuestion]
     original_query: str
     mcq_msg_id: Optional[str] = None

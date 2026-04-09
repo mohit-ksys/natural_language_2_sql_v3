@@ -196,7 +196,7 @@ def save_feedback(
                     })
 
                     if not existing_feedback_id:
-                        final_user_msg_id = user_msg_id or f"{chat_id}-u-{int(now_utc.timestamp())}"
+                        final_user_msg_id = user_msg_id or f"u-{uuid.uuid4()}"
                         conn.execute(text("""
                             INSERT INTO chat_messages (id, chat_id, type, text, created_at_utc, created_at_ist)
                             VALUES (:id, :cid, 'user', :text, :now, :now AT TIME ZONE 'Asia/Kolkata')
@@ -209,7 +209,7 @@ def save_feedback(
                         })
 
                     # 2. Insert AI Message
-                    ai_msg_id = f"ai-{feedback_id}"
+                    ai_msg_id = f"a-{feedback_id}"
                     
                     # If this is an answer to an MCQ, we might want to store MCQ metadata in extra
                     extra_data = {}
@@ -492,7 +492,6 @@ def save_mcq_step(chat_id: str, session_id: str, query_id: str, user_query: str,
     
     try:
         with engine.begin() as conn:
-            # 0. Ensure Chat exists (Foreign Key)
             if chat_id:
                 chat_title = (user_query[:50] + '...') if len(user_query) > 50 else user_query
                 conn.execute(text("""
@@ -508,15 +507,14 @@ def save_mcq_step(chat_id: str, session_id: str, query_id: str, user_query: str,
                 })
 
             # 1. Save User Question
-            final_user_msg_id = user_msg_id or f"{chat_id}-u-{int(now_utc.timestamp())}"
+            final_user_msg_id = user_msg_id or f"u-{uuid.uuid4()}"
             conn.execute(text("""
                 INSERT INTO chat_messages (id, chat_id, type, text, created_at_utc, created_at_ist)
                 VALUES (:id, :cid, 'user', :text, :now, :now AT TIME ZONE 'Asia/Kolkata')
                 ON CONFLICT (id) DO UPDATE SET text = EXCLUDED.text
             """), {"id": final_user_msg_id, "cid": chat_id, "text": user_query, "now": now_utc})
 
-            # 2. Save MCQ Message
-            mcq_msg_id = msg_id or f"mcq-{query_id}"
+            mcq_msg_id = msg_id or f"m-{query_id}"
             extra = {
                 "questions": questions,
                 "query_id": query_id,
@@ -527,7 +525,7 @@ def save_mcq_step(chat_id: str, session_id: str, query_id: str, user_query: str,
             }
             conn.execute(text("""
                 INSERT INTO chat_messages (id, chat_id, type, text, extra, model, session_id, user_query, created_at_utc, created_at_ist)
-                VALUES (:id, :cid, 'ai', :text, CAST(:extra AS jsonb), :model, :sid, :q, :now, :now AT TIME ZONE 'Asia/Kolkata')
+                VALUES (:id, :cid, 'mcq', :text, CAST(:extra AS jsonb), :model, :sid, :q, :now, :now AT TIME ZONE 'Asia/Kolkata')
                 ON CONFLICT (id) DO UPDATE SET
                     text = EXCLUDED.text,
                     extra = EXCLUDED.extra,

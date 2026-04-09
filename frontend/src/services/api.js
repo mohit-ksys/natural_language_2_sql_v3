@@ -331,6 +331,7 @@ export async function saveChatsToBackend(chats, lastChatId) {
 export async function loadChatMessages(chatId, limit = 50, offset = 0) {
   try {
     const res = await apiFetch(`${API_BASE}/chats/${chatId}/messages?limit=${limit}&offset=${offset}`);
+    console.log(`API loadChatMessages: chatId=${chatId}, limit=${limit}, offset=${offset}, response=`, res);
     if (res.ok) {
       const data = await res.json();
       return { ok: true, messages: data.messages, hasMore: data.has_more };

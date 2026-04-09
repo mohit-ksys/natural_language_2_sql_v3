@@ -58,7 +58,7 @@ export default function Thread({ messages, addToast, onFix, onRegen, onUpdate, o
     setShowScrollBtn(false);
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
-
+  console.log('Rendering all message',messages)
   return (
     <div className="conversation" id="conversation" ref={convRef} onScroll={handleScroll}>
       <div className="thread" id="thread">
