@@ -8,9 +8,6 @@
 ---
 
 ## TABLE: students
-One row per student/lead. 
-x
-## TABLE: students
 One row per student/lead. Primary funnel record.
 
 | Column | Type | Notes |
@@ -39,12 +36,9 @@ One row per student/lead. Primary funnel record.
 | preferred_course | ARRAY | Search with: `'Course Name' = ANY(preferred_course)` |
 | remarks_count | INTEGER | Denormalized total. Do NOT use for metrics — use student_remarks. |
 | created_at | TIMESTAMPTZ | When lead was created (UTC). |
-| "first_Icc_Date" | TIMESTAMPTZ | Date of first Initial Counselling Call. **Use double quotes to preserve case sensitivity.** |
 | updated_at | TIMESTAMPTZ | When record was last updated (UTC). |
 
 ---
-
-
 
 ### Funnel stages handled by this table:
 Fresh, Pre Application, Initial Counselling Completed, NotInterested (before application)
@@ -358,6 +352,26 @@ Full post-application flow on `course_status_journeys`:
 
 ---
 
+## DISTINCTION 5 — Fee Column Selection
+
+**CRITICAL: There are two different fee concepts — course fee and payment collected. Never confuse them.**
+
+| User asks about... | Table | Column | Notes |
+|---|---|---|---|
+| Total fee of a course / admission fee / course worth / how much does a course cost / fee structure | `university_courses` | `total_fees` | Full course price from the catalog |
+| Per-semester fee | `university_courses` | `semester_fees` | |
+| Per-year fee | `university_courses` | `annual_fees` | |
+| Deposit paid / amount deposited / payment collected / fees received from a student | `course_status_journeys` | `deposit_amount` | Actual money paid by student |
+| Total fees collected / revenue | `course_status_journeys` | `SUM(deposit_amount) WHERE deposit_amount > 0` | |
+
+**Rules:**
+- "Total fee", "admission fee", "course fee", "how much does a course cost", "course worth", "fee of [course/university]" → ALWAYS use `university_courses.total_fees`.
+- "Deposit", "deposit amount", "amount paid", "payment collected", "fees received" → ALWAYS use `course_status_journeys.deposit_amount`.
+- NEVER use `deposit_amount` to answer questions about course pricing — it is actual money paid, not the listed course fee.
+- NEVER use `total_fees` to answer questions about payments collected — it is the catalog price, not actual collected amount.
+
+---
+
 ## DISTINCTION 6 — Three Meanings of "Connected"
 
 | User says... | Filter |
@@ -552,25 +566,7 @@ Apply the standard IST date window (see TIMEZONE RULES) for today / yesterday / 
 
 ---
 
-## DISTINCTION 10 — Fee Column Selection
-
-**CRITICAL: There are two different fee concepts — course fee and payment collected. Never confuse them.**
-
-| User asks about... | Table | Column | Notes |
-|---|---|---|---|
-| Total fee of a course / admission fee / course worth / how much does a course cost / fee structure | `university_courses` | `total_fees` | Full course price from the catalog |
-| Per-semester fee | `university_courses` | `semester_fees` | |
-| Per-year fee | `university_courses` | `annual_fees` | |
-| Deposit paid / amount deposited / payment collected / fees received from a student | `course_status_journeys` | `deposit_amount` | Actual money paid by student |
-| Total fees collected / revenue | `course_status_journeys` | `SUM(deposit_amount) WHERE deposit_amount > 0` | |
-
-**Rules:**
-- "Total fee", "admission fee", "course fee", "how much does a course cost", "course worth", "fee of [course/university]" → ALWAYS use `university_courses.total_fees`.
-- "Deposit", "deposit amount", "amount paid", "payment collected", "fees received" → ALWAYS use `course_status_journeys.deposit_amount`.
-- NEVER use `deposit_amount` to answer questions about course pricing — it is actual money paid, not the listed course fee.
-- NEVER use `total_fees` to answer questions about payments collected — it is the catalog price, not actual collected amount.
-
-## DISTINCTION 11 - DEPOSIT AMOUNT — CRITICAL RULES
+## DISTINCTION 10 — DEPOSIT AMOUNT — CRITICAL RULES
 
 ---
 
@@ -672,7 +668,7 @@ Adapt grouping: university → `GROUP BY uc.university_name`, course → add `uc
 
 ---
 
-## DISTINCTION 12 — Always Use MIN(created_at) for Event Timestamps
+## DISTINCTION 11 — Always Use MIN(created_at) for Event Timestamps
 
 **CRITICAL: For any append-only table (`course_status_journeys`, `student_remarks`), ALWAYS use `MIN(created_at)` to represent when an event first occurred. NEVER use raw `created_at`, `MAX(created_at)`, or an undeduped timestamp.**
 

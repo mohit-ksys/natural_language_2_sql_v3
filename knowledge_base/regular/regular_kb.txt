@@ -475,8 +475,6 @@ course_status_journeys.course_id  → university_courses.course_id
 ---
 # SECTION 4 — SQL PATTERNS
 ---
-### PATTERN 18 — Forms and Admissions by University
-
 ### PATTERN 1 — Funnel breakdown (UNION ALL, never GROUP BY)
 
 Early stages from `students`, later stages from `course_status_journeys`:
@@ -599,7 +597,7 @@ GROUP BY manager.counsellor_id, manager.counsellor_name;
 
 ---
 
-### PATTERN 6 — Benchmark / above-average comparison
+### PATTERN 5 — Benchmark / above-average comparison
 
 ```sql
 WITH metrics AS (
@@ -627,7 +625,7 @@ ORDER BY m.success_rate DESC;
 
 ---
 
-### PATTERN 7 — Dormant students
+### PATTERN 6 — Dormant students
 
 ```sql
 SELECT
@@ -645,7 +643,7 @@ ORDER BY last_remark_date ASC NULLS FIRST;
 
 ---
 
-### PATTERN 8 — University deduplication (student at highest stage)
+### PATTERN 7 — University deduplication (student at highest stage)
 
 When a student has multiple courses at the same university, assign their highest stage using `course_status_journeys`:
 
@@ -679,7 +677,7 @@ FROM final_stage
 GROUP BY university_name ORDER BY admissions DESC;
 ```
 
-### PATTERN 11 — Date-filtered count from course_status_journeys (ANY status)
+### PATTERN 8 — Date-filtered count from course_status_journeys (ANY status)
 
 Use this for ALL queries like for "for all admission/enrolled/application/document_pending/document_submitted" related queries like "admitted in last N days", "enrolled this month", "applications this week", etc.
 Always wrap in a subquery with `MIN(created_at)` per student to get their first event date, then apply the IST-adjusted date filter.
@@ -762,7 +760,7 @@ ORDER BY success_rate DESC;
 
 ---
 
-### PATTERN 12 — First Connected (total count + counsellor wise)
+### PATTERN 11 — First Connected (total count + counsellor wise)
 
 Counts students whose **very first Connected call** falls within a given date window. Uses `MIN(created_at)` to find each student's first connected event.
 Apply the standard IST date window (see TIMEZONE RULES) for today / yesterday / last N days as needed.
@@ -770,13 +768,13 @@ Apply the standard IST date window (see TIMEZONE RULES) for today / yesterday / 
 **Total first connected (any date window):**
 ```sql
 WITH first_connected_dates AS (
-    SELECT 
-        student_id,
-        MIN(created_at) AS first_connected_at
-    FROM student_remarks
-    WHERE calling_status = 'Connected'
-      AND student_id IN (SELECT student_id FROM students)
-    GROUP BY student_id
+  SELECT 
+    student_id,
+    MIN(created_at) AS first_connected_at
+  FROM student_remarks
+  WHERE calling_status = 'Connected'
+    AND student_id IN (SELECT student_id FROM students)
+  GROUP BY student_id
 )
 SELECT COUNT(DISTINCT fcd.student_id) AS first_connected_count
 FROM first_connected_dates fcd
@@ -812,7 +810,7 @@ ORDER BY first_connected_count DESC;
 
 ---
 
-### PATTERN 13 — Pre-NI Students (date-filtered)
+### PATTERN 12 — Pre-NI Students (date-filtered)
 
 Counts students who went NI without ever having an ICC or progressing to application stage. Apply the standard IST date window (see TIMEZONE RULES) to `students.created_at` for today / yesterday / last N days.
 
@@ -864,7 +862,7 @@ ORDER BY pre_ni_count DESC;
 
 ---
 
-### PATTERN 14 — Attempted Calls on Newly Added Students  (counsellor wise)
+### PATTERN 13 — Attempted Calls on Newly Added Students  (counsellor wise)
 
 Counts distinct students (from a specific creation date window) who received at least one call attempt, broken down by counsellor. The student creation date window is applied inside the JOIN ON clause. Apply the standard IST date window (see TIMEZONE RULES) for today / yesterday / last N days.
 **RULE J8/F6 exception:** `WHERE sr.student_id IS NOT NULL` is intentional — this is NOT a full-roster query. Only counsellors who attempted calls on new leads appear. Do NOT remove this filter.
@@ -903,7 +901,7 @@ ORDER BY total_attempted_calls DESC;
 
 ---
 
-### PATTERN 15 — Total Leads and Attempted Leads (counsellor wise, any date window)
+### PATTERN 14 — Total Leads and Attempted Leads (counsellor wise, any date window)
 
 Shows per-counsellor count of new leads added in a given date window AND how many of those were attempted (had at least one remark). The student creation window is applied in the JOIN ON clause. Apply the standard IST date window (see TIMEZONE RULES) for today / yesterday / last N days.
 **RULE J8/F6 exception:** `WHERE sr.student_id IS NOT NULL` is intentional — this is NOT a full-roster query. Only counsellors who attempted calls on new leads appear. Do NOT remove this filter.
@@ -925,7 +923,7 @@ ORDER BY total_attempted_leads DESC;
 
 ---
 
-### PATTERN 16 — First NI (any date window)
+### PATTERN 15 — First NI (any date window)
 
 Counts NI students whose **first remark** (earliest `created_at` in `student_remarks`) falls within the given IST date window. Uses `DISTINCT ON (student_id) ORDER BY student_id, created_at ASC` to get each student's earliest remark.
 Apply the standard IST date window (see TIMEZONE RULES) for today / yesterday / last N days.
@@ -950,7 +948,7 @@ WHERE first_ni_at >= <start_ist>   -- e.g. CURRENT_DATE - INTERVAL '1 day' - INT
 
 ---
 
-### PATTERN 17 — First-Time Date Range: Status Count by University (or any entity)
+### PATTERN 16 — First-Time Date Range: Status Count by University (or any entity)
 
 Use when the user asks how many students reached a specific `course_status` **for the first time** within a date window — e.g. "how many form fills today", "portal pending today by university", "applications today".
 
@@ -988,7 +986,7 @@ GROUP BY uc.university_name;
 
 ---
 
-### PATTERN 18 — Forms and Admissions by University (Monthly/Custom Date Range)
+### PATTERN 17 — Forms and Admissions by University (Monthly/Custom Date Range)
 
 Use when user asks for forms and admissions counts for specific universities over a date range (monthly, till date, today, custom period). This pattern uses CTEs to deduplicate both forms and admissions, then counts them separately with UNION ALL.
 
@@ -1116,7 +1114,7 @@ ORDER BY uc.university_name, metric;
 
 ---
 
-### PATTERN 19 — L3 Form Assignment Performance and Response Time Breakdown
+### PATTERN 18 — L3 Form Assignment Performance and Response Time Breakdown
 
 Use when user asks for L3 counsellor performance on form assignments, including: "L3 form metrics", "how many forms per L3", "L3 response time breakdown", "forms not initiated by L3", "L3 counsellor form TAT", "active vs completed forms per L3".
 
@@ -1299,7 +1297,7 @@ LEFT JOIN counsellors c ON fs.assigned_l3_counsellor_id = c.counsellor_id
 
 ---
 
-### PATTERN 20 — L3 TAT: Time from L3 Assignment to First Connected Call
+### PATTERN 19 — L3 TAT: Time from L3 Assignment to First Connected Call
 
 Use when user asks: "avg TAT for L3", "how long does L3 take to connect", "average response time after L3 assignment", "time to first connected call after receiving lead from L2", "L3 TAT raw data", "L3 connected call stats".
 
