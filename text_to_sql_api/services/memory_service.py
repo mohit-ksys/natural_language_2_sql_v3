@@ -348,3 +348,5 @@ def format_session_for_prompt(session_id: str) -> str:
 def _load_sessions() -> dict:
     """Legacy function — returns empty dict (sessions are now in DB)."""
     return {}
+
+

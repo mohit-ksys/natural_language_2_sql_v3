@@ -183,6 +183,7 @@ def generate_sql(
 8. For year-based queries, always use EXTRACT(YEAR FROM CURRENT_DATE) or DATE_TRUNC('year', CURRENT_DATE). NEVER hardcode a numeric year literal.
 9. NEVER use ILIKE on IDs. Always join by name.
 10. Output ONLY raw SQL. No markdown, no comments, no explanation.
+11. MANDATORY: When filtering `course_status_journeys` by a date window (today, yesterday, last N days), ALWAYS deduplicate first using a subquery with `DISTINCT ON (student_id, course_id, course_status) ORDER BY student_id, course_id, course_status, created_at ASC`, then apply the date filter on the outer query. NEVER filter raw `course_status_journeys.created_at` directly — the table is append-only and has duplicate rows per student-course-status.
 
 
 User Question: "{user_query}"
@@ -271,7 +272,7 @@ def extract_tags(user_query: str, model: str = None) -> list[str]:
 
 Available tags (choose ONLY from this list):
 {vocab_str}
-
+    
 User Question: "{user_query}"
 
 Return ONLY a comma-separated list of matching tags from the list above. No explanation.

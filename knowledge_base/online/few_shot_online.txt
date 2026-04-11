@@ -2,6 +2,10 @@
 Study these examples carefully. Each one demonstrates a pattern you MUST follow when you see a similar query.
 Do not deviate from these patterns.
 
+**CRITICAL DISTINCTION — Admission vs Enrollment:**
+- When user asks about **"admission"** / **"admissions"** / **"admitted"** / **"got admission"** → Include BOTH `course_status IN ('Admission', 'Enrolled')` because enrolled students have already been admitted. Always exclude partial payments.
+- When user asks about **"enrollment"** / **"enrolled"** / **"enrollments"** → Include ONLY `course_status = 'Enrolled'`. Do NOT include Admission status.
+
 ---
 
 Question: Show me the top 10 counsellors with the most students and how many of those students are at each stage from pre-application to enrollment.
@@ -13,7 +17,7 @@ SELECT
     COUNT(DISTINCT CASE WHEN s.current_student_status = 'Pre Application' THEN s.student_id END) AS pre_application,
     COUNT(DISTINCT CASE WHEN s.current_student_status = 'Initial Counselling Completed' THEN s.student_id END) AS counselling_completed,
     COUNT(DISTINCT CASE WHEN csj.course_status = 'Application' THEN csj.student_id END) AS applications,
-    COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done') THEN csj.student_id END) AS admissions,
+    COUNT(DISTINCT CASE WHEN csj.course_status IN ('Admission', 'Enrolled') AND (csj.course_status = 'Enrolled' OR csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done')) THEN csj.student_id END) AS admissions,
     COUNT(DISTINCT CASE WHEN csj.course_status = 'Enrolled' THEN csj.student_id END) AS enrolled
 FROM counsellors c
 JOIN students s ON c.counsellor_id = s.assigned_counsellor_id
@@ -33,12 +37,12 @@ Question: For each counsellor, show me how many students reached admission or en
 SELECT
     c.counsellor_name,
     COUNT(DISTINCT s.student_id) AS total_students,
-    COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done') THEN csj.student_id END + CASE WHEN csj.course_status = 'Enrolled' THEN csj.student_id END) AS converted_students,
+    COUNT(DISTINCT CASE WHEN csj.course_status IN ('Admission', 'Enrolled') AND (csj.course_status = 'Enrolled' OR csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done')) THEN csj.student_id END) AS converted_students,
     COUNT(DISTINCT sr.remark_id) AS total_remarks,
     COUNT(DISTINCT CASE WHEN sr.callback_date >= CURRENT_DATE THEN sr.remark_id END) AS upcoming_callbacks,
     COUNT(DISTINCT CASE WHEN sr.callback_date < CURRENT_DATE THEN sr.remark_id END) AS overdue_callbacks,
     ROUND(
-        (COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done') THEN csj.student_id END) + COUNT(DISTINCT CASE WHEN csj.course_status = 'Enrolled' THEN csj.student_id END))::numeric
+        COUNT(DISTINCT CASE WHEN csj.course_status IN ('Admission', 'Enrolled') AND (csj.course_status = 'Enrolled' OR csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done')) THEN csj.student_id END)::numeric
         / NULLIF(COUNT(DISTINCT s.student_id), 0) * 100, 2
     ) AS conversion_rate_pct
 FROM counsellors c
@@ -181,8 +185,7 @@ JOIN course_status_journeys csj ON s.student_id = csj.student_id
 JOIN counsellors c ON s.assigned_counsellor_id = c.counsellor_id
 LEFT JOIN student_remarks sr ON s.student_id = sr.student_id
 WHERE (csj.course_status = 'Application' 
-    OR (csj.course_status = 'Admission' AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done'))
-    OR csj.course_status = 'Enrolled')
+    OR (csj.course_status IN ('Admission', 'Enrolled') AND (csj.course_status = 'Enrolled' OR csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done'))))
 GROUP BY s.student_id, s.student_name, s.student_email, s.student_phone, c.counsellor_name, csj.course_status
 HAVING MAX(sr.created_at) < CURRENT_DATE - INTERVAL '7 days' OR MAX(sr.created_at) IS NULL
 ORDER BY last_remark_date ASC NULLS FIRST;
@@ -201,7 +204,7 @@ WITH counsellor_metrics AS (
         COUNT(DISTINCT s.student_id) AS total_students,
         (COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done') THEN csj.student_id END) + COUNT(DISTINCT CASE WHEN csj.course_status = 'Enrolled' THEN csj.student_id END)) AS conversions,
         ROUND(
-            (COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done') THEN csj.student_id END) + COUNT(DISTINCT CASE WHEN csj.course_status = 'Enrolled' THEN csj.student_id END))::numeric
+            COUNT(DISTINCT CASE WHEN csj.course_status IN ('Admission', 'Enrolled') AND (csj.course_status = 'Enrolled' OR csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done')) THEN csj.student_id END)::numeric
             / NULLIF(COUNT(DISTINCT s.student_id), 0) * 100, 2
         ) AS conversion_rate_pct
     FROM counsellors c
@@ -264,8 +267,8 @@ WITH admitted_students AS (
         course_id,
         MIN(created_at) AS first_admission_date
     FROM course_status_journeys
-    WHERE course_status = 'Admission'
-      AND fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done')
+    WHERE course_status IN ('Admission', 'Enrolled')
+      AND (course_status = 'Enrolled' OR fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done'))
       AND student_id IN (SELECT student_id FROM students)
     GROUP BY student_id, course_id
 ),
@@ -320,6 +323,44 @@ Key patterns: Use MIN(created_at) per (student_id, course_id) in admitted_studen
 
 ---
 
+Question: Show me each counsellor's login and logout time for today (first and last remark between 9:30 AM to 8:30 PM).
+
+```sql
+SELECT
+    c.counsellor_name,
+    MIN(sr.created_at AT TIME ZONE 'Asia/Kolkata') AS login_time,
+    MAX(sr.created_at AT TIME ZONE 'Asia/Kolkata') AS logout_time,
+    EXTRACT(EPOCH FROM (MAX(sr.created_at) - MIN(sr.created_at))) / 3600 AS working_hours
+FROM counsellors c
+JOIN student_remarks sr ON c.counsellor_id = sr.counsellor_id
+WHERE sr.created_at >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+  AND sr.created_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+  AND EXTRACT(HOUR FROM sr.created_at AT TIME ZONE 'Asia/Kolkata') * 60 + EXTRACT(MINUTE FROM sr.created_at AT TIME ZONE 'Asia/Kolkata') BETWEEN 570 AND 1230
+  AND sr.student_id IN (SELECT student_id FROM students)
+GROUP BY c.counsellor_id, c.counsellor_name
+ORDER BY login_time ASC;
+```
+
+For a specific counsellor:
+```sql
+SELECT
+    c.counsellor_name,
+    MIN(sr.created_at AT TIME ZONE 'Asia/Kolkata') AS login_time,
+    MAX(sr.created_at AT TIME ZONE 'Asia/Kolkata') AS logout_time,
+    EXTRACT(EPOCH FROM (MAX(sr.created_at) - MIN(sr.created_at))) / 3600 AS working_hours
+FROM counsellors c
+JOIN student_remarks sr ON c.counsellor_id = sr.counsellor_id
+WHERE sr.created_at >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+  AND sr.created_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+  AND EXTRACT(HOUR FROM sr.created_at AT TIME ZONE 'Asia/Kolkata') * 60 + EXTRACT(MINUTE FROM sr.created_at AT TIME ZONE 'Asia/Kolkata') BETWEEN 570 AND 1230
+  AND sr.student_id IN (SELECT student_id FROM students)
+  AND c.counsellor_name ILIKE '%counsellor_name%'
+GROUP BY c.counsellor_id, c.counsellor_name;
+```
+Key patterns: "login" is defined as the first remark between 9:30 AM (570 minutes from midnight) to 8:30 PM (1230 minutes from midnight) for that day. Use MIN(created_at) for login time and MAX(created_at) for logout time. Filter remarks using time-of-day calculation: `EXTRACT(HOUR FROM created_at AT TIME ZONE 'Asia/Kolkata') * 60 + EXTRACT(MINUTE FROM created_at AT TIME ZONE 'Asia/Kolkata') BETWEEN 570 AND 1230`. Always apply IST timezone conversion and today's date filter. Always guard with student_id IN (SELECT student_id FROM students). For specific counsellor queries, add `c.counsellor_name ILIKE '%name%'` filter.
+
+---
+
 Question: Give me yesterday's daily activity summary — how many students had their first ICC, how many turned NotInterested for the first time, how many were first connected, and how many unique students had any remark activity?
 
 ```sql
@@ -369,4 +410,3 @@ SELECT
 Key patterns: "yesterday" in IST = CURRENT_DATE - INTERVAL '1 day' - INTERVAL '5 hours 30 minutes' as lower bound AND CURRENT_DATE - INTERVAL '5 hours 30 minutes' as upper bound — always apply both offsets for IST day boundaries. first_icc uses students."first_Icc_Date" (quoted, camelCase). first_ni uses DISTINCT ON to get the earliest remark per student, then filters by date — only students currently in NotInterested status. first_connected uses MIN(created_at) per student from student_remarks where calling_status = 'Connected'. unique_remarks counts DISTINCT student_id from student_remarks in the window. Final SELECT uses scalar subqueries from each CTE — returns exactly one summary row. Always guard student_remarks with student_id IN (SELECT student_id FROM students).
 
 ---
-
