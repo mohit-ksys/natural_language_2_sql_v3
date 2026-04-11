@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from config.settings import settings
+from utils.data_utils import enforce_sql_limit, scrub_results
 
 
 def _make_engine(url: str):
@@ -53,16 +54,21 @@ def test_connection() -> bool:
         return False
 
 
-def execute_sql(sql: str, lms_type: str = "online") -> list[dict]:
+def execute_sql(sql: str, lms_type: str = "online", apply_limit: bool = True) -> list[dict]:
     """Execute a read-only SQL query against the LMS database."""
     engine = get_lms_engine(lms_type)
+    
+    if apply_limit:
+        sql = enforce_sql_limit(sql, settings.DATA_LIMIT)
+        
     try:
         with engine.connect() as conn:
             conn.execute(text("SET LOCAL statement_timeout = '30000'"))
             result = conn.execute(text(sql))
             columns = list(result.keys())
             rows = result.fetchall()
-            return [dict(zip(columns, row)) for row in rows]
+            data = [dict(zip(columns, row)) for row in rows]
+            
+            return scrub_results(data)
     except Exception as e:
-        print(f"❌ SQL execution error: {e}")
         raise

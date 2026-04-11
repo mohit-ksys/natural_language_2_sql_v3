@@ -118,10 +118,17 @@ function MainLayout({ currentUser, onLogout, registerSave }) {
   };
 
   const deleteChat = (id) => {
-    const updated = chats.filter(c => c.id !== id);
+    // Soft delete: mark as isDeleted instead of filtering out
+    const updated = chats.map(c => c.id === id ? { ...c, isDeleted: true } : c);
     setChats(updated);
-    if (id === chatIdFromUrl) navigate('/');
-    saveChatsToBackendAsync(updated, id === chatIdFromUrl ? null : chatIdFromUrl);
+    
+    // If the active chat was deleted, navigate back home
+    if (id === chatIdFromUrl) {
+      navigate('/');
+      saveChatsToBackendAsync(updated, null);
+    } else {
+      saveChatsToBackendAsync(updated, chatIdFromUrl);
+    }
   };
 
   if (isLoading) {
@@ -156,7 +163,6 @@ function MainLayout({ currentUser, onLogout, registerSave }) {
         <Routes>
           <Route path="/" element={
             <ChatPage 
-              key="new" 
               chats={chats} setChats={setChats} 
               settings={settings} currentUser={currentUser} 
               registerSave={registerSave}
@@ -167,7 +173,6 @@ function MainLayout({ currentUser, onLogout, registerSave }) {
           } />
           <Route path="c/:chatId" element={
             <ChatPage 
-              key="existing" 
               chats={chats} setChats={setChats} 
               settings={settings} currentUser={currentUser} 
               registerSave={registerSave}

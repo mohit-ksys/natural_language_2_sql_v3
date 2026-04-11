@@ -10,7 +10,7 @@ export default function Dashboard({ onBack }) {
   const [loading, setLoading] = useState(false);
   const [selectedRow, setSelectedRow] = useState(null);
 
-  const [filters, setFilters] = useState({
+  const initialFilters = {
     username: '',
     feedback_type: '',
     has_error: '',
@@ -18,7 +18,9 @@ export default function Dashboard({ onBack }) {
     lms_type: '',
     date_from: '',
     date_to: '',
-  });
+  };
+
+  const [filters, setFilters] = useState(initialFilters);
 
   const loadStats = async (pg=1) => {
         const params = { page: pg, page_size: 10, ...filters };
@@ -49,6 +51,10 @@ export default function Dashboard({ onBack }) {
   const handleFilterSubmit = (e) => {
     e.preventDefault();
     loadLogs(1);
+  };
+
+  const handleClearFilters = () => {
+    setFilters(initialFilters);
   };
 
   return (
@@ -95,7 +101,10 @@ export default function Dashboard({ onBack }) {
         <FilterInput label="Model" value={filters.model} onChange={v => handleFilterChange('model', v)} />
         <FilterInput label="From" type="date" value={filters.date_from} onChange={v => handleFilterChange('date_from', v)} />
         <FilterInput label="To" type="date" value={filters.date_to} onChange={v => handleFilterChange('date_to', v)} />
-        <button type="submit" style={styles.filterBtn}>Apply</button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button type="submit" style={styles.filterBtn}>Apply</button>
+          <button type="button" style={styles.clearBtn} onClick={handleClearFilters}>Clear</button>
+        </div>
       </form>
 
       <p style={styles.resultCount}>{total} total results</p>
@@ -263,6 +272,7 @@ const styles = {
   cards: { display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '32px' },
   filters: { display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end', background: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: '12px', padding: '16px 20px', marginBottom: '16px' },
   filterBtn: { padding: '9px 20px', background: '#4f46e5', border: 'none', color: '#fff', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 600, transition: 'background 0.2s' },
+  clearBtn: { padding: '8px 16px', background: 'transparent', border: '1px solid #222', color: '#94a3b8', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 500, transition: 'all 0.2s' },
   resultCount: { fontSize: '12px', color: '#64748b', marginBottom: '12px', paddingLeft: '4px' },
   table: { width: '100%', borderCollapse: 'collapse' },
   th: { textAlign: 'left', padding: '12px 16px', fontSize: '11px', color: '#64748b', textTransform: 'uppercase', borderBottom: '1px solid #1a1a1a', whiteSpace: 'nowrap', fontWeight: 600, letterSpacing: '0.06em' },

@@ -21,9 +21,8 @@ export default function ChatPage({
   const [msgCounter, setMsgCounter] = useState(0);
   const isNavigatingNewChat = useRef(false);
   
-  // Use a stable requestId for the initial message, but always use chatId as sessionId once available
-  const [initialRequestId] = useState(() => crypto.randomUUID());
-  const sessionId = chatId || initialRequestId;
+  const [tempSessionId, setTempSessionId] = useState(() => crypto.randomUUID());
+  const sessionId = chatId || tempSessionId;
 
   useEffect(() => {
     const targetId = urlId || null;
@@ -35,6 +34,7 @@ export default function ChatPage({
        setOffset(0);
        setHasMore(false);
        setNotFound(false);
+       setTempSessionId(crypto.randomUUID());
        return;
     }
 
@@ -199,18 +199,8 @@ export default function ChatPage({
   };
 
   const handleSendMessage = async (text, isFix = false) => {
-    let chatIdToUse = chatId;
-    
-    // NEW: If this is the start of a new chat, generate the Chat ID RIGHT NOW
-    // to prevent backend foreign key race conditions.
-    if (!chatIdToUse) {
-      chatIdToUse = crypto.randomUUID();
-      setChatId(chatIdToUse);
-      isNavigatingNewChat.current = true;
-    }
-
-    // Unify session_id with the chatId
-    const currentSessionId = chatIdToUse;
+    const currentSessionId = sessionId;
+    const chatIdToUse = chatId; 
     
     if (!chatStarted) setChatStarted(true);
     
@@ -221,15 +211,16 @@ export default function ChatPage({
     if (settings.mcqEnabled && !isFix) {
       setTimeout(async () => {
         try {
-          // Pass the proactively generated chatIdToUse
           const res = await requestMCQs(currentSessionId, text, model, chatIdToUse, lmsType, userMsgId);
           console.log('[MCQ] requestMCQs Response:', res);
           if (res.ok && res.data.questions && res.data.questions.length > 0) {
             
-            // Sync URL if this is a new chat (using our stable ID)
-            if (isNavigatingNewChat.current) {
-              updateChatListWithNewChat(chatIdToUse, null, text);
-              window.history.replaceState(null, '', `/c/${chatIdToUse}`);
+            const newChatId = res.data.chat_id;
+            if (!chatIdToUse && newChatId) {
+              isNavigatingNewChat.current = true;
+              updateChatListWithNewChat(newChatId, null, text);
+              setChatId(newChatId);
+              window.history.replaceState(null, '', `/c/${newChatId}`);
             }
 
             safeSetMessages(prev => [...prev, { 
@@ -239,32 +230,31 @@ export default function ChatPage({
               original_query: text,
               query_id: res.data.query_id,
               model,
-              chatId: newChatId,
+              chatId: newChatId || chatIdToUse,
               loading: false, 
               timestamp: new Date().toISOString()
             }]);
           } else {
-            _directQuery(sessionId, text, chatId, userMsgId);
+            _directQuery(currentSessionId, text, chatIdToUse, userMsgId);
           }
         } catch (e) {
           console.error('[MCQ] requestMCQs failed:', e);
-          _directQuery(sessionId, text, chatId, userMsgId);
+          _directQuery(currentSessionId, text, chatIdToUse, userMsgId);
         }
       }, 500);
     } else {
-      _directQuery(sessionId, text, chatId, userMsgId);
+      _directQuery(currentSessionId, text, chatIdToUse, userMsgId);
     }
   };
 
-  const _directQuery = async (sessionId, text, chatIdToUse, userMsgId) => {
+  const _directQuery = async (currentSessionId, text, chatIdToUse, userMsgId) => {
     try {
       const canAutoRun = settings.autoRunQuery || (currentUser?.role !== 'super_admin' && currentUser?.role !== 'Supervisor');
-      const res = await sendQuery(sessionId, text, model, canAutoRun, chatIdToUse, lmsType, userMsgId);
+      const res = await sendQuery(currentSessionId, text, model, canAutoRun, chatIdToUse, lmsType, userMsgId);
 
       if (res.ok) {
         const { feedback_id, sql, execution_time, answer, chart_type, data, token_usage, session_context_alert, sql_auto_fixed, sql_error, thoughts, chat_id: newChatId } = res.data;
         
-        // Sync URL and state if this is a new chat
         if (!chatIdToUse && newChatId) {
           isNavigatingNewChat.current = true;
           updateChatListWithNewChat(newChatId, null, text);

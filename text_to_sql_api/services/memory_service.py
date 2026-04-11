@@ -361,8 +361,8 @@ def get_session(session_id: str) -> dict:
         engine = get_auth_engine()
         with engine.connect() as conn:
             rows = conn.execute(text("""
-                SELECT content FROM session_turns
-                WHERE session_id = :sid
+                SELECT content FROM conversation_memory
+                WHERE chat_id = :sid
                 ORDER BY created_at_utc DESC LIMIT :max_turns   
             """), {"sid": session_id, "max_turns": settings.SESSION_MAX_TURNS}).fetchall()
 
@@ -382,7 +382,7 @@ def get_session(session_id: str) -> dict:
 
 
 def append_session_turn(session_id: str, user_query: str, generated_sql: str, answer: str, feedback_id: str, user_id: str = None):
-    """Insert a turn into session_turns (keeps last SESSION_MAX_TURNS rows)."""
+    """Insert a turn into conversation_memory (keeps last SESSION_MAX_TURNS rows)."""
     from config.database import get_auth_engine
     now_utc = datetime.now(timezone.utc)
     content = json.dumps({
@@ -398,18 +398,18 @@ def append_session_turn(session_id: str, user_query: str, generated_sql: str, an
             _ensure_session(conn, session_id, user_id)
             
             conn.execute(text("""
-                INSERT INTO session_turns (id, session_id, role, content, created_at_utc, created_at_ist)
+                INSERT INTO conversation_memory (id, chat_id, role, content, created_at_utc, created_at_ist)
                 VALUES (:id, :sid, 'turn', :content, :now, :now AT TIME ZONE 'Asia/Kolkata')
             """), {"id": str(uuid.uuid4()), "sid": session_id, "content": content, "now": now_utc})
 
             # Trim to SESSION_MAX_TURNS — keep last N
             max_turns = settings.SESSION_MAX_TURNS
             conn.execute(text("""
-                DELETE FROM session_turns
-                WHERE session_id = :sid
+                DELETE FROM conversation_memory
+                WHERE chat_id = :sid
                   AND id NOT IN (
-                    SELECT id FROM session_turns
-                    WHERE session_id = :sid
+                    SELECT id FROM conversation_memory
+                    WHERE chat_id = :sid
                     ORDER BY created_at_utc DESC
                     LIMIT :max_turns
                   )
@@ -431,8 +431,8 @@ def update_session_turn(session_id: str, feedback_id: str, new_sql: str, new_ans
         engine = get_auth_engine()
         with engine.connect() as conn:
             rows = conn.execute(text("""
-                SELECT id, content FROM session_turns
-                WHERE session_id = :sid
+                SELECT id, content FROM conversation_memory
+                WHERE chat_id = :sid
                 ORDER BY created_at_utc DESC
                 LIMIT :max_turns
             """), {"sid": session_id, "max_turns": settings.SESSION_MAX_TURNS}).fetchall()
@@ -445,7 +445,7 @@ def update_session_turn(session_id: str, feedback_id: str, new_sql: str, new_ans
                     turn["answer"] = new_answer
                     with engine.begin() as conn:
                         conn.execute(text(
-                            "UPDATE session_turns SET content=:content WHERE id=:id"
+                            "UPDATE conversation_memory SET content=:content WHERE id=:id"
                         ), {"content": json.dumps(turn), "id": row.id})
                     break
             except Exception:

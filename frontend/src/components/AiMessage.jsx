@@ -238,6 +238,7 @@ const AiMessage = React.memo(({ msg, addToast, onFix, onRegen, onUpdate, setting
   const [resultExecTime, setResultExecTime] = useState(execution_time);
   const [resultThoughts, setResultThoughts] = useState(apiThoughts);
   const [savingFix, setSavingFix] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   // Table sorting
   const [sortCol, setSortCol] = useState(null);
@@ -373,7 +374,8 @@ const AiMessage = React.memo(({ msg, addToast, onFix, onRegen, onUpdate, setting
   };
 
   const handleExportExcel = async () => {
-    if (!sql) return;
+    if (!sql || isExporting) return;
+    setIsExporting(true);
     try {
       const fileName = `query_results_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.xlsx`;
       await exportExcel(sql, msg.lms_type, fileName);
@@ -381,6 +383,8 @@ const AiMessage = React.memo(({ msg, addToast, onFix, onRegen, onUpdate, setting
     } catch (err) {
       console.error('Export error:', err);
       addToast(`❌ Export failed: ${err.message}`);
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -662,8 +666,13 @@ const AiMessage = React.memo(({ msg, addToast, onFix, onRegen, onUpdate, setting
                 Show Less
               </button>
             )}
-            <button className="export-excel-btn" onClick={handleExportExcel} title="Export to Excel">
-              ⬇ Excel
+            <button 
+              className={`export-excel-btn ${isExporting ? 'exporting' : ''}`} 
+              onClick={handleExportExcel} 
+              disabled={isExporting}
+              title="Export to Excel"
+            >
+              {isExporting ? '⟳ Preparing...' : '⬇ Excel'}
             </button>
           </div>
 

@@ -52,6 +52,7 @@ class Chat(BaseModel):
     lastMessage: Optional[str] = ''
     createdAt: Optional[str] = None
     isPinned: Optional[bool] = False
+    isDeleted: Optional[bool] = False
 
 
 class SaveChatsRequest(BaseModel):
@@ -69,11 +70,14 @@ def load_chats(current_user: dict = Depends(get_current_user)):
 
     try:
         with engine.connect() as conn:
-            # Fetch all chats for this user from the NEW table
+            # Fetch all chats for this user from the NEW table, filtering out soft-deleted ones
             rows = conn.execute(
-                text("SELECT * FROM chats WHERE user_id = :uid ORDER BY updated_at_utc DESC"),
+                text("SELECT * FROM chats WHERE user_id = :uid AND is_deleted = false ORDER BY updated_at_utc DESC"),
                 {"uid": user_id},
             ).fetchall()
+            
+            # Note: information about which rows were filtered is logged if debug is on
+            # but usually we just return the active ones.
 
             # Fetch last_chat_id
             last_chat_row = conn.execute(
@@ -89,6 +93,7 @@ def load_chats(current_user: dict = Depends(get_current_user)):
                     "title": row.title,
                     "lastMessage": row.last_message,
                     "isPinned": row.is_pinned,
+                    "isDeleted": getattr(row, 'is_deleted', False),
                     "createdAt": row.created_at_utc.isoformat() if row.created_at_utc else None,
                     "messages": []
                 })
@@ -268,12 +273,13 @@ def save_chats(req: SaveChatsRequest, current_user: dict = Depends(get_current_u
             for chat in req.chats:
                 # 2. Upsert into chats table
                 conn.execute(text("""
-                    INSERT INTO chats (id, user_id, title, last_message, is_pinned, updated_at_utc, updated_at_ist)
-                    VALUES (:id, :uid, :title, :last_msg, :pinned, now(), now() AT TIME ZONE 'Asia/Kolkata')
+                    INSERT INTO chats (id, user_id, title, last_message, is_pinned, is_deleted, updated_at_utc, updated_at_ist)
+                    VALUES (:id, :uid, :title, :last_msg, :pinned, :is_deleted, now(), now() AT TIME ZONE 'Asia/Kolkata')
                     ON CONFLICT (id) DO UPDATE SET
                         title = EXCLUDED.title,
                         last_message = EXCLUDED.last_message,
                         is_pinned = EXCLUDED.is_pinned,
+                        is_deleted = EXCLUDED.is_deleted,
                         updated_at_utc = now(),
                         updated_at_ist = now() AT TIME ZONE 'Asia/Kolkata'
                 """), {
@@ -281,7 +287,8 @@ def save_chats(req: SaveChatsRequest, current_user: dict = Depends(get_current_u
                     "uid": user_id,
                     "title": chat.title,
                     "last_msg": chat.lastMessage,
-                    "pinned": chat.isPinned
+                    "pinned": chat.isPinned,
+                    "is_deleted": chat.isDeleted or False
                 })
 
                 # 3. Upsert messages if provided

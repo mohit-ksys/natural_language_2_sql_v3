@@ -316,12 +316,16 @@ def export_excel(req: ExportRequest, current_user: dict = Depends(get_current_us
     """Expert full result set to Excel directly from backend to avoid frontend freezes."""
     try:
         lms_type = _resolve_lms_type(current_user, req.lms_type)
-        results = execute_sql(req.sql, lms_type)
+        results = execute_sql(req.sql, lms_type, apply_limit=False)
         
         if not results:
             raise HTTPException(status_code=404, detail="No data found for export.")
 
         df = pd.DataFrame(results)
+
+        # Excel does not support timezone-aware datetimes. Convert them to timezone-unaware.
+        for col in df.select_dtypes(include=['datetimetz']).columns:
+            df[col] = df[col].dt.tz_localize(None)
         
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -340,6 +344,7 @@ def export_excel(req: ExportRequest, current_user: dict = Depends(get_current_us
         )
     except Exception as e:
         log.error("Deep export failed: %s", e)
+        print(f"❌ Export error: {e}")
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
@@ -373,7 +378,7 @@ def get_latest_students(current_user: dict = Depends(get_current_user)):
     lms_type = _resolve_lms_type(current_user)
     try:
         sql = "SELECT student_name, created_at FROM students ORDER BY created_at DESC LIMIT 10"
-        results = execute_sql(sql, lms_type)
+        results = execute_sql(sql, lms_type, apply_limit=False)
         return {"success": True, "students": results}
     except Exception as e:
         log.error("Failed to fetch latest students: %s", str(e))

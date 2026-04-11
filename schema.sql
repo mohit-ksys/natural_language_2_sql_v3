@@ -83,7 +83,7 @@ CREATE TABLE sessions (
 
 CREATE TABLE session_turns (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  session_id      TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+  chat_id      TEXT REFERENCES sessions(id) ON DELETE CASCADE,
   role            TEXT NOT NULL,    -- 'turn'
   content         TEXT NOT NULL,    -- JSON blob: {user_query, generated_sql, answer, feedback_id}
   created_at_utc  TIMESTAMPTZ DEFAULT now(),
