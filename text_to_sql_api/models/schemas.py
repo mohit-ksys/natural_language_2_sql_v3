@@ -7,7 +7,7 @@ class QueryRequest(BaseModel):
     session_id: str
     chat_id: Optional[str] = None
     model: Optional[str] = None
-    lms_type: Optional[str] = None   # super_admin only; ignored for other roles
+    database_id: Optional[str] = None   # super_admin only; ignored for other roles
     thinking_enabled: bool = False
     thinking_level: str = "high"
     include_thoughts: bool = False
@@ -36,7 +36,7 @@ class ExecuteRequest(BaseModel):
     original_query: Optional[str] = None
     feedback_id: Optional[str] = None
     model: Optional[str] = None
-    lms_type: Optional[str] = None   # super_admin only
+    database_id: Optional[str] = None   # super_admin only
 
 
 class ExecuteResponse(BaseModel):
@@ -107,7 +107,7 @@ class DisambiguateRequest(BaseModel):
     session_id: str
     chat_id: Optional[str] = None
     model: Optional[str] = None
-    lms_type: Optional[str] = None
+    database_id: Optional[str] = None
 
 
 class DisambiguateResponse(BaseModel):

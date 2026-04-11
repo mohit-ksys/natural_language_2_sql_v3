@@ -47,7 +47,7 @@ class CreateUserRequest(BaseModel):
     username: str
     full_name: str
     role: str        # 'admin' | 'analyser' | 'super_admin'
-    lms_type: Optional[str] = None  # 'online' | 'regular' | None
+    database_id: Optional[str] = None  # must be a key in settings.DATABASE_MAP
 
 
 class ResetPasswordResponse(BaseModel):
@@ -65,7 +65,7 @@ def _make_access_token(user: dict) -> str:
         "username": user["username"],
         "full_name": user["full_name"],
         "role": str(user["role"]),
-        "lms_type": str(user["lms_type"]) if user["lms_type"] else None,
+        "database_id": str(user["database_id"]) if user["database_id"] else None,
         "exp": expire,
     }
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
@@ -122,7 +122,7 @@ def login(req: LoginRequest):
     engine = get_auth_engine()
     with engine.connect() as conn:
         row = conn.execute(
-            text("SELECT id, username, hashed_password, full_name, role, lms_type, is_active FROM users WHERE username = :u"),
+            text("SELECT id, username, hashed_password, full_name, role, database_id, is_active FROM users WHERE username = :u"),
             {"u": req.username},
         ).fetchone()
 
@@ -145,7 +145,7 @@ def login(req: LoginRequest):
             "username": user["username"],
             "full_name": user["full_name"],
             "role": str(user["role"]),
-            "lms_type": str(user["lms_type"]) if user["lms_type"] else None,
+            "database_id": str(user["database_id"]) if user["database_id"] else None,
         },
     }
 
@@ -162,7 +162,7 @@ def refresh_token(req: RefreshRequest):
     with engine.connect() as conn:
         row = conn.execute(text("""
             SELECT rt.id, rt.token_hash, rt.expires_at_utc, rt.revoked,
-                   u.id as user_id, u.username, u.full_name, u.role, u.lms_type, u.is_active
+                   u.id as user_id, u.username, u.full_name, u.role, u.database_id, u.is_active
             FROM refresh_tokens rt
             JOIN users u ON u.id = rt.user_id
             WHERE rt.id = :token_id AND rt.revoked = false AND rt.expires_at_utc > now()
@@ -180,7 +180,7 @@ def refresh_token(req: RefreshRequest):
         "username": matched["username"],
         "full_name": matched["full_name"],
         "role": matched["role"],
-        "lms_type": matched["lms_type"],
+        "database_id": matched["database_id"],
     }
     access_token = _make_access_token(user)
     return {"access_token": access_token, "token_type": "bearer"}
@@ -211,8 +211,8 @@ def create_user(req: CreateUserRequest, _: dict = Depends(require_super_admin)):
     """Super admin only — create a new user. Returns plaintext password once."""
     if req.role not in ("super_admin", "admin", "analyser"):
         raise HTTPException(status_code=400, detail="Invalid role.")
-    if req.lms_type and req.lms_type not in ("online", "regular"):
-        raise HTTPException(status_code=400, detail="Invalid lms_type. Use 'online' or 'regular'.")
+    if req.database_id and req.database_id not in settings.VALID_DATABASE_IDS:
+        raise HTTPException(status_code=400, detail=f"Invalid database_id. Valid IDs: {settings.VALID_DATABASE_IDS}")
 
     engine = get_auth_engine()
     with engine.connect() as conn:
@@ -229,15 +229,15 @@ def create_user(req: CreateUserRequest, _: dict = Depends(require_super_admin)):
 
     with engine.begin() as conn:
         conn.execute(text("""
-            INSERT INTO users (id, username, hashed_password, full_name, role, lms_type, is_active, created_at_utc, created_at_ist)
-            VALUES (:id, :username, :hashed, :full_name, :role, :lms_type, true, :now, :now AT TIME ZONE 'Asia/Kolkata')
+            INSERT INTO users (id, username, hashed_password, full_name, role, database_id, is_active, created_at_utc, created_at_ist)
+            VALUES (:id, :username, :hashed, :full_name, :role, :database_id, true, :now, :now AT TIME ZONE 'Asia/Kolkata')
         """), {
             "id": uid,
             "username": req.username,
             "hashed": hashed,
             "full_name": req.full_name,
             "role": req.role,
-            "lms_type": req.lms_type,
+            "database_id": req.database_id,
             "now": now_utc,
         })
 
@@ -246,7 +246,7 @@ def create_user(req: CreateUserRequest, _: dict = Depends(require_super_admin)):
         "username": req.username,
         "password": plain_pw,
         "role": req.role,
-        "lms_type": req.lms_type,
+        "database_id": req.database_id,
     }
 
 
@@ -256,7 +256,7 @@ def list_users(_: dict = Depends(require_super_admin)):
     engine = get_auth_engine()
     with engine.connect() as conn:
         rows = conn.execute(text("""
-            SELECT id, username, full_name, role, lms_type, is_active,
+            SELECT id, username, full_name, role, database_id, is_active,
                    created_at_ist, last_login_at_ist
             FROM users ORDER BY created_at_utc ASC
         """)).fetchall()

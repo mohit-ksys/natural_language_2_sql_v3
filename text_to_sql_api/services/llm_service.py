@@ -151,11 +151,11 @@ def generate_sql(
     thinking_enabled: bool = False,
     thinking_level: str = "high",
     include_thoughts: bool = False,
-    lms_type: str = "online",
+    lms_type: str = "degreefyd_online_lms",
     extra_context: str = "",
 ) -> tuple[str, str]:
     """Returns (sql, thoughts). thoughts is empty unless include_thoughts=True."""
-    knowledge_base = get_knowledge_base_prompt(lms_type=lms_type)
+    knowledge_base = get_knowledge_base_prompt(database_id=lms_type)
 
     from datetime import datetime
     now = datetime.now()
@@ -165,6 +165,7 @@ def generate_sql(
     extra_context_block = f"\n{extra_context}\n" if extra_context else ""
 
     prompt = f"""{knowledge_base}
+{extra_context_block}    
 {learned_rules}
 {session_history}
 
@@ -186,7 +187,7 @@ def generate_sql(
 8. For year-based queries, always use EXTRACT(YEAR FROM CURRENT_DATE) or DATE_TRUNC('year', CURRENT_DATE). NEVER hardcode a numeric year literal.
 9. NEVER use ILIKE on IDs. Always join by name.
 10. Output ONLY raw SQL. No markdown, no comments, no explanation.
-{extra_context_block}
+
 User Question: "{user_query}"
 SQL:"""
 
@@ -247,8 +248,8 @@ Instructions:
     return answer, chart_type, usage
 
 
-def auto_fix_sql(user_query: str, failed_sql: str, error_message: str, model: str = None, lms_type: str = "online") -> str | None:
-    knowledge_base = get_knowledge_base_prompt(lms_type=lms_type)
+def auto_fix_sql(user_query: str, failed_sql: str, error_message: str, model: str = None, lms_type: str = "degreefyd_online_lms") -> str | None:
+    knowledge_base = get_knowledge_base_prompt(database_id=lms_type)
     prompt = f"""{knowledge_base}
 
 ### SQL ERROR TO FIX:

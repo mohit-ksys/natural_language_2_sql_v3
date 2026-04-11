@@ -2,31 +2,31 @@ import pathlib
 from config.settings import settings
 
 
-# Per-lms_type subdirectory config: (kb_filename, few_shot_filename)
+# Per-kb_category subdirectory config: (kb_filename, few_shot_filename)
 KB_CONFIG: dict[str, tuple[str, str]] = {
     "online": ("knowledge_base_online.txt", "few_shot_online.txt"),
     "regular": ("regular_kb.txt", "few_shot_regular.txt"),
 }
 
-# Separate cache per lms_type key
+# Cache keyed by database_id
 _cache: dict[str, str] = {}
 
 
-def reload_knowledge_base(lms_type: str = "online") -> str:
-    """Force-reload the knowledge base for a given lms_type, bypassing cache."""
-    _cache.pop(lms_type, None)
-    return get_knowledge_base_prompt(lms_type=lms_type)
+def reload_knowledge_base(database_id: str = "degreefyd_online_lms") -> str:
+    """Force-reload the knowledge base for a given database_id, bypassing cache."""
+    _cache.pop(database_id, None)
+    return get_knowledge_base_prompt(database_id=database_id)
 
 
-def get_knowledge_base_prompt(lms_type: str = "online", force_reload: bool = False) -> str:
-    """Return the knowledge base prompt for the given lms_type.
+def get_knowledge_base_prompt(database_id: str = "degreefyd_online_lms", force_reload: bool = False) -> str:
+    """Return the knowledge base prompt for the given database_id.
 
-    Reads from knowledge_base/<lms_type>/ subdirectory using the
-    filenames defined in KB_CONFIG.
+    Resolves database_id → kb_category ('online' or 'regular') via settings.DATABASE_MAP,
+    then reads from knowledge_base/<kb_category>/ using the filenames in KB_CONFIG.
     """
     import os
 
-    cache_key = lms_type or "online"
+    cache_key = database_id or "degreefyd_online_lms"
 
     if force_reload or os.environ.get("RELOAD_KB") == "1":
         _cache.pop(cache_key, None)
@@ -34,11 +34,13 @@ def get_knowledge_base_prompt(lms_type: str = "online", force_reload: bool = Fal
     if cache_key in _cache:
         return _cache[cache_key]
 
-    if cache_key not in KB_CONFIG:
-        raise ValueError(f"Unknown lms_type '{cache_key}'. Expected one of: {list(KB_CONFIG)}")
+    kb_category = settings.get_kb_category(cache_key)  # raises ValueError for unknown IDs
 
-    kb_filename, few_shot_filename = KB_CONFIG[cache_key]
-    kb_dir = pathlib.Path(settings.KNOWLEDGE_BASE_DIR) / cache_key
+    if kb_category not in KB_CONFIG:
+        raise ValueError(f"No KB config for category '{kb_category}'. Expected one of: {list(KB_CONFIG)}")
+
+    kb_filename, few_shot_filename = KB_CONFIG[kb_category]
+    kb_dir = pathlib.Path(settings.KNOWLEDGE_BASE_DIR) / kb_category
 
     kb_path = kb_dir / kb_filename
     if not kb_path.exists():

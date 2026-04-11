@@ -19,8 +19,7 @@ def _make_engine(url: str):
 
 
 _auth_engine = None
-_online_engine = None
-_regular_engine = None
+_lms_engines: dict = {}
 
 
 def get_auth_engine():
@@ -30,16 +29,13 @@ def get_auth_engine():
     return _auth_engine
 
 
-def get_lms_engine(lms_type: str):
-    global _online_engine, _regular_engine
-    if lms_type == "online":
-        if _online_engine is None:
-            _online_engine = _make_engine(settings.ONLINE_LMS_URL)
-        return _online_engine
-    else:
-        if _regular_engine is None:
-            _regular_engine = _make_engine(settings.REGULAR_LMS_URL)
-        return _regular_engine
+def get_lms_engine(database_id: str):
+    """Return (and lazily create) a SQLAlchemy engine for the given database_id."""
+    global _lms_engines
+    if database_id not in _lms_engines:
+        url = settings.get_db_url(database_id)
+        _lms_engines[database_id] = _make_engine(url)
+    return _lms_engines[database_id]
 
 
 def test_connection() -> bool:
@@ -53,9 +49,9 @@ def test_connection() -> bool:
         return False
 
 
-def execute_sql(sql: str, lms_type: str = "online") -> list[dict]:
+def execute_sql(sql: str, database_id: str = "degreefyd_online_lms") -> list[dict]:
     """Execute a read-only SQL query against the LMS database."""
-    engine = get_lms_engine(lms_type)
+    engine = get_lms_engine(database_id)
     try:
         with engine.connect() as conn:
             conn.execute(text("SET LOCAL statement_timeout = '30000'"))

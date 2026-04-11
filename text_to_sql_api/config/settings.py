@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     # LMS query DBs
     ONLINE_LMS_URL: str
     REGULAR_LMS_URL: str
+    REGULAR_AMITY_LMS_URL: str = ""
+    REGULAR_CGC_LMS_URL: str = ""
 
     # JWT
     JWT_SECRET_KEY: str
@@ -43,6 +45,50 @@ class Settings(BaseSettings):
 
     SESSION_MAX_TURNS: int = 5
     SESSION_PROMPT_TURNS: int = 5
+
+    # Maps database_id → (settings attribute name for URL, knowledge-base category)
+    # Add new entries here when a new client DB is provisioned.
+    @property
+    def DATABASE_MAP(self) -> dict[str, dict]:
+        return {
+            "degreefyd_online_lms": {
+                "url": self.ONLINE_LMS_URL,
+                "kb_category": "online",
+            },
+            "degreefyd_regular_lms": {
+                "url": self.REGULAR_LMS_URL,
+                "kb_category": "regular",
+            },
+            "degreefyd_regular_amity_lms": {
+                "url": self.REGULAR_AMITY_LMS_URL,
+                "kb_category": "regular",
+            },
+            "degreefyd_regular_cgc_lms": {
+                "url": self.REGULAR_CGC_LMS_URL,
+                "kb_category": "regular",
+            },
+        }
+
+    def get_db_url(self, database_id: str) -> str:
+        """Return the connection URL for a given database_id."""
+        entry = self.DATABASE_MAP.get(database_id)
+        if not entry:
+            raise ValueError(f"Unknown database_id '{database_id}'. Valid IDs: {list(self.DATABASE_MAP)}")
+        url = entry["url"]
+        if not url:
+            raise ValueError(f"No URL configured for database_id '{database_id}'. Set the matching env var.")
+        return url
+
+    def get_kb_category(self, database_id: str) -> str:
+        """Return 'online' or 'regular' for a given database_id."""
+        entry = self.DATABASE_MAP.get(database_id)
+        if not entry:
+            raise ValueError(f"Unknown database_id '{database_id}'. Valid IDs: {list(self.DATABASE_MAP)}")
+        return entry["kb_category"]
+
+    @property
+    def VALID_DATABASE_IDS(self) -> list[str]:
+        return list(self.DATABASE_MAP.keys())
 
 
 settings = Settings()
