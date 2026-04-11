@@ -59,6 +59,9 @@ export default function App() {
   );
 }
 
+import { Select, ConfigProvider, theme as antdTheme, Popconfirm } from 'antd';
+import { QuestionCircleOutlined } from '@ant-design/icons';
+
 function MainLayout({ currentUser, onLogout, registerSave }) {
   const navigate = useNavigate();
   const params = useParams();
@@ -160,30 +163,55 @@ function MainLayout({ currentUser, onLogout, registerSave }) {
   const filteredChats = chats.filter(c => !c.lms_id || c.lms_id === selectedLmsId);
 
   return (
-    <div className="app">
-      <header className="app-navbar">
-        <div className="navbar-logo">GrepSQL AI</div>
-        <div className="navbar-actions">
-           {console.log("Current User Data:", currentUser)}
-           {currentUser?.assigned_lms?.length > 0 && (
-             <div className="lms-selector-container">
-               <select 
-                 className="lms-dropdown"
-                 value={selectedLmsId} 
-                 onChange={(e) => handleLmsChange(e.target.value)}
-               >
-                 {currentUser.assigned_lms.map(lms => (
-                   <option key={lms.id} value={lms.id}>{lms.name}</option>
-                 ))}
-               </select>
-             </div>
-           )}
-           <div className="user-profile">
-             <span className="user-name">{currentUser?.name || currentUser?.full_name}</span>
-             <button onClick={onLogout} className="logout-mini-btn">Logout</button>
-           </div>
-        </div>
-      </header>
+    <ConfigProvider
+      theme={{
+        algorithm: antdTheme.darkAlgorithm,
+        token: {
+          colorPrimary: '#00FFB2',
+          colorBgContainer: '#0a0a0a',
+          colorBorder: '#333333',
+          borderRadius: 10,
+          fontFamily: 'Inter, sans-serif',
+        },
+      }}
+    >
+      <div className="app">
+        <header className="app-navbar">
+          <div className="navbar-logo">GrepSQL AI</div>
+          <div className="navbar-actions">
+            {console.log("Current User Data:", currentUser)}
+            {currentUser?.assigned_lms?.length > 0 && (
+              <div className="lms-selector-container">
+                <Select
+                  showSearch
+                  className="lms-antd-select"
+                  placeholder="Select LMS"
+                  optionFilterProp="label"
+                  value={selectedLmsId}
+                  onChange={handleLmsChange}
+                  dropdownStyle={{ background: '#0a0a0a', border: '1px solid #333' }}
+                  options={currentUser.assigned_lms.map(lms => ({
+                    value: lms.id,
+                    label: lms.name
+                  }))}
+                />
+              </div>
+            )}
+            <div className="user-profile">
+              <span className="user-name">{currentUser?.name || currentUser?.full_name}</span>
+              <Popconfirm
+                title="Sign out"
+                description="Are you sure you want to log out?"
+                onConfirm={onLogout}
+                okText="Yes"
+                cancelText="No"
+                icon={<QuestionCircleOutlined style={{ color: '#ff4d4f' }} />}
+              >
+                <button className="logout-mini-btn">Logout</button>
+              </Popconfirm>
+            </div>
+          </div>
+        </header>
 
       <div className="app-layout">
         <Sidebar
@@ -196,6 +224,7 @@ function MainLayout({ currentUser, onLogout, registerSave }) {
           pinChat={pinChat}
           renameChat={renameChat}
           currentUser={currentUser}
+          onLogout={onLogout}
           onDashboard={canViewDashboard ? () => navigate('/dashboard') : null}
           onAdmin={currentUser?.role === 'super_admin' ? () => setIsAdminOpen(true) : null}
         />
@@ -239,6 +268,7 @@ function MainLayout({ currentUser, onLogout, registerSave }) {
       />
 
       {isAdminOpen && <AdminPanel onClose={() => setIsAdminOpen(false)} />}
-    </div>
+      </div>
+    </ConfigProvider>
   );
 }

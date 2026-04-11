@@ -7,8 +7,9 @@ class QueryRequest(BaseModel):
     session_id: str
     chat_id: Optional[str] = None
     user_msg_id: Optional[str] = None
+    delete_msg_id: Optional[str] = None
     model: Optional[str] = None
-    lms_type: Optional[str] = None   # super_admin only; ignored for other roles
+    lms_type: Optional[str] = None
     thinking_enabled: bool = False
     thinking_level: str = "high"
     include_thoughts: bool = False
@@ -43,7 +44,9 @@ class ExecuteRequest(BaseModel):
     feedback_id: Optional[str] = None
     model: Optional[str] = None
     chat_id: Optional[str] = None
-    lms_type: Optional[str] = None   # super_admin only
+    lms_type: Optional[str] = None
+    user_msg_id: Optional[str] = None
+    delete_msg_id: Optional[str] = None
     thoughts: Optional[str] = None
     lms_id: Optional[str] = None
 
@@ -122,6 +125,7 @@ class DisambiguateRequest(BaseModel):
     session_id: str
     chat_id: Optional[str] = None
     user_msg_id: Optional[str] = None
+    delete_msg_id: Optional[str] = None
     model: Optional[str] = None
     lms_type: Optional[str] = None
     lms_id: Optional[str] = None
@@ -145,6 +149,9 @@ class MCQAnswerRequest(BaseModel):
     model: Optional[str] = None
     execute: bool = False
     lms_id: Optional[str] = None
+    lms_type: Optional[str] = None
+    user_msg_id: Optional[str] = None
+    delete_msg_id: Optional[str] = None
 
 
 
@@ -156,4 +163,7 @@ class EnhancedFeedbackRequest(BaseModel):
     model: Optional[str] = None
     execute: bool = False
     lms_id: Optional[str] = None
+    lms_type: Optional[str] = None
+    user_msg_id: Optional[str] = None
+    delete_msg_id: Optional[str] = None
 

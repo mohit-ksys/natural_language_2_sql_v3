@@ -20,14 +20,14 @@ def generate_mcqs(
     user_query: str,
     session_history: str = "",
     model: str = None,
-    lms_type: str = "online",
+    database_id: str = "degreefyd_online_lms",
 ) -> tuple[list[dict], Optional[str]]:
     """
     Generate exactly 3 MCQ questions to disambiguate the user query.
     Returns (questions_list, error_string_or_None).
     Each question: {question_id, question_text, options: [{label, text}, ...]}
     """
-    knowledge_base = get_knowledge_base_prompt(lms_type=lms_type)
+    knowledge_base = get_knowledge_base_prompt(database_id=database_id)
 
     prompt = f"""{knowledge_base}
 {session_history}

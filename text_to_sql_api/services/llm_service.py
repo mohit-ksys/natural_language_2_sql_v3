@@ -165,10 +165,10 @@ def generate_sql(
     thinking_enabled: bool = False,
     thinking_level: str = "high",
     include_thoughts: bool = False,
-    lms_type: str = "online",
+    database_id: str = "online",
 ) -> tuple[str, str]:
     """Returns (sql, thoughts). thoughts is empty unless include_thoughts=True."""
-    knowledge_base = get_knowledge_base_prompt(lms_type=lms_type)
+    knowledge_base = get_knowledge_base_prompt(database_id=database_id)
 
     from datetime import datetime
     now = datetime.now()
@@ -260,8 +260,9 @@ Instructions:
     return answer, chart_type, thoughts, usage
 
 
-def auto_fix_sql(user_query: str, failed_sql: str, error_message: str, model: str = None, lms_type: str = "online") -> str | None:
-    knowledge_base = get_knowledge_base_prompt(lms_type=lms_type)
+def auto_fix_sql(user_query: str, failed_sql: str, error_message: str, model: str = None, database_id: str = "online") -> str | None:
+    print(f"Attempting to auto-fix SQL for query: {user_query} with error: {error_message}")
+    knowledge_base = get_knowledge_base_prompt(database_id=database_id)
     prompt = f"""{knowledge_base}
 
 ### SQL ERROR TO FIX:
@@ -312,8 +313,9 @@ def regenerate_sql_with_feedback(
     session_history: str = "",
     learned_rules: str = "",
     model: str = None,
+    database_id: str = "degreefyd_online_lms",
 ) -> str:
-    knowledge_base = get_knowledge_base_prompt()
+    knowledge_base = get_knowledge_base_prompt(database_id=database_id)
 
     from datetime import datetime
     now = datetime.now()

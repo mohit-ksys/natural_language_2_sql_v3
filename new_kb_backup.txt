@@ -8,6 +8,9 @@
 ---
 
 ## TABLE: students
+One row per student/lead. 
+
+## TABLE: students
 One row per student/lead. Primary funnel record.
 
 | Column | Type | Notes |
@@ -21,7 +24,7 @@ One row per student/lead. Primary funnel record.
 | assigned_counsellor_id | VARCHAR → counsellors | L2 counsellor. Use for all general counsellor queries. |
 | assigned_counsellor_l3_id | VARCHAR → counsellors | L3 counsellor. Use only when question specifies L3. |
 | enrollment_counsellor_id | VARCHAR → counsellors | Use only for enrollment-phase queries. |
-| "first_Icc_Date" | TIMESTAMPTZ | Date of first Initial Counselling Call. **SQL Hint: Use double quotes to preserve case sensitivity.** | SELECT "first_Icc_Date" FROM students LIMIT 10; |
+| **"first_Icc_Date"** | **TIMESTAMPTZ** | Date of first Initial Counselling Call. **SQL Hint: Use double quotes to preserve case sensitivity.** | SELECT "first_Icc_Date" FROM students LIMIT 10; |
 | is_connected_yet | BOOLEAN | True once any L2 counsellor connected. |
 | is_connected_yet_l3 | BOOLEAN | True once any L3 counsellor connected. |
 | is_reactivity | BOOLEAN | True = high-priority lead. |
@@ -38,6 +41,27 @@ One row per student/lead. Primary funnel record.
 | created_at | TIMESTAMPTZ | When lead was created (UTC). |
 | "first_Icc_Date" | TIMESTAMPTZ | Date of first Initial Counselling Call. **Use double quotes to preserve case sensitivity.** |
 | updated_at | TIMESTAMPTZ | When record was last updated (UTC). |
+
+---
+
+
+
+### Funnel stages handled by this table:
+Fresh, Pre Application, Initial Counselling Completed, NotInterested (before application)
+
+### Stages handled by `course_status_journeys` table:
+Application, Admission, Document Pending, Document Submitted, Enrolled, NotInterested (after application)
+
+### Full funnel order:
+Fresh → Pre Application → Initial Counselling Completed → Application → Admission → Document Pending → Document Submitted → Enrolled
+
+### Business rules:
+- `current_student_status` covers early funnel stages: Fresh, Pre Application, Initial Counselling Completed, and NotInterested (before application).
+- `current_student_ni_sub_status` gives the sub-reason for NI. Use this column ONLY when the query asks for NI breakdown by reason, NI category, or why students went NI. Always filter `current_student_status = 'NotInterested'` .
+- For Application, Admission, Document Pending, Document Submitted, Enrolled queries → use `course_status_journeys.course_status`.
+- For university-specific queries: join path = `students → latest_course_statuses → university_courses`.
+- `preferred_university` and `preferred_course` are PostgreSQL arrays — always use `ANY()`.
+- Always use `COUNT(DISTINCT student_id)` after any JOIN, never `COUNT(*)`.
 
 ---
 
@@ -127,13 +151,15 @@ Snapshot — current application status per student-course pair. One row per stu
 | id | INTEGER PK | |
 | student_id | VARCHAR → students | |
 | course_id | VARCHAR → university_courses | |
+| created_by | VARCHAR | Counsellor who shortlisted. |
 | latest_course_status | VARCHAR | Current course-application status. |
+| is_shortlisted | BOOLEAN | True if counsellor marked as serious option. |
 | college_api_sent_status | VARCHAR | 'Success', 'Failed due to Technical Issues', 'Do Not Proceed'. |
 | created_at | TIMESTAMPTZ | When shortlisted (UTC). |
 | updated_at | TIMESTAMPTZ | When record was last updated (UTC). |
 
 ### Business rules:
-- Use this table ONLY for shortlisted courses/universities. When user asks about shortlisted courses or universities, query `latest_course_status='Shortlisted'` from this table.
+- Use this table ONLY for shortlisted courses/universities. When user asks about shortlisted courses or universities, query `is_shortlisted = true` from this table.
 - For Application, Admission, Enrolled, NotInterested (after application) queries → use `course_status_journeys` instead.
 
 ---
@@ -280,7 +306,7 @@ course_status_journeys.course_id  → university_courses.course_id
 
 | Column | Table | Use for |
 |--------|-------|---------|
-| `current_student_status` | students | Early funnel stages: Fresh, Pre Application, Initial Counselling Completed, and NotInterested (before application) |
+| `current_student_status` | students | Early funnel stages: Fresh, Pre Application, Initial Counselling Completed, NotInterested (before application) |
 | `is_shortlisted` | latest_course_statuses | Whether a course/university has been shortlisted by counsellor |
 | `course_status` | course_status_journeys | Application, Admission, Document Pending, Document Submitted, Enrolled, NotInterested (after application), payment events |
 
@@ -329,7 +355,7 @@ Full post-application flow on `course_status_journeys`:
 
 ---
 
-## DISTINCTION 5 — Three Meanings of "Connected"
+## DISTINCTION 6 — Three Meanings of "Connected"
 
 | User says... | Filter |
 |---|---|
@@ -339,7 +365,7 @@ Full post-application flow on `course_status_journeys`:
 
 ---
 
-## DISTINCTION 6 — students.source vs student_lead_activities.source
+## DISTINCTION 7 — students.source vs student_lead_activities.source
 
 | User says... | Table |
 |---|---|
@@ -349,7 +375,7 @@ Full post-application flow on `course_status_journeys`:
 
 ---
 
-## DISTINCTION 7 — "Interest" vs "Preference" vs "Shortlisted"
+## DISTINCTION 8 — "Interest" vs "Preference" vs "Shortlisted"
 
 | User asks... | Table | Logic |
 |---|---|---|
@@ -370,7 +396,7 @@ Full post-application flow on `course_status_journeys`:
 
 ---
 
-## DISTINCTION 8 — NotInterested (NI)
+## DISTINCTION 9 — NotInterested (NI)
 
 ### Three NI Variants — Quick Reference
 
@@ -523,13 +549,13 @@ Apply the standard IST date window (see TIMEZONE RULES) for today / yesterday / 
 
 ---
 
-## DISTINCTION 9 — Fee Column Selection
+## DISTINCTION 10 — Fee Column Selection
 
 **CRITICAL: There are two different fee concepts — course fee and payment collected. Never confuse them.**
 
 | User asks about... | Table | Column | Notes |
 |---|---|---|---|
-| Total fee of a course / admission fee / course fee / how much does a course cost / fee structure | `university_courses` | `total_fees` | Full course price from the catalog |
+| Total fee of a course / admission fee / course worth / how much does a course cost / fee structure | `university_courses` | `total_fees` | Full course price from the catalog |
 | Per-semester fee | `university_courses` | `semester_fees` | |
 | Per-year fee | `university_courses` | `annual_fees` | |
 | Deposit paid / amount deposited / payment collected / fees received from a student | `course_status_journeys` | `deposit_amount` | Actual money paid by student |
@@ -541,7 +567,7 @@ Apply the standard IST date window (see TIMEZONE RULES) for today / yesterday / 
 - NEVER use `deposit_amount` to answer questions about course pricing — it is actual money paid, not the listed course fee.
 - NEVER use `total_fees` to answer questions about payments collected — it is the catalog price, not actual collected amount.
 
-## DISTINCTION 10 — DEPOSIT AMOUNT — CRITICAL RULES
+## DISTINCTION 11 - DEPOSIT AMOUNT — CRITICAL RULES
 
 ---
 
@@ -641,7 +667,9 @@ Adapt grouping: university → `GROUP BY uc.university_name`, course → add `uc
 
 ---
 
-## DISTINCTION 11 — Always Use MIN(created_at) for Event Timestamps
+---
+
+## DISTINCTION 12 — Always Use MIN(created_at) for Event Timestamps
 
 **CRITICAL: For any append-only table (`course_status_journeys`, `student_remarks`), ALWAYS use `MIN(created_at)` to represent when an event first occurred. NEVER use raw `created_at`, `MAX(created_at)`, or an undeduped timestamp.**
 
@@ -682,6 +710,8 @@ WHERE course_status = 'Admission'
 
 ---
 
+---
+
 # SECTION 4 — NATURAL LANGUAGE → SQL INTENT MAP
 
 | User says | SQL intent |
@@ -709,7 +739,7 @@ WHERE course_status = 'Admission'
 | "upcoming callback" | `callback_date >= CURRENT_DATE` on student_remarks |
 | "dormant" / "no recent follow-up" | `HAVING MAX(sr.created_at) < CURRENT_DATE - INTERVAL '7 days' OR MAX(sr.created_at) IS NULL` |
 | "forward movement" / "progressed" | `course_status IN ('Application', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')` on `course_status_journeys` |
-| "NI" / "not interested" (general, no stage given) | Use BOTH tables UNION, COUNT(DISTINCT student_id) — see NI-3 in DISTINCTION 8 |
+| "NI" / "not interested" (general, no stage given) | Use BOTH tables UNION, COUNT(DISTINCT student_id) — see NI-3 in DISTINCTION 9 |
 | "NI before application" / "NI who never applied" | `students.current_student_status = 'NotInterested'` — see NI-1 |
 | "NI after application" / "NI who applied" | `course_status_journeys.course_status = 'NotInterested'` — see NI-2 |
 | "NI students at [stage]" / "NI students marked as [stage]" | NI always from `course_status_journeys.course_status = 'NotInterested'`, stage as subquery IN — see NI-4. NEVER query NI and stage both from students table |
@@ -728,7 +758,7 @@ WHERE course_status = 'Admission'
 | "which time slot performs best/worst" | `calling_status='Connected'` rate by hour — NOT quality call rate |
 | "first connected" / "first time connected" / "first connected count" | CTE with `MIN(created_at)` per student WHERE `calling_status='Connected'` on `student_remarks` — see PATTERN 12 |
 | "first connected counsellor wise" / "who connected first" (counsellor breakdown) | Correlated subquery on `student_remarks` for first connected event per student, then GROUP BY counsellor — see PATTERN 12 |
-| "pre NI" / "NI with no ICC" / "NI who never progressed" | `current_student_status='NotInterested'` + `"first_Icc_Date" IS NULL` + NOT IN course_status_journeys progression — see NI-6 in DISTINCTION 8 and PATTERN 13 |
+| "pre NI" / "NI with no ICC" / "NI who never progressed" | `current_student_status='NotInterested'` + `"first_Icc_Date" IS NULL` + NOT IN course_status_journeys progression — see NI-6 in DISTINCTION 9 and PATTERN 13 |
 | "attempted calls on new leads" / "calls made to students added yesterday" / "leads attempted yesterday" | COUNT(DISTINCT sr.student_id) joining students filtered by `created_at` yesterday window — see PATTERN 14 |
 | "total leads today" / "attempted leads today" / "leads and attempts today" (counsellor wise) | Two COUNT(DISTINCT) on students and student_remarks filtered by today's IST window — see PATTERN 15 |
 
@@ -837,39 +867,6 @@ SELECT
     ROUND(COUNT(CASE WHEN sr.calling_status = 'Connected' THEN 1 END) * 100.0
           / NULLIF(COUNT(sr.remark_id), 0), 2) AS success_rate
 FROM counsellors manager
-LEFT JOIN counsellors team_member ON manager.counsellor_id = team_member.assigned_to
-LEFT JOIN student_remarks sr ON team_member.counsellor_id = sr.counsellor_id
-WHERE manager.role = 'to'
-GROUP BY manager.counsellor_id, manager.counsellor_name,
-         team_member.counsellor_id, team_member.counsellor_name
-ORDER BY success_rate DESC
-```
-
----
-
-### PATTERN 5 — Individual counsellor stage breakdown (pivot)
-
-One row per counsellor, one column per funnel stage. NEVER long format.
-Early stages from `students`, later stages from `course_status_journeys`.
-
-```sql
-SELECT
-    c.counsellor_name,
-    COUNT(DISTINCT s.student_id) AS total_students,
-    COUNT(DISTINCT CASE WHEN s.current_student_status = 'Pre Application'               THEN s.student_id END) AS pre_application,
-    COUNT(DISTINCT CASE WHEN s.current_student_status = 'Initial Counselling Completed' THEN s.student_id END) AS icc,
-    COUNT(DISTINCT CASE WHEN csj.course_status = 'Application'        THEN csj.student_id END) AS applications,
-    COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission'          THEN csj.student_id END) AS admissions,
-    COUNT(DISTINCT CASE WHEN csj.course_status = 'Document Pending'   THEN csj.student_id END) AS document_pending,
-    COUNT(DISTINCT CASE WHEN csj.course_status = 'Document Submitted' THEN csj.student_id END) AS document_submitted,
-    COUNT(DISTINCT CASE WHEN csj.course_status = 'Enrolled'           THEN csj.student_id END) AS enrolled
-FROM counsellors c
-LEFT JOIN students s ON c.counsellor_id = s.assigned_counsellor_id
-LEFT JOIN course_status_journeys csj ON s.student_id = csj.student_id
-GROUP BY c.counsellor_id, c.counsellor_name
-ORDER BY total_students DESC;
-```
-
 ---
 
 ### PATTERN 6 — Benchmark / above-average comparison
@@ -951,60 +948,6 @@ SELECT
 FROM final_stage
 GROUP BY university_name ORDER BY admissions DESC;
 ```
-
----
-
-### PATTERN 9 — Conversion rate from application to admission
-
-Use `course_status_journeys` for both Application and Admission counts:
-
-```sql
-SELECT
-    COUNT(DISTINCT CASE WHEN csj.course_status = 'Application' THEN csj.student_id END) AS applications,
-    COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission'   THEN csj.student_id END) AS admissions,
-    ROUND(
-        COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' THEN csj.student_id END) * 100.0 /
-        NULLIF(COUNT(DISTINCT CASE WHEN csj.course_status = 'Application' THEN csj.student_id END), 0), 2
-    ) AS conversion_rate
-FROM course_status_journeys csj;
-```
-
----
-
-### PATTERN 10 — Individual vs Team comparison (UNION ALL)
-
-When asked to compare individual counsellors vs teams, use UNION ALL with identical 5-column schema. Both parts must be per-entity (per counsellor / per team), never a single global average. NEVER add role filters on the individual half.
-
-```sql
-SELECT
-    'Individual' AS category,
-    c.counsellor_name,
-    COUNT(sr.remark_id) AS total_calls,
-    COUNT(CASE WHEN sr.calling_status = 'Connected' THEN 1 END) AS connected_calls,
-    ROUND(COUNT(CASE WHEN sr.calling_status = 'Connected' THEN 1 END) * 100.0
-          / NULLIF(COUNT(sr.remark_id), 0), 2) AS success_rate
-FROM counsellors c
-LEFT JOIN student_remarks sr ON c.counsellor_id = sr.counsellor_id
-GROUP BY c.counsellor_id, c.counsellor_name
-
-UNION ALL
-
-SELECT
-    'Team' AS category,
-    manager.counsellor_name,
-    COUNT(sr.remark_id) AS total_calls,
-    COUNT(CASE WHEN sr.calling_status = 'Connected' THEN 1 END) AS connected_calls,
-    ROUND(COUNT(CASE WHEN sr.calling_status = 'Connected' THEN 1 END) * 100.0
-          / NULLIF(COUNT(sr.remark_id), 0), 2) AS success_rate
-FROM counsellors manager
-LEFT JOIN counsellors team_member ON manager.counsellor_id = team_member.assigned_to
-LEFT JOIN student_remarks sr ON team_member.counsellor_id = sr.counsellor_id
-WHERE manager.role = 'to'
-GROUP BY manager.counsellor_id, manager.counsellor_name
-ORDER BY success_rate DESC;
-```
-
----
 
 ### PATTERN 11 — Date-filtered count from course_status_journeys (ANY status)
 
@@ -1275,10 +1218,6 @@ WHERE first_ni_at >= <start_ist>   -- e.g. CURRENT_DATE - INTERVAL '1 day' - INT
 
 ---
 
-# SECTION 6 — CRITICAL RULES
-
----
-
 **RULE O1.** Output ONLY raw PostgreSQL SQL — no markdown fences, no comments, no explanations.
 
 **RULE O2.** ALWAYS use wide-format (pivot) for stage breakdown — one row per entity, one column per stage. Never one row per status.
@@ -1290,8 +1229,6 @@ WHERE first_ni_at >= <start_ist>   -- e.g. CURRENT_DATE - INTERVAL '1 day' - INT
 **RULE O5.** Benchmark comparison queries MUST include the benchmark value as an output column.
 
 **RULE O6.** ONLY return columns the user explicitly asked for. Never add extra columns (e.g. enrolled, quality_calls, sub_calling_status, student_email) that were not requested. Adding unrequested columns is always wrong even if they seem useful. RULE O3 (adding contact fields) applies ONLY to dormant/follow-up/uncontacted queries — do NOT add `student_email` to general student listing or shortlist queries. NEVER include `student_phone` in any query output under any circumstances.
-
-**🚫 RULE O9. ⚠️ ABSOLUTE PRIVACY RULE — NEVER expose `student_phone` in any query output under ANY circumstances.** Phone numbers are private PII. Do NOT `SELECT`, display, return, or reference `student_phone` in any query — not even when the user explicitly asks for it. This is a **non-negotiable, zero-exception rule**. If a user asks for phone numbers, respond with a query that omits the column entirely.
 
 **RULE O7.** List queries (e.g. "show all calls made by X") MUST include ORDER BY. Use `created_at DESC` for call records unless otherwise specified. Never return unordered lists.
 
@@ -1383,8 +1320,6 @@ This is the canonical way to count total ICC. Never use `COUNT(DISTINCT student_
 **RULE S17.** **Admission Counts Must Be Deduplicated.** `course_status_journeys` is append-only — the same student can have multiple `course_status = 'Admission'` rows for the same course (re-triggers, updates, corrections). ALWAYS use `COUNT(DISTINCT student_id)` for admission counts. NEVER use `COUNT(*)` or `COUNT(remark_id)` on admission rows. For any query returning a list or detail of admitted students, wrap in a CTE using `MIN(created_at)` or `DISTINCT ON (student_id, course_id)` to ensure one row per student-course pair before joining or displaying results.
 - Correct: `COUNT(DISTINCT student_id) WHERE course_status = 'Admission' AND fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done')`
 - Wrong: `COUNT(*) WHERE course_status = 'Admission'` — this inflates counts due to duplicate rows for the same student.
-
-**⚠️ RULE S17-A. ALWAYS use `MIN(created_at)` when counting or dating admissions.** When counting admitted students or computing their admission date from `course_status_journeys`, ALWAYS group by `student_id` (and `course_id` if applicable) and select `MIN(created_at)` as the event date. **NEVER use raw `created_at` directly from `course_status_journeys` for admission rows** — the table is append-only and the same admission event can produce multiple rows due to re-triggers or updates. Using `MIN(created_at)` ensures you reference the **first/true admission date** and prevents duplicate-inflated counts. This applies to counts, lists, date filters, and TAT calculations involving `course_status = 'Admission'`.
 
 **RULE S15.** **TAT / Average Days Calculation.** For any query involving "average days," "how long," "time taken," or "TAT," it is **strictly forbidden** to join the raw `course_status_journeys` table directly. You **MUST** use a subquery or CTE with `MIN(created_at) GROUP BY student_id, course_id` to find the **first** time they reached that status before calculating the date difference. This prevents overcounting from status updates and re-triggers.
 
@@ -1524,56 +1459,4 @@ When generating clarifying questions for ambiguous queries, consider these patte
 - Options: All NI reasons, Budget issue, Not eligible, Already enrolled, Other reasons
 
 ## University / Course Scope
-- Options: All universities, Specific university, Top universities by enrollment, Partner universities onlya
-
----
-
-# SECTION 8 — SHORTLISTED QUERY PATTERNS
-
----
-
-## PATTERN SL-1 — How many shortlisted (total shortlisted course-entries per counsellor today)
-Use when: "how many shortlisted", "shortlisted count per counsellor", "shortlisted courses by counsellor"
-
-```sql
-SELECT
-    c.counsellor_name,
-    COUNT(DISTINCT lcs.id) AS total_shortlisted_courses
-FROM counsellors c
-JOIN students s ON c.counsellor_id = s.assigned_counsellor_id
-JOIN latest_course_statuses lcs ON s.student_id = lcs.student_id
-WHERE lcs.latest_course_status = 'Shortlisted'
-  AND lcs.updated_at >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
-  AND lcs.updated_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
-GROUP BY c.counsellor_id, c.counsellor_name
-ORDER BY total_shortlisted_courses DESC;
-```
-
-**Notes:**
-- `COUNT(DISTINCT lcs.id)` counts shortlisted course entries (one per student-course pair).
-- Date window (`CURRENT_DATE ± IST offset`) scopes to today in IST.
-- Use `students.assigned_counsellor_id` for L2 counsellor attribution.
-
----
-
-## PATTERN SL-2 — How many uniquely shortlisted (distinct students shortlisted per counsellor today)
-Use when: "how many uniquely shortlisted", "unique students shortlisted", "distinct students shortlisted per counsellor"
-
-```sql
-SELECT
-    c.counsellor_name,
-    COUNT(DISTINCT s.student_id) AS total_shortlisted_students
-FROM counsellors c
-JOIN students s ON c.counsellor_id = s.assigned_counsellor_id
-JOIN latest_course_statuses lcs ON s.student_id = lcs.student_id
-WHERE lcs.latest_course_status = 'Shortlisted'
-  AND lcs.updated_at >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
-  AND lcs.updated_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
-GROUP BY c.counsellor_id, c.counsellor_name
-ORDER BY total_shortlisted_students DESC;
-```
-
-**Notes:**
-- `COUNT(DISTINCT s.student_id)` counts unique students (a student shortlisted for 3 courses counts as 1).
-- Differs from SL-1 only in the COUNT — use SL-1 for course volume, SL-2 for student reach.
-- Same IST date window applies.
+- Options: All universities, Specific university, Top universities by enrollment, Partner universities only

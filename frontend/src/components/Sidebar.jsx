@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import PropTypes from 'prop-types';
+import { Popconfirm } from 'antd';
+import { QuestionCircleOutlined } from '@ant-design/icons';
 
 export default function Sidebar({ startNewChat, onOpenSettings, chats = [], loadChat, currentChatId, deleteChat, pinChat, renameChat, currentUser, onDashboard, onAdmin, onLogout }) {
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
@@ -274,12 +276,20 @@ export default function Sidebar({ startNewChat, onOpenSettings, chats = [], load
               <span className="footer-icon">⚙</span>
               <span className="footer-text">Settings</span>
             </div>
-            {onLogout && (
-              <div className="footer-item" onClick={onLogout} style={{ color: '#f87171' }}>
+            <Popconfirm
+              title="Sign out"
+              description="Are you sure you want to log out?"
+              onConfirm={onLogout}
+              okText="Yes"
+              cancelText="No"
+              placement="rightBottom"
+              icon={<QuestionCircleOutlined style={{ color: '#ff4d4f' }} />}
+            >
+              <div className="footer-item" style={{ color: '#f87171' }}>
                 <span className="footer-icon">⏏</span>
                 <span className="footer-text">Sign Out</span>
               </div>
-            )}
+            </Popconfirm>
           </div>
         </>
       )}

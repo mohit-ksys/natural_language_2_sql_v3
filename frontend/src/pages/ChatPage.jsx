@@ -234,6 +234,7 @@ export default function ChatPage({
               questions: res.data.questions,
               original_query: text,
               query_id: res.data.query_id,
+              userMsgId: userMsgId, // Preserve the original User Message ID
               model,
               chatId: newChatId || chatIdToUse,
               loading: false, 
@@ -308,15 +309,24 @@ export default function ChatPage({
     try {
       const chatIdToUse = chatId;
       const canAutoRun = settings.autoRunQuery || (currentUser?.role !== 'super_admin' && currentUser?.role !== 'Supervisor');
-      const res = await submitMCQAnswers(queryId, sessionId, answers, model, canAutoRun, chatIdToUse, currentLmsId);
+      
+      let originalUserMsgId = null;
+      const m_pre = messages.find(msg => msg.query_id === queryId);
+      if (m_pre) originalUserMsgId = m_pre.userMsgId || null;
+
+      const res = await submitMCQAnswers(queryId, sessionId, answers, model, canAutoRun, chatIdToUse, currentLmsId, originalUserMsgId);
 
       if (res.ok) {
         const { sql, answer, chart_type, data, execution_time, session_context_alert, sql_auto_fixed, sql_error, thoughts } = res.data;
         
         let originalQuery = '';
+        let originalUserMsgId = null;
         const currentMsgs = messages; // Access snapshot or use safety
         const m = currentMsgs.find(msg => msg.query_id === queryId);
-        if (m) originalQuery = m.original_query || m.userQuery || '';
+        if (m) {
+          originalQuery = m.original_query || m.userQuery || '';
+          originalUserMsgId = m.userMsgId || null;
+        }
 
         const aiMsgId = res.data.feedback_id ? `a-${res.data.feedback_id}` : `a-${queryId}-${Date.now()}`;
         const newAiMsg = {
@@ -332,7 +342,8 @@ export default function ChatPage({
           session_context_alert, 
           sessionId,
           chatId: chatIdToUse,
-          userQuery: originalQuery, 
+          userQuery: originalQuery,
+          userMsgId: originalUserMsgId,
           feedbackId: res.data.feedback_id || '', 
           query_id: queryId,
           token_usage: res.data.token_usage || null,
@@ -372,12 +383,17 @@ export default function ChatPage({
 
     try {
       const canAutoRun = settings.autoRunQuery || (currentUser?.role !== 'super_admin' && currentUser?.role !== 'Supervisor');
-      const res = await sendQuery(sessionId, originalQuery, model, canAutoRun, chatId, lmsType, null, currentLmsId);
+      let originalUserMsgId = null;
+      const m = messages.find(msg => msg.query_id === queryId);
+      if (m) originalUserMsgId = m.userMsgId || null;
+
+      const res = await sendQuery(sessionId, originalQuery, model, canAutoRun, chatId, lmsType, originalUserMsgId, currentLmsId);
 
       if (res.ok) {
-        const { sql, answer, chart_type, data, execution_time, session_context_alert, sql_auto_fixed, sql_error, thoughts } = res.data;
+        const { feedback_id, sql, answer, chart_type, data, execution_time, session_context_alert, sql_auto_fixed, sql_error, thoughts } = res.data;
+        const aiMsgId = `a-${feedback_id}`;
         const newAiMsg = {
-          id: `ai-${Date.now()}`, 
+          id: aiMsgId, 
           type: 'ai', 
           model, 
           isRegen: false, 
@@ -431,12 +447,25 @@ export default function ChatPage({
         res = await sendQuery(sessionId, fixText, model, true, chatId, lmsType, null, lmsId);
       }
       if (res.ok) {
-        const { sql, answer, chart_type, data, execution_time } = res.data;
+        const { feedback_id, sql, answer, chart_type, data, execution_time, token_usage, thoughts } = res.data;
         setMsgCounter(prev => prev + 1);
         safeSetMessages(prev => [...prev, {
-          id: `${chatId}-ai-fix-${Date.now()}`, type: 'ai', model, isRegen: true, sql, answer,
-          chart_type, data, execution_time, sessionId, chatId: chatId, userQuery: fixText, feedbackId: '',
+          id: feedback_id ? `a-${feedback_id}` : `ai-fix-${Date.now()}`, 
+          type: 'ai', 
+          model, 
+          isRegen: true, 
+          sql, 
+          answer,
+          chart_type, 
+          data, 
+          execution_time, 
+          sessionId, 
+          chatId: chatId, 
+          userQuery: fixText, 
+          feedbackId: feedback_id || '',
           query_id: mcqQueryId || undefined,
+          token_usage,
+          thoughts: thoughts || '',
           timestamp: new Date().toISOString(),
         }]);
       } else {
@@ -455,10 +484,23 @@ export default function ChatPage({
       try {
         const res = await sendQuery(sessionId, lastUserMsg.text, model, true, chatId, lmsType, null, currentLmsId);
         if (res.ok) {
-          const { sql, answer, chart_type, data, execution_time } = res.data;
+          const { feedback_id, sql, answer, chart_type, data, execution_time, token_usage, thoughts } = res.data;
           safeSetMessages(prev => [...prev, {
-            id: `${chatId}-ai-regen-${Date.now()}`, type: 'ai', model, isRegen: true, sql, answer,
-            chart_type, data, execution_time, sessionId, chatId: chatId, userQuery: lastUserMsg.text, feedbackId: '',
+            id: feedback_id ? `a-${feedback_id}` : `ai-regen-${Date.now()}`, 
+            type: 'ai', 
+            model, 
+            isRegen: true, 
+            sql, 
+            answer,
+            chart_type, 
+            data, 
+            execution_time, 
+            sessionId, 
+            chatId: chatId, 
+            userQuery: lastUserMsg.text, 
+            feedbackId: feedback_id || '',
+            token_usage,
+            thoughts: thoughts || '',
             timestamp: new Date().toISOString(),
           }]);
         }

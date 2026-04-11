@@ -96,7 +96,7 @@ def save_feedback(
     user_role: str = None,
     user_id: str = None,
     model: str = None,
-    lms_type: str = None,
+    database_id: str = None,
     lms_id: str = None,
     thoughts: str = "",
     is_mcq_answer: bool = False,
@@ -106,6 +106,7 @@ def save_feedback(
     sql_auto_fixed: bool = False,
     sql_error: str = None,
     extra: dict = None,
+    delete_msg_id: str = None,
 ) -> str:
     """Insert a query/response pair into query_logs table and track token usage."""
     from config.database import get_auth_engine
@@ -174,8 +175,8 @@ def save_feedback(
                 "execution_time": execution_time,
                 "error_message": error_message,
                 "model": model,
-                "lms_type": lms_type,
-                "lms_id": lms_id, # Added lms_id
+                "lms_type": database_id,
+                "lms_id": lms_id, 
                 "token_usage": token_usage_json,
                 "chart_type": chart_type,
                 "mcq_data": mcq_data,
@@ -213,10 +214,14 @@ def save_feedback(
                             "lms_id": lms_id,
                             "now": now_utc,
                         })
+
+                    if delete_msg_id:
+                        conn.execute(text("DELETE FROM chat_messages WHERE id = :did"), {"did": delete_msg_id})
+                        log.info("Deleted superseded message ID=%s", delete_msg_id)
                 except Exception as e:
                     log.error("Failed to auto-populate chat entry in save_feedback: %s", e)
 
-            target_msg_id = user_msg_id or (f"a-{feedback_id}" if not is_mcq_answer else f"m-{feedback_id}")
+            target_msg_id = (f"a-{feedback_id}" if not is_mcq_answer else f"m-{feedback_id}")
             
             rich_extra = extra or {}
             if data is not None: rich_extra["data"] = data

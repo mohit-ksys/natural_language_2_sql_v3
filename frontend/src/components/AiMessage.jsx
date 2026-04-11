@@ -288,6 +288,14 @@ const AiMessage = React.memo(({ msg, addToast, onFix, onRegen, onUpdate, setting
   }, [id]);
 
   // SQL undo/redo helpers
+  const validateSql = (s) => {
+    const sanitized = s.toLowerCase().trim();
+    const forbidden = ['drop ', 'delete ', 'update ', 'insert ', 'truncate ', 'alter ', 'create ', 'grant ', 'revoke '];
+    const isSelect = sanitized.startsWith('select') || sanitized.startsWith('with');
+    const hasForbidden = forbidden.some(k => sanitized.includes(k));
+    return isSelect && !hasForbidden;
+  };
+
   const handleSaveEdit = () => {
     setHistoryIdx(sqlHistory.length);
     setSqlHistory([...sqlHistory, editText]);
@@ -378,7 +386,7 @@ const AiMessage = React.memo(({ msg, addToast, onFix, onRegen, onUpdate, setting
     setIsExporting(true);
     try {
       const fileName = `query_results_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.xlsx`;
-      await exportExcel(sql, msg.lms_type, fileName);
+      await exportExcel(sql, lmsId || msg.lms_type, fileName);
       addToast('Full results exported to Excel', 'success');
     } catch (err) {
       console.error('Export error:', err);

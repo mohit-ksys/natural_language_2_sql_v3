@@ -211,8 +211,7 @@ def create_user(req: CreateUserRequest, _: dict = Depends(require_super_admin)):
     """Super admin only — create a new user. Returns plaintext password once."""
     if req.role not in ("super_admin", "admin", "analyser"):
         raise HTTPException(status_code=400, detail="Invalid role.")
-    if req.lms_type and req.lms_type not in ("online", "regular"):
-        raise HTTPException(status_code=400, detail="Invalid lms_type. Use 'online' or 'regular'.")
+    # Allow any registered system type/ID
 
     engine = get_auth_engine()
     with engine.connect() as conn:

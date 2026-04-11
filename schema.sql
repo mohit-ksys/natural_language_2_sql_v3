@@ -2,7 +2,6 @@
 -- Run once on auth DB host. Plain PostgreSQL — no Supabase-specific features.
 
 CREATE TYPE user_role AS ENUM ('super_admin', 'admin', 'analyser');
-CREATE TYPE lms_type AS ENUM ('online', 'regular');
 
 CREATE TABLE users (
   id                TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
@@ -10,7 +9,7 @@ CREATE TABLE users (
   hashed_password   TEXT NOT NULL,
   full_name         TEXT NOT NULL,
   role              user_role NOT NULL DEFAULT 'admin',
-  lms_type          lms_type,               -- NULL for super_admin
+  database_id       TEXT,                   -- e.g. 'degreefyd_regular_lms'; NULL for super_admin
   is_active         BOOLEAN DEFAULT true,
   created_by        TEXT,
   created_at_utc    TIMESTAMPTZ DEFAULT now(),

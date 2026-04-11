@@ -20,17 +20,16 @@ function getCookie(name) {
   return null;
 }
 
-export async function exportExcel(sql, lmsType, fileName) {
-  const token = getAccessToken();
-  const response = await fetch(`${API_BASE}/export-excel`, {
+export async function exportExcel(sql, databaseId, fileName) {
+  const response = await apiFetch(`${API_BASE}/export-excel`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`
     },
     body: JSON.stringify({
       sql,
-      lms_type: lmsType,
+      lms_type: databaseId,
+      lms_id: databaseId,
       filename: fileName
     })
   });
@@ -299,7 +298,7 @@ export async function checkHealth() {
 }
 
 
-export async function sendQuery(sessionId, userQuery, model = 'gemini-3.1-flash-lite-preview', execute = true, chatId = '', lmsType = null, userMsgId = null, lmsId = null) {
+export async function sendQuery(sessionId, userQuery, model = 'gemini-3.1-flash-lite-preview', execute = true, chatId = '', lmsType = null, userMsgId = null, lmsId = null, deleteMsgId = null) {
   try {
     const res = await apiFetch(`${API_BASE}/query`, {
       method: 'POST',
@@ -316,6 +315,7 @@ export async function sendQuery(sessionId, userQuery, model = 'gemini-3.1-flash-
         thinking_enabled: false,
         thinking_level: 'high',
         include_thoughts: false,
+        delete_msg_id: deleteMsgId
       }),
     });
     if (!res.ok) {
@@ -413,7 +413,7 @@ export async function requestMCQs(sessionId, userQuery, model = 'gemini-3.1-flas
   }
 }
 
-export async function submitMCQAnswers(queryId, sessionId, answers, model = 'gemini-3.1-flash-lite-preview', execute = true, chatId = '', lmsId = null) {
+export async function submitMCQAnswers(queryId, sessionId, answers, model = 'gemini-3.1-flash-lite-preview', execute = true, chatId = '', lmsId = null, userMsgId = null) {
   try {
     const res = await apiFetch(`${API_BASE}/answer-mcq`, {
       method: 'POST',
@@ -430,7 +430,7 @@ export async function submitMCQAnswers(queryId, sessionId, answers, model = 'gem
   }
 }
 
-export async function submitEnglishFeedback(queryId, sessionId, feedback, model = 'gemini-3.1-flash-lite-preview', execute = true, chatId = '', lmsId = null) {
+export async function submitEnglishFeedback(queryId, sessionId, feedback, model = 'gemini-3.1-flash-lite-preview', execute = true, chatId = '', lmsId = null, userMsgId = null) {
   try {
     const res = await apiFetch(`${API_BASE}/english-feedback`, {
       method: 'POST',

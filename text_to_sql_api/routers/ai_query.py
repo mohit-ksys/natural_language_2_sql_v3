@@ -63,11 +63,15 @@ def _enforce_query_rate_limit(session_id: str):
             del _QUERY_ACTIVITY[sid]
 
 
-def _resolve_lms_type(current_user: dict, req_lms_type: str = None) -> str:
-    """Super admin uses request body lms_type; others use their user record."""
-    if current_user["role"] == "super_admin":
-        return req_lms_type or "online"
-    return str(current_user["lms_type"]) if current_user["lms_type"] else "online"
+def _resolve_database_id(current_user: dict, req_id: str = None) -> str:
+    """Resolve the target database ID. Prioritizes the requested ID from the frontend."""
+    # 1. Priority: Explicit selection from the UI (req_id)
+    if req_id:
+        return req_id
+
+    # 2. Fallback: User's profile default
+    profile_lms = current_user.get("lms_type") or current_user.get("database_id")
+    return str(profile_lms) if profile_lms else "degreefyd_online_lms"
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -83,7 +87,7 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
     if req.model and req.model not in llm_service.ALLOWED_MODELS:
         raise HTTPException(status_code=400, detail=f"Invalid model. Allowed: {llm_service.ALLOWED_MODELS}")
 
-    lms_type = _resolve_lms_type(current_user, req.lms_type)
+    database_id = _resolve_database_id(current_user, req.lms_id or req.lms_type)
     user_id = str(current_user["id"])
 
     log.info("QUERY user=%s session=%s query=%r model=%s", current_user["username"], req.session_id, req.user_query[:100], req_model)
@@ -102,7 +106,7 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
             thinking_enabled=req.thinking_enabled,
             thinking_level=req.thinking_level,
             include_thoughts=req.include_thoughts,
-            lms_type=lms_type,
+            database_id=database_id,
         )
 
     except Exception as e:
@@ -111,7 +115,7 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
         fid = memory_service.save_feedback(
             session_id=req.session_id, user_query=req.user_query,
             error_message=f"SQL generation failed: {str(e)}",
-            chat_id=req.chat_id or "", user_id=user_id, lms_type=lms_type, model=req_model,
+            chat_id=req.chat_id or "", user_id=user_id, database_id=database_id, model=req_model,
             user_name=current_user.get("full_name"), user_email=current_user.get("email"),
             user_role=current_user.get("role"),
             user_msg_id=req.user_msg_id
@@ -126,7 +130,7 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
         fid = memory_service.save_feedback(
             session_id=req.session_id, user_query=req.user_query, generated_sql=generated_sql,
             error_message="Security block: non-read-only SQL generated.",
-            chat_id=req.chat_id or "", user_id=user_id, lms_type=lms_type, model=req_model,
+            chat_id=req.chat_id or "", user_id=user_id, database_id=database_id, model=req_model,
             user_name=current_user.get("full_name"), user_email=current_user.get("email"),
             user_role=current_user.get("role"),
             user_msg_id=req.user_msg_id
@@ -137,7 +141,6 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
             "sql": generated_sql, "feedback_id": fid,
         })
 
-    chat_id = req.chat_id
     chat_id = req.chat_id
     if not chat_id:
         chat_id = str(uuid.uuid4())
@@ -152,7 +155,7 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
         execution_time=execution_time, 
         chat_id=chat_id,
         user_id=user_id, 
-        lms_type=lms_type, 
+        database_id=database_id, 
         model=req_model,
         user_name=current_user.get("full_name"), 
         user_email=current_user.get("email"),
@@ -163,24 +166,10 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
         lms_id=req.lms_id
     )
 
-    _token_usage = {'model': req_model, **sql_usage} if sql_usage else None
-    return QueryResponse(
-        feedback_id=fid, 
-        session_id=req.session_id, 
-        chat_id=chat_id,
-        sql=generated_sql,
-        execution_time=execution_time, 
-        cached=False, 
-        executed=False,
-        session_context_alert="⚠️ Session context limited to last 5 queries" if should_show_context_alert else None,
-        token_usage=_token_usage, 
-        thoughts=thoughts
-    )
-
     if not req.execute:
         _token_usage = {'model': req_model, **sql_usage} if sql_usage else None
         return QueryResponse(
-            feedback_id=fid, session_id=req.session_id, sql=generated_sql,
+            feedback_id=fid, session_id=req.session_id, chat_id=chat_id, sql=generated_sql,
             execution_time=execution_time, cached=False, executed=False,
             session_context_alert="⚠️ Session context limited to last 5 queries" if should_show_context_alert else None,
             token_usage=_token_usage, thoughts=thoughts
@@ -193,7 +182,7 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
             original_query=req.user_query,
             feedback_id=fid,
             model=req_model,
-            lms_type=lms_type,
+            database_id=database_id,
             chat_id=req.chat_id,
             thoughts=thoughts
         ),
@@ -222,7 +211,7 @@ def execute_query(req: ExecuteRequest, current_user: dict = Depends(get_current_
     if not llm_service.validate_sql(req.sql):
         raise HTTPException(status_code=403, detail="Non-read-only SQL blocked.")
 
-    lms_type = _resolve_lms_type(current_user, req.lms_type)
+    database_id = _resolve_database_id(current_user, req.lms_id or req.lms_type)
     user_id = str(current_user["id"])
     start_time = time.time()
 
@@ -231,15 +220,15 @@ def execute_query(req: ExecuteRequest, current_user: dict = Depends(get_current_
     sql_err_msg = None
 
     try:
-        results = execute_sql(req.sql, lms_type)
+        results = execute_sql(req.sql, database_id)
     except Exception as sql_err:
         original_error = str(sql_err)
         log.warning("SQL execution failed, attempting auto-fix. Error: %s", original_error[:200])
-        fixed_sql = llm_service.auto_fix_sql(req.original_query or req.sql, req.sql, original_error, model=req.model, lms_type=lms_type)
+        fixed_sql = llm_service.auto_fix_sql(req.original_query or req.sql, req.sql, original_error, model=req.model, database_id=database_id)
 
         if fixed_sql and llm_service.validate_sql(fixed_sql):
             try:
-                results = execute_sql(fixed_sql, lms_type)
+                results = execute_sql(fixed_sql, database_id)
                 req.sql = fixed_sql
                 sql_auto_fixed = True
             except Exception as e2:
@@ -278,13 +267,11 @@ def execute_query(req: ExecuteRequest, current_user: dict = Depends(get_current_
             _exec_ans_usage = {}
             _exec_thoughts = ""
 
-    
-
     fid = memory_service.save_feedback(
         session_id=req.session_id, user_query=req.original_query or req.sql, generated_sql=req.sql,
         answer=answer, chart_type=chart_type, data=truncated_results, # Save truncated data to avoid blowing up DB/Memory
         execution_time=execution_time, 
-        chat_id=req.chat_id or "", user_id=user_id, lms_type=lms_type, model=_exec_model,
+        chat_id=req.chat_id or "", user_id=user_id, database_id=database_id, model=_exec_model,
         user_name=current_user.get("full_name"), user_email=current_user.get("email"),
         user_role=current_user.get("role"),
         token_usage=_exec_ans_usage,
@@ -293,7 +280,8 @@ def execute_query(req: ExecuteRequest, current_user: dict = Depends(get_current_
         sql_error=sql_err_msg,
         existing_feedback_id=req.feedback_id,
         lms_id=req.lms_id,
-        extra={"total_rows": total_rows} 
+        extra={"total_rows": total_rows},
+        delete_msg_id=req.delete_msg_id
     )
 
     _exec_token_usage = {'model': _exec_model, **_exec_ans_usage} if _exec_ans_usage else None
@@ -302,13 +290,15 @@ def execute_query(req: ExecuteRequest, current_user: dict = Depends(get_current_
         execution_time=execution_time, feedback_id=fid,
         sql=req.sql, session_id=req.session_id,
         token_usage=_exec_token_usage,
-            thoughts=_exec_thoughts or req.thoughts,
+        thoughts=_exec_thoughts or req.thoughts,
         total_rows=total_rows 
     )
 
 
 class ExportRequest(BaseModel):
     sql: str
+    lms_type: Optional[str] = None
+    lms_id: Optional[str] = None
     lms_type: Optional[str] = None
     filename: Optional[str] = "query_results.xlsx"
 
@@ -317,8 +307,8 @@ class ExportRequest(BaseModel):
 def export_excel(req: ExportRequest, current_user: dict = Depends(get_current_user)):
     """Expert full result set to Excel directly from backend to avoid frontend freezes."""
     try:
-        lms_type = _resolve_lms_type(current_user, req.lms_type)
-        results = execute_sql(req.sql, lms_type, apply_limit=False)
+        database_id = _resolve_database_id(current_user, req.lms_id or req.lms_type)
+        results = execute_sql(req.sql, database_id, apply_limit=False)
         
         if not results:
             raise HTTPException(status_code=404, detail="No data found for export.")
@@ -377,10 +367,10 @@ def get_all_sessions(_: dict = Depends(get_current_user)):
 
 @router.get("/students/latest")
 def get_latest_students(current_user: dict = Depends(get_current_user)):
-    lms_type = _resolve_lms_type(current_user)
+    database_id = _resolve_database_id(current_user)
     try:
         sql = "SELECT student_name, created_at FROM students ORDER BY created_at DESC LIMIT 10"
-        results = execute_sql(sql, lms_type, apply_limit=False)
+        results = execute_sql(sql, database_id, apply_limit=False)
         return {"success": True, "students": results}
     except Exception as e:
         log.error("Failed to fetch latest students: %s", str(e))
@@ -399,12 +389,13 @@ def _validate_model(model: str | None) -> str:
 def _generate_and_respond(
     user_query: str, session_id: str, chat_id: str,
     extra_context: str, req_model: str, execute: bool,
-    start_time: float, lms_type: str, user_id: str,
+    start_time: float, database_id: str, user_id: str,
     current_user: dict,
     mcq_questions: list = None, mcq_answers: list = None,
     actual_llm_query: str = None,
     user_msg_id: str = None,
-    lms_id: str = None
+    lms_id: str = None,
+    delete_msg_id: str = None
 ) -> QueryResponse:
     thoughts = ""
     sql_usage = {}
@@ -425,7 +416,7 @@ def _generate_and_respond(
             session_history=combined_history,
             learned_rules="", 
             model=req_model, 
-            lms_type=lms_type,
+            database_id=database_id,
         )
     except Exception as e:
         traceback.print_exc()
@@ -433,7 +424,7 @@ def _generate_and_respond(
             session_id=session_id, user_query=user_query,
             error_message=f"SQL generation failed: {str(e)}", chat_id=chat_id,
             mcq_questions=mcq_questions, mcq_answers=mcq_answers,
-            user_id=user_id, lms_type=lms_type, model=req_model,
+            user_id=user_id, database_id=database_id, model=req_model,
             user_name=current_user.get("name"), user_email=current_user.get("email"),
         )
         raise HTTPException(status_code=500, detail=f"Failed to generate SQL: {str(e)}")
@@ -443,7 +434,7 @@ def _generate_and_respond(
             session_id=session_id, user_query=user_query, generated_sql=generated_sql,
             error_message="Security block: non-read-only SQL generated.", chat_id=chat_id,
             mcq_questions=mcq_questions, mcq_answers=mcq_answers,
-            user_id=user_id, lms_type=lms_type, model=req_model,
+            user_id=user_id, database_id=database_id, model=req_model,
             user_name=current_user.get("name"), user_email=current_user.get("email"),
         )
         raise HTTPException(status_code=403, detail="Non-read-only SQL generated.")
@@ -462,7 +453,7 @@ def _generate_and_respond(
         mcq_questions=mcq_questions, 
         mcq_answers=mcq_answers,
         user_id=user_id, 
-        lms_type=lms_type, 
+        database_id=database_id, 
         model=req_model,
         user_name=current_user.get("name"), 
         user_email=current_user.get("email"),
@@ -470,7 +461,8 @@ def _generate_and_respond(
         thoughts=thoughts,
         is_mcq_answer=True,
         user_msg_id=user_msg_id,
-        lms_id=lms_id
+        lms_id=lms_id,
+        delete_msg_id=delete_msg_id
     )
 
     if not execute:
@@ -490,7 +482,7 @@ def _generate_and_respond(
             original_query=user_query,
             feedback_id=fid,
             model=req_model,
-            lms_type=lms_type,
+            database_id=database_id,
             chat_id=chat_id,
             thoughts=thoughts,
             lms_id=lms_id
@@ -528,8 +520,8 @@ def disambiguate_query(req: DisambiguateRequest, current_user: dict = Depends(ge
     log.info("DISAMBIGUATE session=%s query=%r", req.session_id, req.user_query[:100])
 
     session_history = memory_service.format_session_for_prompt(req.session_id)
-    lms_type_for_disambig = _resolve_lms_type(current_user, req.lms_type)
-    questions, error = mcq_service.generate_mcqs(req.user_query, session_history, model=req_model, lms_type=lms_type_for_disambig)
+    database_id = _resolve_database_id(current_user, req.lms_id or req.lms_type)
+    questions, error = mcq_service.generate_mcqs(req.user_query, session_history, model=req_model, database_id=database_id)
 
     if error or not questions:
         raise HTTPException(status_code=500, detail=f"Failed to generate MCQs: {error or 'empty response'}")
@@ -560,10 +552,11 @@ def disambiguate_query(req: DisambiguateRequest, current_user: dict = Depends(ge
         "session_id": req.session_id,
         "chat_id": chat_id,
         "user_id": user_id,
-        "lms_type": lms_type_for_disambig,
+        "lms_type": database_id,
         "lms_id": req.lms_id,
         "model": req_model,
-        "user_msg_id": req.user_msg_id
+        "user_msg_id": req.user_msg_id,
+        "mcq_msg_id": mcq_msg_id
     })
 
     return DisambiguateResponse(
@@ -598,7 +591,7 @@ def answer_mcq(req: MCQAnswerRequest, current_user: dict = Depends(get_current_u
     original_query = ctx["original_query"]
     session_id = ctx["session_id"]
     chat_id = req.chat_id or ctx.get("chat_id", "")
-    lms_type = ctx.get("lms_type") or _resolve_lms_type(current_user)
+    database_id = _resolve_database_id(current_user, req.lms_id or ctx.get("lms_id") or ctx.get("lms_type"))
     user_id = str(current_user["id"])
 
     if len(req.answers) != len(questions):
@@ -613,11 +606,12 @@ def answer_mcq(req: MCQAnswerRequest, current_user: dict = Depends(get_current_u
     return _generate_and_respond(
         user_query=original_query, session_id=session_id, chat_id=chat_id,
         extra_context=enhanced_context, req_model=req_model, execute=req.execute,
-        start_time=start_time, lms_type=lms_type, user_id=user_id,
+        start_time=start_time, database_id=database_id, user_id=user_id,
         current_user=current_user,
         mcq_questions=questions, mcq_answers=req.answers,
         user_msg_id=ctx.get("user_msg_id"),
-        lms_id=req.lms_id or ctx.get("lms_id")
+        lms_id=req.lms_id or ctx.get("lms_id"),
+        delete_msg_id=ctx.get("mcq_msg_id")
     )
 
 
@@ -637,7 +631,7 @@ def english_feedback(req: EnhancedFeedbackRequest, current_user: dict = Depends(
     chat_id = req.chat_id or ctx.get("chat_id", "")
     questions = ctx.get("questions")
     answers = ctx.get("answers")
-    lms_type = ctx.get("lms_type") or _resolve_lms_type(current_user)
+    database_id = _resolve_database_id(current_user, req.lms_id or ctx.get("lms_id") or ctx.get("lms_type"))
     user_id = str(current_user["id"])
 
     _enforce_query_rate_limit(session_id)
@@ -649,7 +643,7 @@ def english_feedback(req: EnhancedFeedbackRequest, current_user: dict = Depends(
         user_query=req.feedback,
         session_id=session_id, chat_id=chat_id,
         extra_context=feedback_context, req_model=req_model, execute=req.execute,
-        start_time=start_time, lms_type=lms_type, user_id=user_id,
+        start_time=start_time, database_id=database_id, user_id=user_id,
         current_user=current_user,
         mcq_questions=questions, mcq_answers=answers,
         actual_llm_query=original_query,
