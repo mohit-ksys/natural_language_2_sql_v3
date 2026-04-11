@@ -33,6 +33,7 @@ def get_stats(
     _: dict = Depends(require_admin_or_supervisor),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
+    lms_id: Optional[str] = Query(None),
 ):
     date_from = _parse_date(date_from, "date_from")
     date_to = _parse_date(date_to, "date_to")
@@ -50,6 +51,10 @@ def get_stats(
         conditions.append("ql.created_at_utc <= CAST(:date_to AS timestamptz)")
         params["date_to"] = date_to
 
+    if lms_id:
+        conditions.append("ql.lms_id = :lms_id")
+        params["lms_id"] = lms_id
+
     if conditions:
         where_clause = "WHERE " + " AND ".join(conditions)
     else:
@@ -62,9 +67,10 @@ def get_stats(
             {where_clause}
         """), params).scalar()
 
-        total_all = conn.execute(text("""
-            SELECT COUNT(*) FROM query_logs
-        """)).scalar()
+        total_all = conn.execute(text(f"""
+            SELECT COUNT(*) FROM query_logs ql
+            {f"WHERE ql.lms_id = :lms_id" if lms_id else ""}
+        """), params if lms_id else {}).scalar()
 
         token_stats_24h = conn.execute(text(f"""
             SELECT 
@@ -77,14 +83,16 @@ def get_stats(
             {where_clause}
         """), params).fetchone()
 
-        token_stats_all = conn.execute(text("""
+        token_stats_all = conn.execute(text(f"""
             SELECT 
                 SUM(input_tokens) as in_t,
                 SUM(output_tokens) as out_t,
                 SUM(input_token_cost) as in_c,
                 SUM(output_token_cost) as out_c
-            FROM token_usage_logs
-        """)).fetchone()
+            FROM token_usage_logs tu
+            JOIN query_logs ql ON ql.id = tu.query_id
+            {f"WHERE ql.lms_id = :lms_id" if lms_id else ""}
+        """), params if lms_id else {}).fetchone()
 
         most_active_row = conn.execute(text(f"""
             SELECT ql.user_name as username, COUNT(*) as cnt
@@ -145,6 +153,7 @@ def get_logs(
     lms_type: Optional[str] = Query(None),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
+    lms_id: Optional[str] = Query(None),
 ):
     date_from = _parse_date(date_from, "date_from")
     date_to = _parse_date(date_to, "date_to")
@@ -187,6 +196,10 @@ def get_logs(
     if date_to:
         conditions.append("ql.created_at_utc <= CAST(:date_to AS timestamptz)")
         params["date_to"] = date_to
+
+    if lms_id:
+        conditions.append("ql.lms_id = :lms_id")
+        params["lms_id"] = lms_id
 
     where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 

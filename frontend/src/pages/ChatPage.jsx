@@ -10,7 +10,7 @@ import {
 
 export default function ChatPage({ 
   currentUser, registerSave, chats, setChats, settings,
-  model, setModel, thinkOn, setThinkOn, isInitialLoading
+  model, setModel, thinkOn, setThinkOn, isInitialLoading, lmsId // Added lmsId
 }) {
   const { chatId: urlId } = useParams();
   const navigate = useNavigate();
@@ -54,7 +54,9 @@ export default function ChatPage({
       setHasMore(false);
 
       try {
-        console.log('Fetching messages for chatId:', targetId);
+        console.log('Fetching messages for chatId:', targetId, 'lmsId:', lmsId);
+        // Note: loadChatMessages doesn't strictly need lmsId if chatId is unique,
+        // but it's good for verification in the future.
         const res = await loadChatMessages(targetId, LIMIT, 0);
         console.log('loadChatMessages Response:', res);
         if (isMounted) {
@@ -113,6 +115,9 @@ export default function ChatPage({
   const lmsType = currentUser?.role === 'super_admin'
     ? (settings.lmsTypeOverride || 'online')
     : (currentUser?.lms_type || null);
+  
+  // Use the lmsId prop from App.jsx
+  const currentLmsId = lmsId;
 
   const saveChatsToBackendAsync = (chatsToSave, lastId) => {
     saveChatsToBackend(chatsToSave, lastId).catch(e => console.error('Failed to save chats:', e));
@@ -211,7 +216,7 @@ export default function ChatPage({
     if (settings.mcqEnabled && !isFix) {
       setTimeout(async () => {
         try {
-          const res = await requestMCQs(currentSessionId, text, model, chatIdToUse, lmsType, userMsgId);
+          const res = await requestMCQs(currentSessionId, text, model, chatIdToUse, lmsType, userMsgId, lmsId);
           console.log('[MCQ] requestMCQs Response:', res);
           if (res.ok && res.data.questions && res.data.questions.length > 0) {
             
@@ -250,7 +255,7 @@ export default function ChatPage({
   const _directQuery = async (currentSessionId, text, chatIdToUse, userMsgId) => {
     try {
       const canAutoRun = settings.autoRunQuery || (currentUser?.role !== 'super_admin' && currentUser?.role !== 'Supervisor');
-      const res = await sendQuery(currentSessionId, text, model, canAutoRun, chatIdToUse, lmsType, userMsgId);
+      const res = await sendQuery(currentSessionId, text, model, canAutoRun, chatIdToUse, lmsType, userMsgId, currentLmsId);
 
       if (res.ok) {
         const { feedback_id, sql, execution_time, answer, chart_type, data, token_usage, session_context_alert, sql_auto_fixed, sql_error, thoughts, chat_id: newChatId } = res.data;
@@ -303,7 +308,7 @@ export default function ChatPage({
     try {
       const chatIdToUse = chatId;
       const canAutoRun = settings.autoRunQuery || (currentUser?.role !== 'super_admin' && currentUser?.role !== 'Supervisor');
-      const res = await submitMCQAnswers(queryId, sessionId, answers, model, canAutoRun, chatIdToUse);
+      const res = await submitMCQAnswers(queryId, sessionId, answers, model, canAutoRun, chatIdToUse, currentLmsId);
 
       if (res.ok) {
         const { sql, answer, chart_type, data, execution_time, session_context_alert, sql_auto_fixed, sql_error, thoughts } = res.data;
@@ -367,7 +372,7 @@ export default function ChatPage({
 
     try {
       const canAutoRun = settings.autoRunQuery || (currentUser?.role !== 'super_admin' && currentUser?.role !== 'Supervisor');
-      const res = await sendQuery(sessionId, originalQuery, model, canAutoRun, chatId, lmsType);
+      const res = await sendQuery(sessionId, originalQuery, model, canAutoRun, chatId, lmsType, null, currentLmsId);
 
       if (res.ok) {
         const { sql, answer, chart_type, data, execution_time, session_context_alert, sql_auto_fixed, sql_error, thoughts } = res.data;
@@ -421,9 +426,9 @@ export default function ChatPage({
       let res;
       if (mcqQueryId) {
         const canAutoRun = settings.autoRunQuery || (currentUser?.role !== 'super_admin' && currentUser?.role?.toLowerCase() !== 'supervisor');
-        res = await submitEnglishFeedback(mcqQueryId, sessionId, fixText, model, canAutoRun, chatId);
+        res = await submitEnglishFeedback(mcqQueryId, sessionId, fixText, model, canAutoRun, chatId, lmsId);
       } else {
-        res = await sendQuery(sessionId, fixText, model, true, chatId, lmsType);
+        res = await sendQuery(sessionId, fixText, model, true, chatId, lmsType, null, lmsId);
       }
       if (res.ok) {
         const { sql, answer, chart_type, data, execution_time } = res.data;
@@ -448,7 +453,7 @@ export default function ChatPage({
     
     setTimeout(async () => {
       try {
-        const res = await sendQuery(sessionId, lastUserMsg.text, model, true, chatId, lmsType);
+        const res = await sendQuery(sessionId, lastUserMsg.text, model, true, chatId, lmsType, null, currentLmsId);
         if (res.ok) {
           const { sql, answer, chart_type, data, execution_time } = res.data;
           safeSetMessages(prev => [...prev, {
@@ -517,6 +522,7 @@ export default function ChatPage({
         hasMore={hasMore}
         isFetchingMore={isFetchingMore}
         isMessagesLoading={isMessagesLoading}
+        lmsId={lmsId}
       />
       <InputDock
         onSendMessage={t => handleSendMessage(t, false)}

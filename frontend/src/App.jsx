@@ -4,6 +4,7 @@ import Sidebar from './components/Sidebar';
 import SettingsModal from './components/SettingsModal';
 import AdminPanel from './components/AdminPanel';
 import Login from './pages/Login';
+import SSOLogin from './pages/SSOLogin';
 import Dashboard from './pages/Dashboard';
 import ChatPage from './pages/ChatPage';
 import { 
@@ -37,6 +38,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={!authed ? <Login onLogin={handleLogin} /> : <Navigate to="/" />} />
+      <Route path="/sso-login" element={<SSOLogin onLogin={handleLogin} />} />
       
       {/* Protected Routes wrapped in MainLayout */}
       <Route
@@ -71,6 +73,20 @@ function MainLayout({ currentUser, onLogout, registerSave }) {
   const [model, setModel] = useState('gemini-3.1-flash-lite-preview');
   const [thinkOn, setThinkOn] = useState(false);
 
+  // LMS Selection state
+  const [selectedLmsId, setSelectedLmsId] = useState(() => {
+    return localStorage.getItem('selected_lms_id') || currentUser?.assigned_lms?.[0]?.id || '';
+  });
+
+  const handleLmsChange = (id) => {
+    setSelectedLmsId(id);
+    localStorage.setItem('selected_lms_id', id);
+    // Reload chats for the new LMS
+    initApp(id);
+    // Redirect to New Chat to reset context
+    navigate('/');
+  };
+
   const DEFAULT_SETTINGS = { datahubConnected: false, autoRunQuery: false, hideQuery: false, mcqEnabled: false };
   const [settings, setSettings] = useState(() => {
     try {
@@ -83,21 +99,23 @@ function MainLayout({ currentUser, onLogout, registerSave }) {
   const role = (currentUser?.role || "").toLowerCase();
   const canViewDashboard = role === 'super_admin' || role === 'supervisor';
 
-  useEffect(() => {
-    const initApp = async () => {
-      const healthRes = await checkHealth();
-      setBackendStatus(healthRes.ok ? 'connected' : 'disconnected');
+  const initApp = async (lmsId = selectedLmsId) => {
+    setIsLoading(true);
+    const healthRes = await checkHealth();
+    setBackendStatus(healthRes.ok ? 'connected' : 'disconnected');
 
-      try {
-        const result = await loadChatsFromBackend();
-        if (result.ok && result.chats) {
-          setChats(result.chats);
-        }
-      } catch (e) {
-        console.error('Failed to init chats:', e);
+    try {
+      const result = await loadChatsFromBackend(lmsId);
+      if (result.ok && result.chats) {
+        setChats(result.chats);
       }
-      setIsLoading(false);
-    };
+    } catch (e) {
+      console.error('Failed to init chats:', e);
+    }
+    setIsLoading(false);
+  };
+
+  useEffect(() => {
     initApp();
   }, []);
 
@@ -118,11 +136,8 @@ function MainLayout({ currentUser, onLogout, registerSave }) {
   };
 
   const deleteChat = (id) => {
-    // Soft delete: mark as isDeleted instead of filtering out
     const updated = chats.map(c => c.id === id ? { ...c, isDeleted: true } : c);
     setChats(updated);
-    
-    // If the active chat was deleted, navigate back home
     if (id === chatIdFromUrl) {
       navigate('/');
       saveChatsToBackendAsync(updated, null);
@@ -142,48 +157,77 @@ function MainLayout({ currentUser, onLogout, registerSave }) {
     );
   }
 
+  const filteredChats = chats.filter(c => !c.lms_id || c.lms_id === selectedLmsId);
+
   return (
     <div className="app">
-      <Sidebar
-        startNewChat={() => navigate('/')}
-        onOpenSettings={() => setIsSettingsOpen(true)}
-        chats={chats}
-        loadChat={(id) => navigate(`/c/${id}`)}
-        currentChatId={chatIdFromUrl}
-        deleteChat={deleteChat}
-        pinChat={pinChat}
-        renameChat={renameChat}
-        currentUser={currentUser}
-        onDashboard={canViewDashboard ? () => navigate('/dashboard') : null}
-        onAdmin={currentUser?.role === 'super_admin' ? () => setIsAdminOpen(true) : null}
-        onLogout={onLogout}
-      />
+      <header className="app-navbar">
+        <div className="navbar-logo">GrepSQL AI</div>
+        <div className="navbar-actions">
+           {console.log("Current User Data:", currentUser)}
+           {currentUser?.assigned_lms?.length > 0 && (
+             <div className="lms-selector-container">
+               <select 
+                 className="lms-dropdown"
+                 value={selectedLmsId} 
+                 onChange={(e) => handleLmsChange(e.target.value)}
+               >
+                 {currentUser.assigned_lms.map(lms => (
+                   <option key={lms.id} value={lms.id}>{lms.name}</option>
+                 ))}
+               </select>
+             </div>
+           )}
+           <div className="user-profile">
+             <span className="user-name">{currentUser?.name || currentUser?.full_name}</span>
+             <button onClick={onLogout} className="logout-mini-btn">Logout</button>
+           </div>
+        </div>
+      </header>
 
-      <main className="main">
-        <Routes>
-          <Route path="/" element={
-            <ChatPage 
-              chats={chats} setChats={setChats} 
-              settings={settings} currentUser={currentUser} 
-              registerSave={registerSave}
-              model={model} setModel={setModel}
-              thinkOn={thinkOn} setThinkOn={setThinkOn}
-              isInitialLoading={isLoading}
-            />
-          } />
-          <Route path="c/:chatId" element={
-            <ChatPage 
-              chats={chats} setChats={setChats} 
-              settings={settings} currentUser={currentUser} 
-              registerSave={registerSave}
-              model={model} setModel={setModel}
-              thinkOn={thinkOn} setThinkOn={setThinkOn}
-              isInitialLoading={isLoading}
-            />
-          } />
-          <Route path="dashboard" element={canViewDashboard ? <Dashboard onBack={() => navigate('/')} /> : <Navigate to="/" />} />
-        </Routes>
-      </main>
+      <div className="app-layout">
+        <Sidebar
+          startNewChat={() => navigate('/')}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          chats={filteredChats}
+          loadChat={(id) => navigate(`/c/${id}`)}
+          currentChatId={chatIdFromUrl}
+          deleteChat={deleteChat}
+          pinChat={pinChat}
+          renameChat={renameChat}
+          currentUser={currentUser}
+          onDashboard={canViewDashboard ? () => navigate('/dashboard') : null}
+          onAdmin={currentUser?.role === 'super_admin' ? () => setIsAdminOpen(true) : null}
+        />
+
+        <main className="main">
+          <Routes>
+            <Route path="/" element={
+              <ChatPage 
+                chats={chats} setChats={setChats} 
+                settings={settings} currentUser={currentUser} 
+                registerSave={registerSave}
+                model={model} setModel={setModel}
+                thinkOn={thinkOn} setThinkOn={setThinkOn}
+                isInitialLoading={isLoading}
+                lmsId={selectedLmsId}
+              />
+            } />
+            <Route path="c/:chatId" element={
+              <ChatPage 
+                chats={chats} setChats={setChats} 
+                settings={settings} currentUser={currentUser} 
+                registerSave={registerSave}
+                model={model} setModel={setModel}
+                thinkOn={thinkOn} setThinkOn={setThinkOn}
+                isInitialLoading={isLoading}
+                lmsId={selectedLmsId}
+              />
+            } />
+            <Route path="dashboard" element={canViewDashboard ? <Dashboard lmsId={selectedLmsId} onBack={() => navigate('/')} /> : <Navigate to="/" />} />
+          </Routes>
+        </main>
+      </div>
 
       <SettingsModal
         isOpen={isSettingsOpen}
@@ -198,4 +242,3 @@ function MainLayout({ currentUser, onLogout, registerSave }) {
     </div>
   );
 }
-

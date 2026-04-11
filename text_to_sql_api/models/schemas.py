@@ -13,6 +13,8 @@ class QueryRequest(BaseModel):
     thinking_level: str = "high"
     include_thoughts: bool = False
     execute: bool = False
+    lms_id: Optional[str] = None
+
 
 
 class QueryResponse(BaseModel):
@@ -43,6 +45,8 @@ class ExecuteRequest(BaseModel):
     chat_id: Optional[str] = None
     lms_type: Optional[str] = None   # super_admin only
     thoughts: Optional[str] = None
+    lms_id: Optional[str] = None
+
 
 
 class ExecuteResponse(BaseModel):
@@ -120,6 +124,8 @@ class DisambiguateRequest(BaseModel):
     user_msg_id: Optional[str] = None
     model: Optional[str] = None
     lms_type: Optional[str] = None
+    lms_id: Optional[str] = None
+
 
 
 class DisambiguateResponse(BaseModel):
@@ -138,6 +144,8 @@ class MCQAnswerRequest(BaseModel):
     answers: list[int | str]
     model: Optional[str] = None
     execute: bool = False
+    lms_id: Optional[str] = None
+
 
 
 class EnhancedFeedbackRequest(BaseModel):
@@ -147,3 +155,5 @@ class EnhancedFeedbackRequest(BaseModel):
     feedback: str
     model: Optional[str] = None
     execute: bool = False
+    lms_id: Optional[str] = None
+

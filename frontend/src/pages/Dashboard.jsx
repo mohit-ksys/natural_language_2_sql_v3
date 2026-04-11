@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { fetchDashboardStats, fetchDashboardLogs } from '../services/api';
+import { fetchDashboardStats, fetchDashboardLogs, fetchLMSTargets } from '../services/api';
 
-export default function Dashboard({ onBack }) {
+export default function Dashboard({ onBack, lmsId }) {
   const [stats, setStats] = useState(null);
   const [logs, setLogs] = useState([]);
   const [total, setTotal] = useState(0);
@@ -9,6 +9,7 @@ export default function Dashboard({ onBack }) {
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(false);
   const [selectedRow, setSelectedRow] = useState(null);
+  const [lmsTargets, setLmsTargets] = useState([]);
 
   const initialFilters = {
     username: '',
@@ -16,6 +17,7 @@ export default function Dashboard({ onBack }) {
     has_error: '',
     model: '',
     lms_type: '',
+    lms_id: '',
     date_from: '',
     date_to: '',
   };
@@ -23,7 +25,7 @@ export default function Dashboard({ onBack }) {
   const [filters, setFilters] = useState(initialFilters);
 
   const loadStats = async (pg=1) => {
-        const params = { page: pg, page_size: 10, ...filters };
+    const params = { page: pg, page_size: 10, ...filters };
     const res = await fetchDashboardStats(params);
     if (res.ok) setStats(res.data);
   };
@@ -43,6 +45,14 @@ export default function Dashboard({ onBack }) {
 
   useEffect(() => { loadStats(); }, [loadLogs]);
   useEffect(() => { loadLogs(1); }, [loadLogs]);
+
+  useEffect(() => {
+    const fetchTargets = async () => {
+      const res = await fetchLMSTargets();
+      if (res.ok) setLmsTargets(res.data);
+    };
+    fetchTargets();
+  }, []);
 
   const handleFilterChange = (key, val) => {
     setFilters(f => ({ ...f, [key]: val }));
@@ -96,8 +106,10 @@ export default function Dashboard({ onBack }) {
           options={[['', 'All'], ['logic', 'Logic'], ['sql', 'SQL'], ['english', 'English'], ['any', 'Any']]} />
         <FilterSelect label="Error" value={filters.has_error} onChange={v => handleFilterChange('has_error', v)}
           options={[['', 'All'], ['yes', 'Has Error'], ['no', 'No Error']]} />
-        <FilterSelect label="LMS" value={filters.lms_type} onChange={v => handleFilterChange('lms_type', v)}
+        <FilterSelect label="LMS Type" value={filters.lms_type} onChange={v => handleFilterChange('lms_type', v)}
           options={[['', 'All'], ['online', 'Online'], ['regular', 'Regular']]} />
+        <FilterSelect label="Target LMS" value={filters.lms_id} onChange={v => handleFilterChange('lms_id', v)}
+          options={[['', 'All'], ...lmsTargets.map(t => [t.id, t.lms_name])]} />
         <FilterInput label="Model" value={filters.model} onChange={v => handleFilterChange('model', v)} />
         <FilterInput label="From" type="date" value={filters.date_from} onChange={v => handleFilterChange('date_from', v)} />
         <FilterInput label="To" type="date" value={filters.date_to} onChange={v => handleFilterChange('date_to', v)} />

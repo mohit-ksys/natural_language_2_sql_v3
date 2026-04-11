@@ -7,7 +7,7 @@ const SQL_HINTS = [
   'SELECT ...', 'JOIN tables ...', 'GROUP BY ...', 'WHERE ...', 'WITH cte AS (...)', 'ORDER BY ...', 'HAVING COUNT(...)',
 ];
 
-export default function Thread({ messages, addToast, onFix, onRegen, onUpdate, onSubmitMCQAnswers, onSkipMCQ, settings, currentUser, onLoadMore, hasMore, isFetchingMore, isMessagesLoading }) {
+export default function Thread({ messages, addToast, onFix, onRegen, onUpdate, onSubmitMCQAnswers, onSkipMCQ, settings, currentUser, onLoadMore, hasMore, isFetchingMore, isMessagesLoading, lmsId }) {
   const endRef = useRef(null);
   const convRef = useRef(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -130,6 +130,7 @@ export default function Thread({ messages, addToast, onFix, onRegen, onUpdate, o
                 onUpdate={onUpdate}
                 settings={settings}
                 currentUser={currentUser}
+                lmsId={lmsId}
               />
             );
           }

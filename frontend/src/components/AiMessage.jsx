@@ -198,7 +198,7 @@ function execBarStyle(secs) {
   return { pct, color };
 }
 
-const AiMessage = React.memo(({ msg, addToast, onFix, onRegen, onUpdate, settings, currentUser }) => {
+const AiMessage = React.memo(({ msg, addToast, onFix, onRegen, onUpdate, settings, currentUser, lmsId }) => {
   const { id, model, isRegen, sql: apiSql, answer: apiAnswer, chart_type, data, execution_time,
           session_context_alert, sessionId, chatId: msgChatId, userQuery, feedbackId: msgFeedbackId, token_usage, timestamp,
           query_id: mcqQueryId, sql_auto_fixed, sql_error, thoughts: apiThoughts, lms_type: msgLmsType } = msg;
@@ -341,7 +341,7 @@ const AiMessage = React.memo(({ msg, addToast, onFix, onRegen, onUpdate, setting
     setRunText('⟳ Running...');
     setRunError('');
     try {
-      const res = await executeSql(sql, sessionId, userQuery, msgFeedbackId, lmsType, chatId);
+      const res = await executeSql(sql, sessionId, userQuery, msgFeedbackId, lmsType, chatId, lmsId);
       if (res.ok) {
         const { answer, data: resultRows, execution_time: execTime, thoughts: execThoughts } = res.data;
         setResultData(resultRows);

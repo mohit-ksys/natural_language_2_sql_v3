@@ -53,6 +53,7 @@ class Chat(BaseModel):
     createdAt: Optional[str] = None
     isPinned: Optional[bool] = False
     isDeleted: Optional[bool] = False
+    lms_id: Optional[str] = None
 
 
 class SaveChatsRequest(BaseModel):
@@ -63,22 +64,23 @@ class SaveChatsRequest(BaseModel):
 # ─── Endpoints ───────────────────────────────────────────────────────────────
 
 @router.get("/chats/load")
-def load_chats(current_user: dict = Depends(get_current_user)):
-    """Load chats list (metadata only) for the current user."""
+def load_chats(lms_id: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    """Load chats list (metadata only) for the current user, optionally filtered by LMS."""
     user_id = str(current_user["id"])
     engine = get_auth_engine()
-
     try:
-        with engine.connect() as conn:
-            # Fetch all chats for this user from the NEW table, filtering out soft-deleted ones
-            rows = conn.execute(
-                text("SELECT * FROM chats WHERE user_id = :uid AND is_deleted = false ORDER BY updated_at_utc DESC"),
-                {"uid": user_id},
-            ).fetchall()
+        query = "SELECT * FROM chats WHERE user_id = :uid AND is_deleted = false"
+        params = {"uid": user_id}
+        
+        if lms_id:
+            query += " AND lms_id = :lms_id"
+            params["lms_id"] = lms_id
             
-            # Note: information about which rows were filtered is logged if debug is on
-            # but usually we just return the active ones.
-
+        query += " ORDER BY updated_at_utc DESC"
+        
+        with engine.connect() as conn:
+            rows = conn.execute(text(query), params).fetchall()
+            
             # Fetch last_chat_id
             last_chat_row = conn.execute(
                 text("SELECT last_chat_id FROM user_chats WHERE user_id = :uid"),
@@ -95,10 +97,10 @@ def load_chats(current_user: dict = Depends(get_current_user)):
                     "isPinned": row.is_pinned,
                     "isDeleted": getattr(row, 'is_deleted', False),
                     "createdAt": row.created_at_utc.isoformat() if row.created_at_utc else None,
+                    "lms_id": getattr(row, 'lms_id', None),
                     "messages": []
                 })
         else:
-            # FALLBACK: Try legacy blob storage if NEW table is empty
             with engine.connect() as conn:
                 legacy_row = conn.execute(
                     text("SELECT chats_blob FROM user_chats WHERE user_id = :uid"),
@@ -273,13 +275,14 @@ def save_chats(req: SaveChatsRequest, current_user: dict = Depends(get_current_u
             for chat in req.chats:
                 # 2. Upsert into chats table
                 conn.execute(text("""
-                    INSERT INTO chats (id, user_id, title, last_message, is_pinned, is_deleted, updated_at_utc, updated_at_ist)
-                    VALUES (:id, :uid, :title, :last_msg, :pinned, :is_deleted, now(), now() AT TIME ZONE 'Asia/Kolkata')
+                    INSERT INTO chats (id, user_id, title, last_message, is_pinned, is_deleted, lms_id, updated_at_utc, updated_at_ist)
+                    VALUES (:id, :uid, :title, :last_msg, :pinned, :is_deleted, :lms_id, now(), now() AT TIME ZONE 'Asia/Kolkata')
                     ON CONFLICT (id) DO UPDATE SET
                         title = EXCLUDED.title,
                         last_message = EXCLUDED.last_message,
                         is_pinned = EXCLUDED.is_pinned,
                         is_deleted = EXCLUDED.is_deleted,
+                        lms_id = COALESCE(EXCLUDED.lms_id, chats.lms_id),
                         updated_at_utc = now(),
                         updated_at_ist = now() AT TIME ZONE 'Asia/Kolkata'
                 """), {
@@ -288,7 +291,8 @@ def save_chats(req: SaveChatsRequest, current_user: dict = Depends(get_current_u
                     "title": chat.title,
                     "last_msg": chat.lastMessage,
                     "pinned": chat.isPinned,
-                    "is_deleted": chat.isDeleted or False
+                    "is_deleted": chat.isDeleted or False,
+                    "lms_id": getattr(chat, 'lms_id', None)
                 })
 
                 # 3. Upsert messages if provided
@@ -309,11 +313,11 @@ def save_chats(req: SaveChatsRequest, current_user: dict = Depends(get_current_u
                             INSERT INTO chat_messages (
                                 id, chat_id, type, text, is_fix, is_regenerate, sql, answer, 
                                 chart_type, execution_time, model, session_id, user_query, 
-                                feedback_id, token_usage, error, extra, created_at_utc, created_at_ist
+                                feedback_id, token_usage, error, extra, lms_id, created_at_utc, created_at_ist
                             ) VALUES (
                                 :id, :chat_id, :type, :text, :is_fix, :is_regenerate, :sql, :answer,
                                 :chart_type, :execution_time, :model, :session_id, :user_query,
-                                :feedback_id, CAST(:token_usage AS jsonb), :error, CAST(:extra AS jsonb),
+                                :feedback_id, CAST(:token_usage AS jsonb), :error, CAST(:extra AS jsonb), :lms_id,
                                 COALESCE(:ts, now()), COALESCE(:ts, now()) AT TIME ZONE 'Asia/Kolkata'
                             )
                             ON CONFLICT (id) DO UPDATE SET
@@ -344,6 +348,7 @@ def save_chats(req: SaveChatsRequest, current_user: dict = Depends(get_current_u
                             "feedback_id": m.feedbackId,
                             "token_usage": json.dumps(m.token_usage) if m.token_usage else None,
                             "error": m.error,
+                            "lms_id": getattr(m, 'lms_id', None) or getattr(chat, 'lms_id', None),
                             "extra": json.dumps(extra) if extra else None,
                             "ts": m.timestamp
                         })

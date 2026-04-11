@@ -97,6 +97,7 @@ def save_feedback(
     user_id: str = None,
     model: str = None,
     lms_type: str = None,
+    lms_id: str = None,
     thoughts: str = "",
     is_mcq_answer: bool = False,
     user_msg_id: str = None,
@@ -143,12 +144,12 @@ def save_feedback(
             conn.execute(text("""
                 INSERT INTO query_logs (
                     id, user_id, user_name, user_email, user_role, session_id, chat_id, user_query, generated_sql,
-                    answer, execution_time, error_message, model, lms_type,
+                    answer, execution_time, error_message, model, lms_type, lms_id,
                     token_usage, chart_type, mcq_data,
                     created_at_utc, created_at_ist
                 ) VALUES (
                     :id, :user_id, :user_name, :user_email, :user_role, :session_id, :chat_id, :user_query, :generated_sql,
-                    :answer, :execution_time, :error_message, :model, :lms_type,
+                    :answer, :execution_time, :error_message, :model, :lms_type, :lms_id,
                     CAST(:token_usage AS jsonb), :chart_type, CAST(:mcq_data AS jsonb),
                     :now, :now AT TIME ZONE 'Asia/Kolkata'
                 )
@@ -174,6 +175,7 @@ def save_feedback(
                 "error_message": error_message,
                 "model": model,
                 "lms_type": lms_type,
+                "lms_id": lms_id, # Added lms_id
                 "token_usage": token_usage_json,
                 "chart_type": chart_type,
                 "mcq_data": mcq_data,
@@ -183,29 +185,32 @@ def save_feedback(
             if chat_id:
                 try:
                     conn.execute(text("""
-                        INSERT INTO chats (id, user_id, title, last_message, updated_at_utc, updated_at_ist)
-                        VALUES (:id, :uid, 'New Chat', :last_msg, :now, :now AT TIME ZONE 'Asia/Kolkata')
+                        INSERT INTO chats (id, user_id, title, last_message, lms_id, updated_at_utc, updated_at_ist)
+                        VALUES (:id, :uid, 'New Chat', :last_msg, :lms_id, :now, :now AT TIME ZONE 'Asia/Kolkata')
                         ON CONFLICT (id) DO UPDATE SET
                             last_message = EXCLUDED.last_message,
+                            lms_id = COALESCE(EXCLUDED.lms_id, chats.lms_id),
                             updated_at_utc = now(),
                             updated_at_ist = now() AT TIME ZONE 'Asia/Kolkata'
                     """), {
                         "id": chat_id,
                         "uid": user_id,
                         "last_msg": (answer[:50] if answer else user_query[:50]),
+                        "lms_id": lms_id,
                         "now": now_utc,
                     })
 
                     if not existing_feedback_id:
                         final_user_msg_id = user_msg_id or f"u-{uuid.uuid4()}"
                         conn.execute(text("""
-                            INSERT INTO chat_messages (id, chat_id, type, text, created_at_utc, created_at_ist)
-                            VALUES (:id, :cid, 'user', :text, :now, :now AT TIME ZONE 'Asia/Kolkata')
-                            ON CONFLICT (id) DO UPDATE SET text = EXCLUDED.text
+                            INSERT INTO chat_messages (id, chat_id, type, text, lms_id, created_at_utc, created_at_ist)
+                            VALUES (:id, :cid, 'user', :text, :lms_id, :now, :now AT TIME ZONE 'Asia/Kolkata')
+                            ON CONFLICT (id) DO UPDATE SET text = EXCLUDED.text, lms_id = COALESCE(EXCLUDED.lms_id, chat_messages.lms_id)
                         """), {
                             "id": final_user_msg_id,
                             "cid": chat_id,
                             "text": user_query,
+                            "lms_id": lms_id,
                             "now": now_utc,
                         })
                 except Exception as e:
@@ -222,11 +227,11 @@ def save_feedback(
                 INSERT INTO chat_messages (
                     id, chat_id, type, text, sql, answer, chart_type, execution_time, 
                     model, session_id, user_query, feedback_id, token_usage, 
-                    sql_auto_fixed, error, extra, created_at_utc, created_at_ist
+                    sql_auto_fixed, error, lms_id, extra, created_at_utc, created_at_ist
                 ) VALUES (
                     :id, :cid, :type, :text, :sql, :ans, :chart, :etime,
                     :model, :sid, :q, :fid, CAST(:tokens AS jsonb),
-                    :saf, :err, CAST(:extra AS jsonb), :now, :now AT TIME ZONE 'Asia/Kolkata'
+                    :saf, :err, :lms_id, CAST(:extra AS jsonb), :now, :now AT TIME ZONE 'Asia/Kolkata'
                 )
                 ON CONFLICT (id) DO UPDATE SET
                     sql = EXCLUDED.sql,
@@ -253,6 +258,7 @@ def save_feedback(
                 "tokens": token_usage_json,
                 "saf": sql_auto_fixed,
                 "err": sql_error or error_message,
+                "lms_id": lms_id,
                 "extra": json.dumps(rich_extra, default=str),
                 "now": now_utc
             })
@@ -475,7 +481,7 @@ def format_session_for_prompt(session_id: str) -> str:
     return "\n".join(lines)
 
 
-def save_mcq_step(chat_id: str, session_id: str, query_id: str, user_query: str, questions: list, model: str, user_id: str = None, msg_id: str = None, user_msg_id: str = None):
+def save_mcq_step(chat_id: str, session_id: str, query_id: str, user_query: str, questions: list, model: str, user_id: str = None, msg_id: str = None, user_msg_id: str = None, lms_id: str = None):
     """Save the MCQ generation step to chat_messages so it persists on refresh."""
     from config.database import get_auth_engine
     if not chat_id:
@@ -489,24 +495,26 @@ def save_mcq_step(chat_id: str, session_id: str, query_id: str, user_query: str,
             if chat_id:
                 chat_title = (user_query[:50] + '...') if len(user_query) > 50 else user_query
                 conn.execute(text("""
-                    INSERT INTO chats (id, user_id, title, last_message, created_at_utc, updated_at_utc)
-                    VALUES (:id, :uid, :title, :msg, :now, :now)
-                    ON CONFLICT (id) DO NOTHING
+                    INSERT INTO chats (id, user_id, title, last_message, lms_id, created_at_utc, updated_at_utc)
+                    VALUES (:id, :uid, :title, :msg, :lms_id, :now, :now)
+                    ON CONFLICT (id) DO UPDATE SET 
+                        lms_id = COALESCE(EXCLUDED.lms_id, chats.lms_id),
+                        updated_at_utc = EXCLUDED.updated_at_utc
                 """), {
                     "id": chat_id,
                     "uid": user_id,
                     "title": chat_title,
                     "msg": user_query,
+                    "lms_id": lms_id,
                     "now": now_utc
                 })
 
-            # 1. Save User Question
             final_user_msg_id = user_msg_id or f"u-{uuid.uuid4()}"
             conn.execute(text("""
-                INSERT INTO chat_messages (id, chat_id, type, text, created_at_utc, created_at_ist)
-                VALUES (:id, :cid, 'user', :text, :now, :now AT TIME ZONE 'Asia/Kolkata')
-                ON CONFLICT (id) DO UPDATE SET text = EXCLUDED.text
-            """), {"id": final_user_msg_id, "cid": chat_id, "text": user_query, "now": now_utc})
+                INSERT INTO chat_messages (id, chat_id, type, text, lms_id, created_at_utc, created_at_ist)
+                VALUES (:id, :cid, 'user', :text, :lms_id, :now, :now AT TIME ZONE 'Asia/Kolkata')
+                ON CONFLICT (id) DO UPDATE SET text = EXCLUDED.text, lms_id = COALESCE(EXCLUDED.lms_id, chat_messages.lms_id)
+            """), {"id": final_user_msg_id, "cid": chat_id, "text": user_query, "lms_id": lms_id, "now": now_utc})
 
             mcq_msg_id = msg_id or f"m-{query_id}"
             extra = {
@@ -518,12 +526,13 @@ def save_mcq_step(chat_id: str, session_id: str, query_id: str, user_query: str,
                 "model": model
             }
             conn.execute(text("""
-                INSERT INTO chat_messages (id, chat_id, type, text, extra, model, session_id, user_query, created_at_utc, created_at_ist)
-                VALUES (:id, :cid, 'mcq', :text, CAST(:extra AS jsonb), :model, :sid, :q, :now, :now AT TIME ZONE 'Asia/Kolkata')
+                INSERT INTO chat_messages (id, chat_id, type, text, extra, model, session_id, user_query, lms_id, created_at_utc, created_at_ist)
+                VALUES (:id, :cid, 'mcq', :text, CAST(:extra AS jsonb), :model, :sid, :q, :lms_id, :now, :now AT TIME ZONE 'Asia/Kolkata')
                 ON CONFLICT (id) DO UPDATE SET
                     text = EXCLUDED.text,
                     extra = EXCLUDED.extra,
-                    model = EXCLUDED.model
+                    model = EXCLUDED.model,
+                    lms_id = COALESCE(EXCLUDED.lms_id, chat_messages.lms_id)
             """), {
                 "id": mcq_msg_id,
                 "cid": chat_id,
@@ -532,6 +541,7 @@ def save_mcq_step(chat_id: str, session_id: str, query_id: str, user_query: str,
                 "model": model,
                 "sid": session_id,
                 "q": user_query,
+                "lms_id": lms_id,
                 "now": now_utc
             })
             log.info("Saved MCQ step to chat_messages chat=%s qid=%s", chat_id, query_id)

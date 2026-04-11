@@ -160,6 +160,7 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
         token_usage=sql_usage,
         thoughts=thoughts,
         user_msg_id=req.user_msg_id,
+        lms_id=req.lms_id
     )
 
     _token_usage = {'model': req_model, **sql_usage} if sql_usage else None
@@ -291,6 +292,7 @@ def execute_query(req: ExecuteRequest, current_user: dict = Depends(get_current_
         sql_auto_fixed=sql_auto_fixed,
         sql_error=sql_err_msg,
         existing_feedback_id=req.feedback_id,
+        lms_id=req.lms_id,
         extra={"total_rows": total_rows} 
     )
 
@@ -401,7 +403,8 @@ def _generate_and_respond(
     current_user: dict,
     mcq_questions: list = None, mcq_answers: list = None,
     actual_llm_query: str = None,
-    user_msg_id: str = None
+    user_msg_id: str = None,
+    lms_id: str = None
 ) -> QueryResponse:
     thoughts = ""
     sql_usage = {}
@@ -467,6 +470,7 @@ def _generate_and_respond(
         thoughts=thoughts,
         is_mcq_answer=True,
         user_msg_id=user_msg_id,
+        lms_id=lms_id
     )
 
     if not execute:
@@ -488,7 +492,8 @@ def _generate_and_respond(
             model=req_model,
             lms_type=lms_type,
             chat_id=chat_id,
-            thoughts=thoughts
+            thoughts=thoughts,
+            lms_id=lms_id
         ),
         current_user=current_user
     )
@@ -535,7 +540,6 @@ def disambiguate_query(req: DisambiguateRequest, current_user: dict = Depends(ge
         chat_id = str(uuid.uuid4())
         log.info("Generating new Chat ID (Disambiguate): %s", chat_id)
     
-    # Persistence: Save MCQ step to chat_messages so it survives refresh
     mcq_msg_id = f"m-{uuid.uuid4()}"
     memory_service.save_mcq_step(
         chat_id=chat_id, 
@@ -546,7 +550,8 @@ def disambiguate_query(req: DisambiguateRequest, current_user: dict = Depends(ge
         model=req_model,
         user_id=user_id,
         msg_id=mcq_msg_id,
-        user_msg_id=req.user_msg_id
+        user_msg_id=req.user_msg_id,
+        lms_id=req.lms_id
     )
 
     memory_service.store_query_context(query_id, {
@@ -556,6 +561,7 @@ def disambiguate_query(req: DisambiguateRequest, current_user: dict = Depends(ge
         "chat_id": chat_id,
         "user_id": user_id,
         "lms_type": lms_type_for_disambig,
+        "lms_id": req.lms_id,
         "model": req_model,
         "user_msg_id": req.user_msg_id
     })
@@ -610,7 +616,8 @@ def answer_mcq(req: MCQAnswerRequest, current_user: dict = Depends(get_current_u
         start_time=start_time, lms_type=lms_type, user_id=user_id,
         current_user=current_user,
         mcq_questions=questions, mcq_answers=req.answers,
-        user_msg_id=ctx.get("user_msg_id")
+        user_msg_id=ctx.get("user_msg_id"),
+        lms_id=req.lms_id or ctx.get("lms_id")
     )
 
 
@@ -646,5 +653,6 @@ def english_feedback(req: EnhancedFeedbackRequest, current_user: dict = Depends(
         current_user=current_user,
         mcq_questions=questions, mcq_answers=answers,
         actual_llm_query=original_query,
-        user_msg_id=ctx.get("user_msg_id")
+        user_msg_id=ctx.get("user_msg_id"),
+        lms_id=req.lms_id or ctx.get("lms_id")
     )
