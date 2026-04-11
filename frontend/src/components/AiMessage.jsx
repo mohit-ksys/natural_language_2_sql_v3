@@ -279,7 +279,19 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings, cur
   }, [id]);
 
   // SQL undo/redo helpers
+  const validateSql = (s) => {
+    const sanitized = s.toLowerCase().trim();
+    const forbidden = ['drop ', 'delete ', 'update ', 'insert ', 'truncate ', 'alter ', 'create ', 'grant ', 'revoke '];
+    const isSelect = sanitized.startsWith('select') || sanitized.startsWith('with');
+    const hasForbidden = forbidden.some(k => sanitized.includes(k));
+    return isSelect && !hasForbidden;
+  };
+
   const handleSaveEdit = () => {
+    if (!validateSql(editText)) {
+      addToast('Only SELECT / WITH queries are allowed.', 'error');
+      return;
+    }
     const newHistory = sqlHistory.slice(0, historyIdx + 1).concat([editText]);
     setSqlHistory(newHistory);
     setHistoryIdx(newHistory.length - 1);
