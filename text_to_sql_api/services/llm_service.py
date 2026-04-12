@@ -17,6 +17,20 @@ _MODEL_LOCK = threading.Lock()
 
 ALLOWED_MODELS = settings.ALLOWED_MODELS
 
+# Dummy costs per 1M tokens in USD
+COST_PER_1M_TOKENS = {
+    "gemini-3.1-pro-preview": {"input": 1.25, "output": 5.00},
+    "gemini-3.1-flash-lite-preview": {"input": 0.075, "output": 0.30},
+    "gemini-3-flash-preview": {"input": 0.075, "output": 0.30},
+}
+
+def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> tuple[float, float]:
+    """Returns (input_cost, output_cost) in USD."""
+    costs = COST_PER_1M_TOKENS.get(model, COST_PER_1M_TOKENS["gemini-3-flash-preview"])
+    input_cost = (input_tokens / 1_000_000) * costs["input"]
+    output_cost = (output_tokens / 1_000_000) * costs["output"]
+    return round(input_cost, 10), round(output_cost, 10)
+
 
 def _call_llm(
     prompt: str,
@@ -202,7 +216,7 @@ SQL:"""
     return _clean_sql(raw), thoughts, usage
 
 
-def generate_answer(user_query: str, data: list[dict], model: str = None) -> tuple[str, str]:
+def generate_answer(user_query: str, data: list[dict], total_rows: int = None, model: str = None, include_thoughts: bool = True) -> tuple[str, str, str, dict]:
     import json
     from datetime import datetime, timezone, timedelta
     IST = timezone(timedelta(hours=5, minutes=30))
@@ -215,6 +229,11 @@ Current date and time: {current_date}
 User Question: "{user_query}"
 Database Result:
 {data_str}
+
+### IMPORTANT CONTEXT:
+- Total rows found in database: {total_rows if total_rows is not None else len(data)}
+- Rows provided for analysis: {len(data)} (this is a preview only)
+{f"- NOTE: Only the first {len(data)} rows are shown below, but the database has {total_rows} records. Please mention this in your summary." if total_rows and total_rows > len(data) else ""}
 
 ### DATABASE SCHEMA CONTEXT (for interpretation only):
 - students: Primary table for lead information — student_id, names, contact details, early funnel stages (Fresh, Pre Application, ICC), assigned_counsellor_id to link students to their L2 owners.
@@ -237,7 +256,7 @@ Instructions:
    Answer: [Your Answer]
    Chart: [Suggested Chart Type — one of: Bar Chart, Pie Chart, Line Chart, Stat Card, Table]"""
 
-    raw, _, usage = _call_llm(prompt, model_name=model, temperature=0.7)
+    raw, thoughts, usage = _call_llm(prompt, model_name=model, temperature=0.7, include_thoughts=include_thoughts)
 
     import re
     answer_match = re.search(r"Answer:\s*([\s\S]*?)(?=Chart:|$)", raw, re.IGNORECASE)
@@ -245,7 +264,7 @@ Instructions:
 
     answer = answer_match.group(1).strip() if answer_match else raw.strip()
     chart_type = chart_match.group(1).strip() if chart_match else "Stat Card"
-    return answer, chart_type, usage
+    return answer, chart_type, thoughts, usage
 
 
 def auto_fix_sql(user_query: str, failed_sql: str, error_message: str, model: str = None, lms_type: str = "degreefyd_online_lms") -> str | None:

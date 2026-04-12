@@ -1,6 +1,6 @@
 CREATE TABLE chats (
   id              TEXT PRIMARY KEY,           -- frontend chat id
-  user_id         UUID REFERENCES users(id) ON DELETE CASCADE,
+  user_id         TEXT,
   title           TEXT,
   last_message    TEXT,
   is_pinned       BOOLEAN DEFAULT false,
@@ -16,7 +16,7 @@ CREATE TABLE chat_messages (
   type            TEXT NOT NULL,
   text            TEXT,
   is_fix          BOOLEAN DEFAULT false,
-  is_regen        BOOLEAN DEFAULT false,
+  is_regenerate        BOOLEAN DEFAULT false,
   sql             TEXT,
   answer          TEXT,
   chart_type      TEXT,
@@ -28,8 +28,8 @@ CREATE TABLE chat_messages (
   token_usage     JSONB,
   error           TEXT,
   extra           JSONB,                      -- for any extra frontend fields (MCQ etc.)
-  timestamp_utc   TIMESTAMPTZ DEFAULT now(),
-  timestamp_ist   TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')
+  created_at_utc   TIMESTAMPTZ DEFAULT now(),
+  created_at_ist   TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')
 );
 
 CREATE INDEX idx_chats_user_id ON chats(user_id);
@@ -43,12 +43,10 @@ python
 SELECT c.*, cm.* FROM chats c
 LEFT JOIN chat_messages cm ON cm.chat_id = c.id
 WHERE c.user_id = :uid
-ORDER BY c.updated_at_utc DESC, cm.timestamp_utc ASC
+ORDER BY c.updated_at_utc DESC, cm.created_at_utc ASC
 Then reconstruct the same {chats: [...], lastChatId: ...} shape in Python so the frontend API contract stays identical.
 
 POST /chats/save — instead of one upsert, do:
 
 Upsert each Chat → chats table
 For each chat, delete-and-reinsert its messages into chat_messages (or upsert by message id)
-
-

@@ -3,8 +3,13 @@ import threading
 import time
 import traceback
 import uuid
+from datetime import datetime, timezone
+from typing import Optional, List
 
+import io
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 
 from auth.dependencies import get_current_user
 from config.database import execute_sql
@@ -24,7 +29,9 @@ from models.schemas import (
     QueryResponse,
     SessionsResponse,
 )
+from pydantic import BaseModel
 from services import llm_service, mcq_service, memory_service
+from config.settings import settings
 
 log = logging.getLogger("text2sql")
 
@@ -107,8 +114,8 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
             chat_id=req.chat_id or "", user_id=user_id, lms_type=database_id, model=req_model,
             user_name=current_user.get("full_name"), user_email=current_user.get("email"),
             user_role=current_user.get("role"),
+            user_msg_id=req.user_msg_id
         )
-
 
         _emsg = str(e)
         if "429" in _emsg or "RESOURCE_EXHAUSTED" in _emsg:
@@ -122,12 +129,20 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
             chat_id=req.chat_id or "", user_id=user_id, lms_type=database_id, model=req_model,
             user_name=current_user.get("full_name"), user_email=current_user.get("email"),
             user_role=current_user.get("role"),
+            user_msg_id=req.user_msg_id
         )
 
         raise HTTPException(status_code=403, detail={
             "message": "Generated SQL is not read-only. Operation blocked.",
             "sql": generated_sql, "feedback_id": fid,
         })
+
+    chat_id = req.chat_id
+    chat_id = req.chat_id
+    if not chat_id:
+        chat_id = str(uuid.uuid4())
+        log.warning("Frontend did not provide chat_id. Falling back to generated ID: %s", chat_id)
+        req.session_id = chat_id
 
     execution_time = round(time.time() - start_time, 3)
     fid = memory_service.save_feedback(
@@ -136,8 +151,25 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
         user_id=user_id, lms_type=database_id, model=req_model,
         user_name=current_user.get("full_name"), user_email=current_user.get("email"),
         user_role=current_user.get("role"),
+        token_usage=sql_usage,
+        thoughts=thoughts,
+        user_msg_id=req.user_msg_id,
+        lms_id=req.lms_id
     )
 
+    _token_usage = {'model': req_model, **sql_usage} if sql_usage else None
+    return QueryResponse(
+        feedback_id=fid, 
+        session_id=req.session_id, 
+        chat_id=chat_id,
+        sql=generated_sql,
+        execution_time=execution_time, 
+        cached=False, 
+        executed=False,
+        session_context_alert="⚠️ Session context limited to last 5 queries" if should_show_context_alert else None,
+        token_usage=_token_usage, 
+        thoughts=thoughts
+    )
 
     if not req.execute:
         _token_usage = {'model': req_model, **sql_usage} if sql_usage else None
@@ -145,7 +177,7 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
             feedback_id=fid, session_id=req.session_id, sql=generated_sql,
             execution_time=execution_time, cached=False, executed=False,
             session_context_alert="⚠️ Session context limited to last 5 queries" if should_show_context_alert else None,
-            token_usage=_token_usage,
+            token_usage=_token_usage, thoughts=thoughts
         )
 
     results = []
@@ -222,12 +254,18 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
     memory_service.update_session_turn(req.session_id, fid, generated_sql, answer)
 
     return QueryResponse(
-        feedback_id=fid, session_id=req.session_id, sql=generated_sql,
-        answer=answer, chart_type=chart_type, data=results,
-        execution_time=execution_time, cached=False, executed=True,
-        sql_auto_fixed=sql_auto_fixed,
-        session_context_alert="⚠️ Session context limited to last 5 queries" if should_show_context_alert else None,
-        token_usage=_token_usage,
+        feedback_id=res.feedback_id,
+        session_id=res.session_id,
+        sql=res.sql,
+        answer=res.answer,
+        chart_type=res.chart_type,
+        data=res.data,
+        execution_time=res.execution_time,
+        cached=False,
+        executed=True,
+        token_usage=res.token_usage,
+        thoughts=res.thoughts,
+        session_context_alert="⚠️ Session context limited to last 5 queries" if should_show_context_alert else None
     )
 
 
@@ -240,29 +278,128 @@ def execute_query(req: ExecuteRequest, current_user: dict = Depends(get_current_
     user_id = str(current_user["id"])
     start_time = time.time()
 
+    results = []
+    sql_auto_fixed = False
+    sql_err_msg = None
+
     try:
         results = execute_sql(req.sql, database_id)
     except Exception as sql_err:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"SQL execution failed: {str(sql_err)}")
+        original_error = str(sql_err)
+        log.warning("SQL execution failed, attempting auto-fix. Error: %s", original_error[:200])
+        fixed_sql = llm_service.auto_fix_sql(req.original_query or req.sql, req.sql, original_error, model=req.model, lms_type=lms_type)
+
+        if fixed_sql and llm_service.validate_sql(fixed_sql):
+            try:
+                results = execute_sql(fixed_sql, lms_type)
+                req.sql = fixed_sql
+                sql_auto_fixed = True
+            except Exception as e2:
+                sql_err_msg = str(e2)
+        else:
+            sql_err_msg = original_error
 
     execution_time = round(time.time() - start_time, 3)
     _exec_model = req.model or llm_service.get_active_model()
     _exec_ans_usage = {}
-    try:
-        answer, chart_type, _exec_ans_usage = llm_service.generate_answer(
-            req.original_query or req.sql, results, model=_exec_model,
-        )
-    except Exception:
-        answer = f"Query returned {len(results)} rows."
+    _exec_thoughts = ""
+    
+    if sql_err_msg:
+        answer = f"The query failed with an error: `{sql_err_msg}`. You can try refining your question."
         chart_type = "Table"
+        total_rows = len(results)
+        truncated_results = results[:settings.DATA_LIMIT]
+    else:
+        try:
+            total_rows = len(results)
+            truncated_results = results[:settings.DATA_LIMIT]
+            
+            answer, chart_type, _exec_thoughts, _exec_ans_usage = llm_service.generate_answer(
+                user_query=req.original_query,
+                data=truncated_results,
+                total_rows=total_rows,
+                model=_exec_model
+            )
+        except Exception as e:
+            import traceback
+            log.error("Failed to generate answer from results: %s\n%s", e, traceback.format_exc())
+            answer = f"The query was successful ({len(results)} rows), but I failed to generate a summary."
+            chart_type = "Table"
+            truncated_results = results[:500]
+            total_rows = len(results)
+            _exec_ans_usage = {}
+            _exec_thoughts = ""
+
+    
+
+    fid = memory_service.save_feedback(
+        session_id=req.session_id, user_query=req.original_query or req.sql, generated_sql=req.sql,
+        answer=answer, chart_type=chart_type, data=truncated_results, # Save truncated data to avoid blowing up DB/Memory
+        execution_time=execution_time, 
+        chat_id=req.chat_id or "", user_id=user_id, lms_type=lms_type, model=_exec_model,
+        user_name=current_user.get("full_name"), user_email=current_user.get("email"),
+        user_role=current_user.get("role"),
+        token_usage=_exec_ans_usage,
+        thoughts=_exec_thoughts or req.thoughts,
+        sql_auto_fixed=sql_auto_fixed,
+        sql_error=sql_err_msg,
+        existing_feedback_id=req.feedback_id,
+        lms_id=req.lms_id,
+        extra={"total_rows": total_rows} 
+    )
 
     _exec_token_usage = {'model': _exec_model, **_exec_ans_usage} if _exec_ans_usage else None
     return ExecuteResponse(
-        answer=answer, chart_type=chart_type, data=results,
-        execution_time=execution_time, feedback_id=req.feedback_id,
+        answer=answer, chart_type=chart_type, data=truncated_results,
+        execution_time=execution_time, feedback_id=fid,
+        sql=req.sql, session_id=req.session_id,
         token_usage=_exec_token_usage,
+            thoughts=_exec_thoughts or req.thoughts,
+        total_rows=total_rows 
     )
+
+
+class ExportRequest(BaseModel):
+    sql: str
+    lms_type: Optional[str] = None
+    filename: Optional[str] = "query_results.xlsx"
+
+
+@router.post("/export-excel")
+def export_excel(req: ExportRequest, current_user: dict = Depends(get_current_user)):
+    """Expert full result set to Excel directly from backend to avoid frontend freezes."""
+    try:
+        lms_type = _resolve_lms_type(current_user, req.lms_type)
+        results = execute_sql(req.sql, lms_type, apply_limit=False)
+        
+        if not results:
+            raise HTTPException(status_code=404, detail="No data found for export.")
+
+        df = pd.DataFrame(results)
+
+        # Excel does not support timezone-aware datetimes. Convert them to timezone-unaware.
+        for col in df.select_dtypes(include=['datetimetz']).columns:
+            df[col] = df[col].dt.tz_localize(None)
+        
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Results')
+        
+        output.seek(0)
+        
+        headers = {
+            'Content-Disposition': f'attachment; filename="{req.filename}"'
+        }
+        
+        return StreamingResponse(
+            output, 
+            headers=headers, 
+            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    except Exception as e:
+        log.error("Deep export failed: %s", e)
+        print(f"❌ Export error: {e}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
 @router.get("/history", response_model=HistoryResponse)
@@ -322,9 +459,15 @@ def _generate_and_respond(
     database_id: str,
     user_id: str,
     current_user: dict,
-    mcq_questions: list = None,
-    mcq_answers: list = None,
+    mcq_questions: list = None, mcq_answers: list = None,
+    actual_llm_query: str = None,
+    user_msg_id: str = None,
+    lms_id: str = None
 ) -> QueryResponse:
+    thoughts = ""
+    sql_usage = {}
+    actual_query = actual_llm_query or user_query
+    
     session_history = memory_service.format_session_for_prompt(session_id)
     session = memory_service.get_session(session_id)
     turns_count = len(session.get("turns", []))
@@ -345,10 +488,6 @@ def _generate_and_respond(
             user_id=user_id, lms_type=database_id, model=req_model,
             user_name=current_user.get("name"), user_email=current_user.get("email"),
         )
-
-        _emsg = str(e)
-        if "429" in _emsg or "RESOURCE_EXHAUSTED" in _emsg:
-            raise HTTPException(status_code=429, detail="LLM quota exhausted. Please wait and retry.")
         raise HTTPException(status_code=500, detail=f"Failed to generate SQL: {str(e)}")
 
     if not llm_service.validate_sql(generated_sql):
@@ -359,10 +498,11 @@ def _generate_and_respond(
             user_id=user_id, lms_type=database_id, model=req_model,
             user_name=current_user.get("name"), user_email=current_user.get("email"),
         )
-        raise HTTPException(status_code=403, detail={
-            "message": "Generated SQL is not read-only. Operation blocked.",
-            "sql": generated_sql, "feedback_id": fid,
-        })
+        raise HTTPException(status_code=403, detail="Non-read-only SQL generated.")
+
+    if not chat_id:
+        chat_id = str(uuid.uuid4())
+        log.info("Generating new Chat ID (MCQ context): %s", chat_id)
 
     execution_time = round(time.time() - start_time, 3)
     fid = memory_service.save_feedback(
@@ -371,15 +511,20 @@ def _generate_and_respond(
         mcq_questions=mcq_questions, mcq_answers=mcq_answers,
         user_id=user_id, lms_type=database_id, model=req_model,
         user_name=current_user.get("name"), user_email=current_user.get("email"),
+        token_usage=sql_usage,
+        thoughts=thoughts,
+        is_mcq_answer=True,
+        user_msg_id=user_msg_id,
+        lms_id=lms_id
     )
 
     if not execute:
         _token_usage = {'model': req_model, **sql_usage} if sql_usage else None
         return QueryResponse(
-            feedback_id=fid, session_id=session_id, sql=generated_sql,
+            feedback_id=fid, session_id=session_id, chat_id=chat_id, sql=generated_sql,
             execution_time=execution_time, cached=False, executed=False,
             session_context_alert="⚠️ Session context limited to last 5 queries" if should_show_context_alert else None,
-            token_usage=_token_usage,
+            token_usage=_token_usage, thoughts=thoughts
         )
 
     results = []
@@ -452,12 +597,19 @@ def _generate_and_respond(
     memory_service.update_session_turn(session_id, fid, generated_sql, answer)
 
     return QueryResponse(
-        feedback_id=fid, session_id=session_id, sql=generated_sql,
-        answer=answer, chart_type=chart_type, data=results,
-        execution_time=round(time.time() - start_time, 3), cached=False, executed=True,
-        sql_auto_fixed=sql_auto_fixed,
-        session_context_alert="⚠️ Session context limited to last 5 queries" if should_show_context_alert else None,
-        token_usage=_token_usage,
+        feedback_id=res.feedback_id,
+        session_id=res.session_id,
+        chat_id=chat_id,
+        sql=res.sql,
+        answer=res.answer,
+        chart_type=res.chart_type,
+        data=res.data,
+        execution_time=res.execution_time,
+        cached=False,
+        executed=True,
+        token_usage=res.token_usage,
+        thoughts=res.thoughts,
+        session_context_alert="⚠️ Session context limited to last 5 queries" if should_show_context_alert else None
     )
 
 
@@ -469,7 +621,7 @@ def disambiguate_query(req: DisambiguateRequest, current_user: dict = Depends(ge
         raise HTTPException(status_code=403, detail="Counsellors do not have access to SQL disambiguation.")
         
     req_model = _validate_model(req.model)
-
+    user_id = str(current_user["id"])
 
     log.info("DISAMBIGUATE session=%s query=%r", req.session_id, req.user_query[:100])
 
@@ -481,6 +633,25 @@ def disambiguate_query(req: DisambiguateRequest, current_user: dict = Depends(ge
         raise HTTPException(status_code=500, detail=f"Failed to generate MCQs: {error or 'empty response'}")
 
     query_id = str(uuid.uuid4())
+    chat_id = req.chat_id
+    if not chat_id:
+        chat_id = str(uuid.uuid4())
+        log.info("Generating new Chat ID (Disambiguate): %s", chat_id)
+    
+    mcq_msg_id = f"m-{uuid.uuid4()}"
+    memory_service.save_mcq_step(
+        chat_id=chat_id, 
+        session_id=req.session_id, 
+        query_id=query_id, 
+        user_query=req.user_query, 
+        questions=questions, 
+        model=req_model,
+        user_id=user_id,
+        msg_id=mcq_msg_id,
+        user_msg_id=req.user_msg_id,
+        lms_id=req.lms_id
+    )
+
     memory_service.store_query_context(query_id, {
         "original_query": req.user_query,
         "questions": questions,
@@ -493,6 +664,8 @@ def disambiguate_query(req: DisambiguateRequest, current_user: dict = Depends(ge
     return DisambiguateResponse(
         query_id=query_id,
         session_id=req.session_id,
+        chat_id=chat_id,
+        mcq_msg_id=mcq_msg_id,
         questions=[
             MCQQuestion(
                 question_id=q["question_id"],
@@ -517,7 +690,6 @@ def answer_mcq(req: MCQAnswerRequest, current_user: dict = Depends(get_current_u
         raise HTTPException(status_code=403, detail="Counsellors do not have access to SQL-based MCQ answering.")
 
     questions = ctx["questions"]
-
     original_query = ctx["original_query"]
     session_id = ctx["session_id"]
     chat_id = req.chat_id or ctx.get("chat_id", "")
@@ -539,6 +711,8 @@ def answer_mcq(req: MCQAnswerRequest, current_user: dict = Depends(get_current_u
         start_time=start_time, database_id=database_id, user_id=user_id,
         current_user=current_user,
         mcq_questions=questions, mcq_answers=req.answers,
+        user_msg_id=ctx.get("user_msg_id"),
+        lms_id=req.lms_id or ctx.get("lms_id")
     )
 
 
@@ -554,7 +728,6 @@ def english_feedback(req: EnhancedFeedbackRequest, current_user: dict = Depends(
         raise HTTPException(status_code=403, detail="Counsellors do not have access to SQL-based feedback.")
 
     original_query = ctx["original_query"]
-
     session_id = ctx["session_id"]
     chat_id = req.chat_id or ctx.get("chat_id", "")
     questions = ctx.get("questions")
@@ -568,8 +741,13 @@ def english_feedback(req: EnhancedFeedbackRequest, current_user: dict = Depends(
     feedback_context = mcq_service.build_feedback_context(original_query, questions, answers, req.feedback)
 
     return _generate_and_respond(
-        user_query=original_query, session_id=session_id, chat_id=chat_id,
+        user_query=req.feedback,
+        session_id=session_id, chat_id=chat_id,
         extra_context=feedback_context, req_model=req_model, execute=req.execute,
         start_time=start_time, database_id=database_id, user_id=user_id,
         current_user=current_user,
+        mcq_questions=questions, mcq_answers=answers,
+        actual_llm_query=original_query,
+        user_msg_id=ctx.get("user_msg_id"),
+        lms_id=req.lms_id or ctx.get("lms_id")
     )

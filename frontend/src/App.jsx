@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
-import Hero from './components/Hero';
-import Thread from './components/Thread';
-import InputDock from './components/InputDock';
 import SettingsModal from './components/SettingsModal';
 import AdminPanel from './components/AdminPanel';
 import Login from './pages/Login';
+import SSOLogin from './pages/SSOLogin';
 import Dashboard from './pages/Dashboard';
-import { sendQuery, checkHealth, loadChatsFromBackend, saveChatsToBackend, requestMCQs, submitMCQAnswers, submitEnglishFeedback, formatUtcTimestamp, isLoggedIn, getUser, logout } from './services/api';
+import ChatPage from './pages/ChatPage';
+import { 
+  isLoggedIn, getUser, logout, checkHealth, 
+  loadChatsFromBackend, saveChatsToBackend 
+} from './services/api';
 
 export default function App() {
   const [authed, setAuthed] = useState(isLoggedIn);
@@ -31,16 +33,19 @@ export default function App() {
     navigate('/login');
   };
 
-  const chatSaveRef = React.useRef(null);
+  const chatSaveRef = useRef(null);
 
   return (
     <Routes>
       <Route path="/login" element={!authed ? <Login onLogin={handleLogin} /> : <Navigate to="/" />} />
+      <Route path="/sso-login" element={<SSOLogin onLogin={handleLogin} />} />
+      
+      {/* Protected Routes wrapped in MainLayout */}
       <Route
         path="/*"
         element={
           authed ? (
-            <ChatApp
+            <MainLayout
               currentUser={currentUser}
               onLogout={handleLogout}
               registerSave={(fn) => { chatSaveRef.current = fn; }}
@@ -54,22 +59,33 @@ export default function App() {
   );
 }
 
+function MainLayout({ currentUser, onLogout, registerSave }) {
+  const navigate = useNavigate();
+  const params = useParams();
+  const chatIdFromUrl = params['*'].split('c/')[1] || null;
 
-// ─── Main chat app (only rendered when authenticated) ─────────────────────────
-
-function ChatApp({ currentUser, onLogout, registerSave }) {
-  const [messages, setMessages] = useState([]);
-  const [chatStarted, setChatStarted] = useState(false);
   const [chats, setChats] = useState([]);
-  const [currentChatId, setCurrentChatId] = useState(null);
-  const [msgCounter, setMsgCounter] = useState(0);
-
+  const [backendStatus, setBackendStatus] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
 
-  const navigate = useNavigate();
-  const role = (currentUser?.role || "").toLowerCase();
-  const canViewDashboard = role === 'super_admin' || role === 'supervisor';
+  const [model, setModel] = useState('gemini-3.1-flash-lite-preview');
+  const [thinkOn, setThinkOn] = useState(false);
+
+  // LMS Selection state
+  const [selectedLmsId, setSelectedLmsId] = useState(() => {
+    return localStorage.getItem('selected_lms_id') || currentUser?.assigned_lms?.[0]?.id || '';
+  });
+
+  const handleLmsChange = (id) => {
+    setSelectedLmsId(id);
+    localStorage.setItem('selected_lms_id', id);
+    // Reload chats for the new LMS
+    initApp(id);
+    // Redirect to New Chat to reset context
+    navigate('/');
+  };
 
   const DEFAULT_SETTINGS = { datahubConnected: false, autoRunQuery: false, hideQuery: false, mcqEnabled: false };
   const [settings, setSettings] = useState(() => {
@@ -80,477 +96,138 @@ function ChatApp({ currentUser, onLogout, registerSave }) {
     return DEFAULT_SETTINGS;
   });
 
-  const [model, setModel] = useState('gemini-3.1-flash-lite-preview');
-  const [thinkOn, setThinkOn] = useState(false);
-  const [toastMsg, setToastMsg] = useState('');
-  const [showToast, setShowToast] = useState(false);
-  const toastQueue = useRef([]);
-  const toastBusy = useRef(false);
-  const processToastFn = useRef(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [backendStatus, setBackendStatus] = useState(null);
+  const role = (currentUser?.role || "").toLowerCase();
+  const canViewDashboard = role === 'super_admin' || role === 'supervisor';
 
-  // Determine lms_type for API calls
-  // super_admin uses the settings override (defaults to 'online'); other roles use their account's lms_type
-  const lmsType = currentUser?.role === 'super_admin'
-    ? (settings.lmsTypeOverride || 'online')
-    : (currentUser?.lms_type || null);
+  const initApp = async (lmsId = selectedLmsId) => {
+    setIsLoading(true);
+    const healthRes = await checkHealth();
+    setBackendStatus(healthRes.ok ? 'connected' : 'disconnected');
 
-  // Load chats from backend
-  useEffect(() => {
-    const loadChats = async () => {
-      try {
-        const result = await loadChatsFromBackend();
-        if (result.ok && result.chats && result.chats.length > 0) {
-          setChats(result.chats);
-          if (result.lastChatId) {
-            const lastChat = result.chats.find(c => c.id === result.lastChatId);
-            if (lastChat) {
-              setCurrentChatId(result.lastChatId);
-              const chatMessages = Array.isArray(lastChat.messages) ? lastChat.messages : [];
-              setMessages(chatMessages);
-              setChatStarted(chatMessages.length > 0);
-              setMsgCounter(chatMessages.length);
-              return;
-            }
-          }
-          const firstChat = result.chats[0];
-          setCurrentChatId(firstChat.id);
-          const chatMessages = Array.isArray(firstChat.messages) ? firstChat.messages : [];
-          setMessages(chatMessages);
-          setChatStarted(chatMessages.length > 0);
-          setMsgCounter(chatMessages.length);
-        }
-      } catch (e) {
-        console.error('Failed to load chats from backend:', e);
+    try {
+      const result = await loadChatsFromBackend(lmsId);
+      if (result.ok && result.chats) {
+        setChats(result.chats);
       }
-    };
-    loadChats();
-  }, []);
-
-  const saveChatsToBackendAsync = (chatsToSave, lastChatId) => {
-    saveChatsToBackend(chatsToSave, lastChatId).catch(e => console.error('Failed to save chats:', e));
+    } catch (e) {
+      console.error('Failed to init chats:', e);
+    }
+    setIsLoading(false);
   };
 
   useEffect(() => {
-    if (!currentChatId || !messages || messages.length === 0) return;
-    // Use functional setChats so we always have the latest chats state (no stale closure)
-    setChats(prev => {
-      const updatedChats = prev.map(c => {
-        if (c.id === currentChatId) {
-          const lastMsg = messages[messages.length - 1];
-          const preview = lastMsg?.text ? lastMsg.text.slice(0, 50) : '';
-          return { ...c, messages, lastMessage: preview };
-        }
-        return c;
-      });
-      saveChatsToBackendAsync(updatedChats, currentChatId);
-      return updatedChats;
-    });
-  }, [messages, currentChatId]);
-
-  // Register a save function so the parent (App) can await it before logout
-  useEffect(() => {
-    if (!registerSave) return;
-    registerSave(async () => {
-      if (!currentChatId) return;
-      const finalChats = chats.map(c => {
-        if (c.id === currentChatId) {
-          const lastMsg = messages[messages.length - 1];
-          return { ...c, messages, lastMessage: lastMsg?.text?.slice(0, 50) || '' };
-        }
-        return c;
-      });
-      await saveChatsToBackend(finalChats, currentChatId);
-    });
-  }, [registerSave, currentChatId, chats, messages]);
-
-  useEffect(() => {
-    const initApp = async () => {
-      const healthRes = await checkHealth();
-      setBackendStatus(healthRes.ok ? 'connected' : 'disconnected');
-      setIsLoading(false);
-    };
     initApp();
   }, []);
 
-  useEffect(() => {
-    try {
-      const { datahubConnected, lmsTypeOverride, ...persistable } = settings;
-      localStorage.setItem('dw-settings', JSON.stringify(persistable));
-    } catch {}
-  }, [settings]);
-
-  processToastFn.current = () => {
-    if (toastQueue.current.length === 0) { toastBusy.current = false; return; }
-    toastBusy.current = true;
-    const { msg, ms } = toastQueue.current.shift();
-    setToastMsg(msg);
-    setShowToast(true);
-    setTimeout(() => {
-      setShowToast(false);
-      setTimeout(() => processToastFn.current?.(), 350);
-    }, ms);
+  const saveChatsToBackendAsync = (chatsToSave, lastId) => {
+    saveChatsToBackend(chatsToSave, lastId).catch(e => console.error('Failed to save chats:', e));
   };
 
-  const addToast = useCallback((msg, ms = 2400) => {
-    toastQueue.current.push({ msg, ms });
-    if (!toastBusy.current) processToastFn.current?.();
-  }, []);
-
-  const generateChatTitle = (query) => {
-    const q = query.trim();
-    if (!q) return 'New Chat';
-    if (q.length <= 38) return q;
-    const cut = q.slice(0, 38);
-    const lastSpace = cut.lastIndexOf(' ');
-    return (lastSpace > 20 ? cut.slice(0, lastSpace) : cut) + '…';
+  const renameChat = (id, newTitle) => {
+    const updated = chats.map(c => c.id === id ? { ...c, title: newTitle } : c);
+    setChats(updated);
+    saveChatsToBackendAsync(updated, chatIdFromUrl);
   };
 
-  const _ensureChat = (text) => {
-    let chatIdToUse = currentChatId;
-    let isFirstQuery = false;
-    if (!currentChatId) {
-      isFirstQuery = true;
-      chatIdToUse = `chat-${Date.now()}`;
-      const newChat = { id: chatIdToUse, title: 'Generating title...', messages: [], lastMessage: '', createdAt: new Date().toISOString(), isPinned: false };
-      setChats(prev => [newChat, ...prev]);
-      setCurrentChatId(chatIdToUse);
-    } else {
-      // Also treat as first query if the chat still has the default untitled title
-      const currentChat = chats.find(c => c.id === currentChatId);
-      if (currentChat && (currentChat.title === 'New Chat' || currentChat.title === 'Generating title...')) {
-        isFirstQuery = true;
-      }
-    }
-    return { chatIdToUse, isFirstQuery };
+  const pinChat = (id) => {
+    const updated = chats.map(c => c.id === id ? { ...c, isPinned: !c.isPinned } : c);
+    setChats(updated);
+    saveChatsToBackendAsync(updated, chatIdFromUrl);
   };
 
-  const _updateTitleOnFirst = (isFirstQuery, chatIdToUse, text) => {
-    if (isFirstQuery) {
-      const newTitle = generateChatTitle(text);
-      setChats(prev => prev.map(c => c.id === chatIdToUse ? { ...c, title: newTitle } : c));
-    }
-  };
-
-  const handleSendMessage = async (text, isFix = false) => {
-    if (!chatStarted) setChatStarted(true);
-    const { chatIdToUse, isFirstQuery } = _ensureChat(text);
-    const userMsgCounter = msgCounter + 1;
-    setMsgCounter(userMsgCounter);
-    const userMsgId = `u-${userMsgCounter}`;
-    const newMsgs = [...messages, { id: userMsgId, type: 'user', text, isFix, timestamp: new Date().toISOString() }];
-    setMessages(newMsgs);
-    const sessionId = chatIdToUse.replace('chat-', 'session-');
-
-    if (settings.mcqEnabled && !isFix) {
-      setTimeout(async () => {
-        try {
-          const res = await requestMCQs(sessionId, text, model, chatIdToUse, lmsType);
-          if (res.ok) {
-            _updateTitleOnFirst(isFirstQuery, chatIdToUse, text);
-            const mcqCounter = userMsgCounter + 1;
-            setMsgCounter(mcqCounter);
-            setMessages(prev => [...prev, {
-              id: `mcq-${mcqCounter}`, type: 'mcq', model,
-              query_id: res.data.query_id, questions: res.data.questions,
-              original_query: res.data.original_query, sessionId, chatId: chatIdToUse,
-              timestamp: new Date().toISOString(),
-            }]);
-          } else {
-            _directQuery(sessionId, text, chatIdToUse, isFirstQuery, userMsgCounter);
-          }
-        } catch (err) {
-          _directQuery(sessionId, text, chatIdToUse, isFirstQuery, userMsgCounter);
-        }
-      }, 700);
-      return;
-    }
-
-    setTimeout(async () => {
-      _directQuery(sessionId, text, chatIdToUse, isFirstQuery, userMsgCounter);
-    }, 700);
-  };
-
-  const _directQuery = async (sessionId, text, chatIdToUse, isFirstQuery, userMsgCounter) => {
-    try {
-      const canAutoRun = settings.autoRunQuery || (currentUser?.role !== 'super_admin' && currentUser?.role !== 'Supervisor');
-      const res = await sendQuery(sessionId, text, model, canAutoRun, chatIdToUse, lmsType);
-
-      if (res.ok) {
-        const { sql, answer, chart_type, data, execution_time, session_context_alert, sql_auto_fixed, sql_error } = res.data;
-        _updateTitleOnFirst(isFirstQuery, chatIdToUse, text);
-        
-        setMsgCounter(prev => prev + 1);
-        setMessages(prev => [...prev, {
-          id: `ai-${userMsgCounter + 1}`, type: 'ai', model, isRegen: false, sql, answer,
-          chart_type, data, execution_time, session_context_alert, sessionId,
-          userQuery: text, feedbackId: '', token_usage: res.data.token_usage || null,
-          sql_auto_fixed: sql_auto_fixed || false, sql_error: sql_error || null,
-          timestamp: new Date().toISOString(),
-        }]);
-        if (session_context_alert) addToast(session_context_alert, 3000);
-      } else {
-        addToast(`Error: ${res.error}`);
-        setMsgCounter(prev => prev + 1);
-        setMessages(prev => [...prev, { id: `ai-${userMsgCounter + 1}`, type: 'ai-error', error: res.error }]);
-      }
-    } catch (err) {
-      addToast('Failed to generate query');
-    }
-  };
-
-  const handleSubmitMCQAnswers = async (queryId, answers) => {
-    const sessionId = currentChatId?.replace('chat-', 'session-');
-    if (!sessionId) return;
-    try {
-      const canAutoRun = settings.autoRunQuery || (currentUser?.role !== 'super_admin' && currentUser?.role !== 'Supervisor');
-      const res = await submitMCQAnswers(queryId, sessionId, answers, model, canAutoRun, currentChatId);
-
-      if (res.ok) {
-        const { sql, answer, chart_type, data, execution_time, session_context_alert, sql_auto_fixed, sql_error } = res.data;
-        const nextCounter = msgCounter + 1;
-        setMsgCounter(nextCounter);
-        setMessages(prev => [...prev, {
-          id: `ai-${nextCounter}`, type: 'ai', model, isRegen: false, sql, answer,
-          chart_type, data, execution_time, session_context_alert, sessionId,
-          userQuery: prev.find(m => m.type === 'mcq' && m.query_id === queryId)?.original_query || '',
-          feedbackId: res.data.feedback_id || '', query_id: queryId,
-          token_usage: res.data.token_usage || null,
-          sql_auto_fixed: sql_auto_fixed || false, sql_error: sql_error || null,
-          timestamp: new Date().toISOString(),
-        }]);
-        if (session_context_alert) addToast(session_context_alert, 3000);
-      } else {
-        addToast(`Error: ${res.error}`);
-        const nextCounter = msgCounter + 1;
-        setMsgCounter(nextCounter);
-        setMessages(prev => [...prev, { id: `ai-err-${nextCounter}`, type: 'ai-error', error: res.error }]);
-      }
-    } catch (err) {
-      addToast('Failed to process MCQ answers');
-    }
-  };
-
-  const handleSkipMCQ = async (queryId, originalQuery) => {
-    const sessionId = currentChatId?.replace('chat-', 'session-');
-    if (!sessionId || !originalQuery) return;
-    try {
-      const canAutoRun = settings.autoRunQuery || (currentUser?.role !== 'super_admin' && currentUser?.role !== 'Supervisor');
-      const res = await sendQuery(sessionId, originalQuery, model, canAutoRun, currentChatId, lmsType);
-
-      if (res.ok) {
-        const { sql, answer, chart_type, data, execution_time, session_context_alert, sql_auto_fixed, sql_error } = res.data;
-        const nextCounter = msgCounter + 1;
-        setMsgCounter(nextCounter);
-        setMessages(prev => [...prev, {
-          id: `ai-${nextCounter}`, type: 'ai', model, isRegen: false, sql, answer,
-          chart_type, data, execution_time, session_context_alert, sessionId,
-          userQuery: originalQuery, feedbackId: '', token_usage: res.data.token_usage || null,
-          sql_auto_fixed: sql_auto_fixed || false, sql_error: sql_error || null,
-          timestamp: new Date().toISOString(),
-        }]);
-        if (session_context_alert) addToast(session_context_alert, 3000);
-      } else {
-        addToast(`Error: ${res.error}`);
-      }
-    } catch (err) {
-      addToast('Failed to generate query');
-    }
-  };
-
-  const handleFix = (aiMsgId, fixText, mcqQueryId) => {
-    const fixMsgCounter = msgCounter + 1;
-    setMsgCounter(fixMsgCounter);
-    setMessages(prev => [...prev, { id: `u-${fixMsgCounter}`, type: 'user', text: fixText, isFix: true }]);
-    const sessionId = currentChatId.replace('chat-', 'session-');
-    setTimeout(async () => {
-      let res;
-      if (mcqQueryId) {
-        const canAutoRun = settings.autoRunQuery || (currentUser?.role !== 'super_admin' && currentUser?.role?.toLowerCase() !== 'supervisor');
-        res = await submitEnglishFeedback(mcqQueryId, sessionId, fixText, model, canAutoRun, currentChatId);
-      } else {
-
-        res = await sendQuery(sessionId, fixText, model, true, currentChatId, lmsType);
-      }
-      if (res.ok) {
-        const { sql, answer, chart_type, data, execution_time } = res.data;
-        setMsgCounter(prev => prev + 1);
-        setMessages(prev => [...prev, {
-          id: `ai-${fixMsgCounter + 1}`, type: 'ai', model, isRegen: true, sql, answer,
-          chart_type, data, execution_time, sessionId, userQuery: fixText, feedbackId: '',
-          query_id: mcqQueryId || undefined,
-        }]);
-      } else {
-        addToast(`Error: ${res.error}`);
-      }
-    }, 1400);
-  };
-
-  const handleRegen = () => {
-    const lastUserMsg = [...messages].reverse().find(m => m.type === 'user');
-    if (!lastUserMsg) return;
-    const sessionId = currentChatId.replace('chat-', 'session-');
-    const regenMsgCounter = msgCounter + 1;
-    setMsgCounter(regenMsgCounter);
-    setTimeout(async () => {
-      const res = await sendQuery(sessionId, lastUserMsg.text, model, true, currentChatId, lmsType);
-      if (res.ok) {
-        const { sql, answer, chart_type, data, execution_time } = res.data;
-        setMessages(prev => [...prev, {
-          id: `ai-${regenMsgCounter}`, type: 'ai', model, isRegen: true, sql, answer,
-          chart_type, data, execution_time, sessionId, userQuery: lastUserMsg.text, feedbackId: '',
-        }]);
-      }
-    }, 1400);
-  };
-
-  const startNewChat = () => {
-    let updatedChats = chats;
-    if (currentChatId && messages.length > 0) {
-      updatedChats = chats.map(c => {
-        if (c.id === currentChatId) {
-          const lastMsg = messages[messages.length - 1];
-          return { ...c, messages, lastMessage: lastMsg?.text?.slice(0, 50) || '' };
-        }
-        return c;
-      });
-      setChats(updatedChats);
-      saveChatsToBackendAsync(updatedChats, currentChatId);
-    }
-    const newChatId = `chat-${Date.now()}`;
-    const newChat = { id: newChatId, title: 'New Chat', messages: [], lastMessage: '', createdAt: new Date().toISOString(), isPinned: false };
-    const newChatsArray = [newChat, ...updatedChats];
-    setChats(newChatsArray);
-    saveChatsToBackendAsync(newChatsArray, newChatId);
-    setCurrentChatId(newChatId);
-    setMessages([]);
-    setChatStarted(false);
-    setMsgCounter(0);
-    navigate('/');
-  };
-
-  const renameChat = (chatId, newTitle) => {
-    const updatedChats = chats.map(c => c.id === chatId ? { ...c, title: newTitle } : c);
-    setChats(updatedChats);
-    saveChatsToBackendAsync(updatedChats, currentChatId);
-  };
-
-  const pinChat = (chatId) => {
-    const updatedChats = chats.map(c => c.id === chatId ? { ...c, isPinned: !c.isPinned } : c);
-    setChats(updatedChats);
-    saveChatsToBackendAsync(updatedChats, currentChatId);
-  };
-
-  const deleteChat = (chatId) => {
-    const updatedChats = chats.filter(c => c.id !== chatId);
-    setChats(updatedChats);
-    if (chatId === currentChatId) {
-      const nextChat = updatedChats[0];
-      if (nextChat) {
-        setCurrentChatId(nextChat.id);
-        const chatMessages = Array.isArray(nextChat.messages) ? nextChat.messages : [];
-        setMessages(chatMessages);
-        setChatStarted(chatMessages.length > 0);
-        setMsgCounter(chatMessages.length);
-      } else {
-        setCurrentChatId(null);
-        setMessages([]);
-        setChatStarted(false);
-        setMsgCounter(0);
-      }
-    }
-    saveChatsToBackendAsync(updatedChats, chatId === currentChatId ? (updatedChats[0]?.id || null) : currentChatId);
-  };
-
-  const loadChat = (chatId) => {
-    let updatedChats = chats;
-    if (currentChatId && messages.length > 0) {
-      updatedChats = chats.map(c => {
-        if (c.id === currentChatId) {
-          const lastMsg = messages[messages.length - 1];
-          return { ...c, messages, lastMessage: lastMsg?.text?.slice(0, 50) || '' };
-        }
-        return c;
-      });
-      setChats(updatedChats);
-      saveChatsToBackendAsync(updatedChats, chatId);
-    }
-    const chat = updatedChats.find(c => c.id === chatId);
-    if (chat) {
-      setCurrentChatId(chatId);
-      const chatMessages = Array.isArray(chat.messages) ? chat.messages : [];
-      setMessages(chatMessages);
-      setChatStarted(chatMessages.length > 0);
-      setMsgCounter(chatMessages.length);
+  const deleteChat = (id) => {
+    const updated = chats.map(c => c.id === id ? { ...c, isDeleted: true } : c);
+    setChats(updated);
+    if (id === chatIdFromUrl) {
       navigate('/');
+      saveChatsToBackendAsync(updated, null);
+    } else {
+      saveChatsToBackendAsync(updated, chatIdFromUrl);
     }
   };
 
   if (isLoading) {
     return (
-      <div className="app loading">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
-          <div style={{ textAlign: 'center', color: '#999' }}>
-            <div style={{ fontSize: '24px', marginBottom: '10px' }}>Initializing GrepSQL AI...</div>
-            <div style={{ fontSize: '12px' }}>Connecting to backend...</div>
-          </div>
-        </div>
+      <div className="app loading" style={{ background: '#0f1117', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+         <div style={{ textAlign: 'center', color: '#9ca3af' }}>
+           <div style={{ fontSize: '20px', fontWeight: 600, marginBottom: '8px' }}>Initializing GrepSQL AI...</div>
+           <div style={{ fontSize: '12px' }}>Establishing secure connection...</div>
+         </div>
       </div>
     );
   }
 
+  const filteredChats = chats.filter(c => !c.lms_id || c.lms_id === selectedLmsId);
+
   return (
     <div className="app">
-      <Sidebar
-        startNewChat={startNewChat}
-        onOpenSettings={() => setIsSettingsOpen(true)}
-        chats={chats}
-        loadChat={loadChat}
-        currentChatId={currentChatId}
-        deleteChat={deleteChat}
-        pinChat={pinChat}
-        renameChat={renameChat}
-        currentUser={currentUser}
-        onDashboard={canViewDashboard ? () => navigate('/dashboard') : null}
-        onAdmin={currentUser?.role === 'super_admin' ? () => setIsAdminOpen(true) : null}
-        onLogout={onLogout}
-      />
+      <header className="app-navbar">
+        <div className="navbar-logo">GrepSQL AI</div>
+        <div className="navbar-actions">
+           {console.log("Current User Data:", currentUser)}
+           {currentUser?.assigned_lms?.length > 0 && (
+             <div className="lms-selector-container">
+               <select 
+                 className="lms-dropdown"
+                 value={selectedLmsId} 
+                 onChange={(e) => handleLmsChange(e.target.value)}
+               >
+                 {currentUser.assigned_lms.map(lms => (
+                   <option key={lms.id} value={lms.id}>{lms.name}</option>
+                 ))}
+               </select>
+             </div>
+           )}
+           <div className="user-profile">
+             <span className="user-name">{currentUser?.name || currentUser?.full_name}</span>
+             <button onClick={onLogout} className="logout-mini-btn">Logout</button>
+           </div>
+        </div>
+      </header>
 
-      <main className="main">
-        <Routes>
-          <Route
-            path="/"
-            element={
-              <>
-                <Hero isHidden={chatStarted} onSendChip={(text) => handleSendMessage(text, false)} />
-                <Thread
-                  messages={messages}
-                  addToast={addToast}
-                  onFix={handleFix}
-                  onRegen={handleRegen}
-                  onSubmitMCQAnswers={handleSubmitMCQAnswers}
-                  onSkipMCQ={handleSkipMCQ}
-                  settings={settings}
-                  currentUser={currentUser}
-                />
-                <InputDock
-                  onSendMessage={t => handleSendMessage(t, false)}
-                  model={model}
-                  setModel={setModel}
-                  thinkOn={thinkOn}
-                  setThinkOn={setThinkOn}
-                  chatStarted={chatStarted}
-                />
-              </>
-            }
-          />
-          <Route
-            path="/dashboard"
-            element={canViewDashboard ? <Dashboard onBack={() => navigate('/')} /> : <Navigate to="/" />}
-          />
-        </Routes>
-      </main>
+      <div className="app-layout">
+        <Sidebar
+          startNewChat={() => navigate('/')}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          chats={filteredChats}
+          loadChat={(id) => navigate(`/c/${id}`)}
+          currentChatId={chatIdFromUrl}
+          deleteChat={deleteChat}
+          pinChat={pinChat}
+          renameChat={renameChat}
+          currentUser={currentUser}
+          onDashboard={canViewDashboard ? () => navigate('/dashboard') : null}
+          onAdmin={currentUser?.role === 'super_admin' ? () => setIsAdminOpen(true) : null}
+        />
+
+        <main className="main">
+          <Routes>
+            <Route path="/" element={
+              <ChatPage 
+                chats={chats} setChats={setChats} 
+                settings={settings} currentUser={currentUser} 
+                registerSave={registerSave}
+                model={model} setModel={setModel}
+                thinkOn={thinkOn} setThinkOn={setThinkOn}
+                isInitialLoading={isLoading}
+                lmsId={selectedLmsId}
+              />
+            } />
+            <Route path="c/:chatId" element={
+              <ChatPage 
+                chats={chats} setChats={setChats} 
+                settings={settings} currentUser={currentUser} 
+                registerSave={registerSave}
+                model={model} setModel={setModel}
+                thinkOn={thinkOn} setThinkOn={setThinkOn}
+                isInitialLoading={isLoading}
+                lmsId={selectedLmsId}
+              />
+            } />
+            <Route path="dashboard" element={canViewDashboard ? <Dashboard lmsId={selectedLmsId} onBack={() => navigate('/')} /> : <Navigate to="/" />} />
+          </Routes>
+        </main>
+      </div>
 
       <SettingsModal
         isOpen={isSettingsOpen}
@@ -561,11 +238,7 @@ function ChatApp({ currentUser, onLogout, registerSave }) {
         currentUser={currentUser}
       />
 
-
       {isAdminOpen && <AdminPanel onClose={() => setIsAdminOpen(false)} />}
-
-      <div className={`toast ${showToast ? 'show' : ''}`} id="toast">{toastMsg}</div>
     </div>
   );
 }
-

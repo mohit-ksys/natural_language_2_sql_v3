@@ -29,7 +29,6 @@ export default function Sidebar({ startNewChat, onOpenSettings, chats = [], load
     }
   }, [renamingId]);
 
-  // Debounce search query by 300ms
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchQuery), 300);
     return () => clearTimeout(t);
@@ -60,8 +59,37 @@ export default function Sidebar({ startNewChat, onOpenSettings, chats = [], load
 
   const cancelRename = () => setRenamingId(null);
 
+  function highlightTitle(title) {
+    if (!debouncedSearch.trim()) return title;
+    const idx = title.toLowerCase().indexOf(debouncedSearch.toLowerCase());
+    if (idx === -1) return title;
+    return (
+      <>
+        {title.slice(0, idx)}
+        <mark className="search-highlight">{title.slice(idx, idx + debouncedSearch.length)}</mark>
+        {title.slice(idx + debouncedSearch.length)}
+      </>
+    );
+  }
+
+  const getTimeGroup = (dateStr) => {
+    if (!dateStr) return 'Older';
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) return 'Today';
+    if (diffDays === 1) return 'Yesterday';
+    if (diffDays < 7) return 'Previous 7 Days';
+    if (diffDays < 30) return 'Previous 30 Days';
+    return 'Older';
+  };
+
   // Sort: pinned first, then by createdAt desc
-  const sortedChats = [...chats].sort((a, b) => {
+  // Also filter out deleted chats
+  const activeChats = chats.filter(c => !c.isDeleted);
+  
+  const sortedChats = [...activeChats].sort((a, b) => {
     if (a.isPinned && !b.isPinned) return -1;
     if (!a.isPinned && b.isPinned) return 1;
     return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
@@ -77,33 +105,38 @@ export default function Sidebar({ startNewChat, onOpenSettings, chats = [], load
       })
     : sortedChats;
 
-  const visibleChats = showAll || debouncedSearch ? filteredChats : filteredChats.slice(0, VISIBLE_COUNT);
-  const hiddenCount = filteredChats.length - VISIBLE_COUNT;
+  // Grouping logic (only when not searching)
+  const groups = [];
+  if (!debouncedSearch.trim()) {
+    const pinned = filteredChats.filter(c => c.isPinned);
+    if (pinned.length > 0) {
+      groups.push({ label: 'Pinned', items: pinned });
+    }
 
-  function highlightTitle(title) {
-    if (!debouncedSearch.trim()) return title;
-    const idx = title.toLowerCase().indexOf(debouncedSearch.toLowerCase());
-    if (idx === -1) return title;
-    return (
-      <>
-        {title.slice(0, idx)}
-        <mark className="search-highlight">{title.slice(idx, idx + debouncedSearch.length)}</mark>
-        {title.slice(idx + debouncedSearch.length)}
-      </>
-    );
+    const unpinned = filteredChats.filter(c => !c.isPinned);
+    const unpinnedGroups = {};
+    unpinned.forEach(chat => {
+      const g = getTimeGroup(chat.createdAt);
+      if (!unpinnedGroups[g]) unpinnedGroups[g] = [];
+      unpinnedGroups[g].push(chat);
+    });
+
+    ['Today', 'Yesterday', 'Previous 7 Days', 'Previous 30 Days', 'Older'].forEach(label => {
+      if (unpinnedGroups[label] && unpinnedGroups[label].length > 0) {
+        groups.push({ label, items: unpinnedGroups[label] });
+      }
+    });
+  } else {
+    groups.push({ label: 'Search Results', items: filteredChats });
   }
-
-  const hasPinned = filteredChats.some(c => c.isPinned);
 
   const handleDeleteClick = (e, chatId) => {
     e.stopPropagation();
     if (confirmDeleteId === chatId) {
-      // Second click: confirmed
       deleteChat(chatId);
       setConfirmDeleteId(null);
     } else {
       setConfirmDeleteId(chatId);
-      // Auto-cancel after 3 seconds
       setTimeout(() => setConfirmDeleteId(null), 3000);
     }
   };
@@ -114,79 +147,44 @@ export default function Sidebar({ startNewChat, onOpenSettings, chats = [], load
       {/* COLLAPSED RAIL */}
       {collapsed ? (
         <div className="rail">
-          {/* Expand toggle at top */}
-          <button
-            className="rail-btn rail-expand"
-            onClick={() => setCollapsed(false)}
-            title="Expand sidebar"
-          >›</button>
-
-          {/* New chat */}
-          <button
-            className="rail-btn rail-new"
-            onClick={() => { startNewChat(); }}
-            title="New Query"
-          >＋</button>
-
-          {/* Divider */}
+          <button className="rail-btn rail-expand" onClick={() => setCollapsed(false)} title="Expand sidebar">›</button>
+          <button className="rail-btn rail-new" onClick={() => startNewChat()} title="New Query">＋</button>
           <div className="rail-divider" />
-
-          {/* Recent chats as icon pills */}
           <div className="rail-chats">
-            {sortedChats.slice(0, 8).map(chat => (
+            {sortedChats.slice(0, 10).map(chat => (
               <button
                 key={chat.id}
                 className={`rail-chat-btn ${currentChatId === chat.id ? 'active' : ''}`}
                 onClick={() => loadChat(chat.id)}
                 title={getDisplayTitle(chat)}
               >
-                <span className="rail-chat-char">
-                  {getDisplayTitle(chat).charAt(0).toUpperCase()}
-                </span>
+                <span className="rail-chat-char">{getDisplayTitle(chat).charAt(0).toUpperCase()}</span>
               </button>
             ))}
           </div>
-
-          {/* Spacer */}
           <div style={{ flex: 1 }} />
-
-          {/* Footer icons */}
           <div className="rail-divider" />
-          <button className="rail-btn" onClick={toggleTheme} title={theme === 'light' ? 'Dark mode' : 'Light mode'}>
-            {theme === 'light' ? '☾' : '☀'}
-          </button>
-          <button className="rail-btn" onClick={onOpenSettings} title="Settings">
-            ⚙
-          </button>
+          <button className="rail-btn" onClick={toggleTheme} title={theme === 'light' ? 'Dark mode' : 'Light mode'}>{theme === 'light' ? '☾' : '☀'}</button>
+          <button className="rail-btn" onClick={onOpenSettings} title="Settings">⚙</button>
         </div>
       ) : (
         /* EXPANDED SIDEBAR */
         <>
           <div className="sidebar-top">
-            <button className="new-chat-btn" onClick={() => { startNewChat(); setSearchQuery(''); setSearchOpen(false); }} title="New Query">
+            <button className="new-chat-btn" onClick={() => { startNewChat(); setSearchQuery(''); setSearchOpen(false); }}>
               <span className="new-chat-icon">＋</span>
               <span className="new-chat-text">New Query</span>
             </button>
-            <button
-              className="collapse-btn"
-              onClick={() => { setSearchOpen(s => !s); setSearchQuery(''); }}
-              title="Search chats"
-              style={{ fontSize: '13px' }}
-            >🔍</button>
-            <button
-              className="collapse-btn"
-              onClick={() => setCollapsed(true)}
-              title="Collapse sidebar"
-            >‹</button>
+            <button className="collapse-btn" onClick={() => { setSearchOpen(s => !s); setSearchQuery(''); }} title="Search chats">🔍</button>
+            <button className="collapse-btn" onClick={() => setCollapsed(true)} title="Collapse">‹</button>
           </div>
 
-          {/* SEARCH INPUT */}
           {searchOpen && (
             <div className="search-wrap">
               <input
                 className="search-input"
                 type="text"
-                placeholder="Search chats..."
+                placeholder="Search history..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 autoFocus
@@ -194,24 +192,18 @@ export default function Sidebar({ startNewChat, onOpenSettings, chats = [], load
             </div>
           )}
 
-          <div className="sidebar-section-label">{debouncedSearch ? 'Results' : 'Chat History'}</div>
-
           <div className="history-list">
-            {filteredChats.length > 0 ? (
-              <>
-                {hasPinned && !debouncedSearch && (
-                  <div className="sidebar-pin-label">📌 Pinned</div>
-                )}
-                {visibleChats.map((chat) => (
+            {groups.length > 0 ? groups.map(group => (
+              <React.Fragment key={group.label}>
+                <div className="sidebar-group-label">{group.label}</div>
+                {group.items.map(chat => (
                   <div
                     key={chat.id}
-                    className={`history-item ${currentChatId === chat.id ? 'active' : ''} ${chat.isPinned ? 'pinned' : ''}`}
+                    className={`history-item ${String(currentChatId) === String(chat.id) ? 'active' : ''}`}
                     onClick={() => { if (renamingId !== chat.id) { loadChat(chat.id); setSearchQuery(''); setSearchOpen(false); } }}
-                    title={renamingId === chat.id ? undefined : getDisplayTitle(chat)}
                   >
                     <span className="history-icon">{chat.isPinned ? '📌' : '💬'}</span>
 
-                    {/* RENAME inline editor */}
                     {renamingId === chat.id ? (
                       <input
                         ref={renameInputRef}
@@ -229,49 +221,28 @@ export default function Sidebar({ startNewChat, onOpenSettings, chats = [], load
                       <span className="history-title">{highlightTitle(getDisplayTitle(chat))}</span>
                     )}
 
-                    <div className="history-actions">
-                      {renamingId !== chat.id && (
+                    {!renamingId && (
+                      <div className="history-actions">
+                        <button className="sidebar-action-btn" onClick={e => startRename(e, chat)} title="Rename">✎</button>
+                        <button className={`sidebar-action-btn ${chat.isPinned ? 'pinned' : ''}`} onClick={e => { e.stopPropagation(); pinChat(chat.id); }} title={chat.isPinned ? 'Unpin' : 'Pin'}>
+                          {chat.isPinned ? '📌' : '📍'}
+                        </button>
                         <button
-                          className="history-rename-btn"
-                          title="Rename chat"
-                          onClick={e => startRename(e, chat)}
-                        >✎</button>
-                      )}
-                      {pinChat && (
-                        <button
-                          className={`history-pin-btn ${chat.isPinned ? 'pinned' : ''}`}
-                          title={chat.isPinned ? 'Unpin' : 'Pin chat'}
-                          onClick={e => { e.stopPropagation(); pinChat(chat.id); }}
-                        >{chat.isPinned ? '📌' : '📍'}</button>
-                      )}
-                      {deleteChat && (
-                        <button
-                          className={`history-delete-btn ${confirmDeleteId === chat.id ? 'confirm' : ''}`}
-                          title={confirmDeleteId === chat.id ? 'Click again to confirm delete' : 'Delete chat'}
+                          className={`sidebar-action-btn history-delete-btn ${confirmDeleteId === chat.id ? 'confirm' : ''}`}
                           onClick={e => handleDeleteClick(e, chat.id)}
-                        >{confirmDeleteId === chat.id ? '?' : '✕'}</button>
-                      )}
-                    </div>
+                          title={confirmDeleteId === chat.id ? 'Confirm?' : 'Delete'}
+                        >
+                          {confirmDeleteId === chat.id ? '?' : '✕'}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))}
-                {!showAll && !debouncedSearch && hiddenCount > 0 && (
-                  <button className="show-more-btn" onClick={() => setShowAll(true)}>
-                    <span className="show-more-icon">↓</span>
-                    <span className="show-more-text">{hiddenCount} more</span>
-                  </button>
-                )}
-                {showAll && !debouncedSearch && filteredChats.length > VISIBLE_COUNT && (
-                  <button className="show-more-btn" onClick={() => setShowAll(false)}>
-                    <span className="show-more-icon">↑</span>
-                    <span className="show-more-text">Show less</span>
-                  </button>
-                )}
-              </>
-            ) : (
+              </React.Fragment>
+            )) : (
               <div className="history-empty">
                 <span className="history-empty-icon">◈</span>
-                <span className="history-empty-title">{debouncedSearch ? 'No results' : 'No chats yet'}</span>
-                <span className="history-empty-sub">{debouncedSearch ? 'Try a different search' : 'Click + New Query to start'}</span>
+                <span className="history-empty-title">{debouncedSearch ? 'No results found' : 'No chat history'}</span>
               </div>
             )}
           </div>
@@ -279,32 +250,32 @@ export default function Sidebar({ startNewChat, onOpenSettings, chats = [], load
           <div className="sidebar-footer">
             {currentUser && (
               <div className="sidebar-user-info">
-                {currentUser.full_name || currentUser.username}
-                <span className="sidebar-user-role">{currentUser.role}</span>
+                <div className="sidebar-user-name">{currentUser.full_name || currentUser.username}</div>
+                <div className="sidebar-user-role">{currentUser.role}</div>
               </div>
             )}
             {onDashboard && (
-              <div className="footer-item" onClick={onDashboard} title="Dashboard">
+              <div className="footer-item" onClick={onDashboard}>
                 <span className="footer-icon">◈</span>
                 <span className="footer-text">Dashboard</span>
               </div>
             )}
             {onAdmin && (
-              <div className="footer-item" onClick={onAdmin} title="User Management">
+              <div className="footer-item" onClick={onAdmin}>
                 <span className="footer-icon">👥</span>
                 <span className="footer-text">Users</span>
               </div>
             )}
-            <div className="footer-item" onClick={toggleTheme} title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}>
+            <div className="footer-item" onClick={toggleTheme}>
               <span className="footer-icon">{theme === 'light' ? '☾' : '☀'}</span>
               <span className="footer-text">{theme === 'light' ? 'Dark' : 'Light'}</span>
             </div>
-            <div className="footer-item" onClick={onOpenSettings} title="Settings">
+            <div className="footer-item" onClick={onOpenSettings}>
               <span className="footer-icon">⚙</span>
               <span className="footer-text">Settings</span>
             </div>
             {onLogout && (
-              <div className="footer-item" onClick={onLogout} title="Sign out" style={{ color: '#f87171' }}>
+              <div className="footer-item" onClick={onLogout} style={{ color: '#f87171' }}>
                 <span className="footer-icon">⏏</span>
                 <span className="footer-text">Sign Out</span>
               </div>

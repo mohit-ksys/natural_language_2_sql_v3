@@ -4,7 +4,7 @@ import logging.handlers
 import pathlib
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 
 from sqlalchemy import text
@@ -42,13 +42,12 @@ def _setup_logger() -> logging.Logger:
 log = _setup_logger()
 
 
-# ─────────────────────────── MCQ QUERY CONTEXT (in-memory) ────────────────────
 
 import time as _time
 
 _query_contexts: dict[str, dict] = {}
 _query_ctx_lock = threading.Lock()
-_CTX_MAX_AGE = 600  # 10 minutes
+_CTX_MAX_AGE = 600  
 
 
 def store_query_context(query_id: str, context: dict):
@@ -79,7 +78,6 @@ def _cleanup_stale_contexts():
         del _query_contexts[qid]
 
 
-# ─────────────────────────── QUERY LOG (DB) ────────────────────────────────────
 
 def save_feedback(
     session_id: str,
@@ -99,13 +97,21 @@ def save_feedback(
     user_id: str = None,
     model: str = None,
     lms_type: str = None,
+    lms_id: str = None,
+    thoughts: str = "",
+    is_mcq_answer: bool = False,
+    user_msg_id: str = None,
+    data: list = None,
+    existing_feedback_id: str = None,
+    sql_auto_fixed: bool = False,
+    sql_error: str = None,
+    extra: dict = None,
 ) -> str:
-
-
-    """Insert a query/response pair into query_logs table."""
+    """Insert a query/response pair into query_logs table and track token usage."""
     from config.database import get_auth_engine
+    from services.llm_service import calculate_cost
 
-    feedback_id = str(uuid.uuid4())
+    feedback_id = existing_feedback_id or str(uuid.uuid4())
     now_utc = datetime.now(timezone.utc)
 
     mcq_data = None
@@ -126,26 +132,34 @@ def save_feedback(
                 "selected_answer": ans,
                 "selected_text": selected_text,
             })
-        mcq_data = json.dumps({"questions": mcq_log})
+        mcq_data = json.dumps({"questions": mcq_log}, default=str)
 
-    token_usage_json = json.dumps(token_usage) if token_usage else None
+    token_usage_json = json.dumps(token_usage, default=str) if token_usage else None
 
     _db_saved = False
     try:
         engine = get_auth_engine()
         with engine.begin() as conn:
+            log.info("UPSERT query_logs ID=%s chat_id=%s has_data=%s", feedback_id, chat_id, data is not None)
             conn.execute(text("""
                 INSERT INTO query_logs (
                     id, user_id, user_name, user_email, user_role, session_id, chat_id, user_query, generated_sql,
-                    answer, execution_time, error_message, model, lms_type,
+                    answer, execution_time, error_message, model, lms_type, lms_id,
                     token_usage, chart_type, mcq_data,
                     created_at_utc, created_at_ist
                 ) VALUES (
                     :id, :user_id, :user_name, :user_email, :user_role, :session_id, :chat_id, :user_query, :generated_sql,
-                    :answer, :execution_time, :error_message, :model, :lms_type,
+                    :answer, :execution_time, :error_message, :model, :lms_type, :lms_id,
                     CAST(:token_usage AS jsonb), :chart_type, CAST(:mcq_data AS jsonb),
                     :now, :now AT TIME ZONE 'Asia/Kolkata'
                 )
+                ON CONFLICT (id) DO UPDATE SET
+                    answer = EXCLUDED.answer,
+                    generated_sql = EXCLUDED.generated_sql,
+                    execution_time = EXCLUDED.execution_time,
+                    token_usage = EXCLUDED.token_usage,
+                    chart_type = EXCLUDED.chart_type,
+                    mcq_data = EXCLUDED.mcq_data
             """), {
                 "id": feedback_id,
                 "user_id": user_id,
@@ -161,14 +175,119 @@ def save_feedback(
                 "error_message": error_message,
                 "model": model,
                 "lms_type": lms_type,
+                "lms_id": lms_id, # Added lms_id
                 "token_usage": token_usage_json,
                 "chart_type": chart_type,
                 "mcq_data": mcq_data,
                 "now": now_utc,
             })
 
+            if chat_id:
+                try:
+                    conn.execute(text("""
+                        INSERT INTO chats (id, user_id, title, last_message, lms_id, updated_at_utc, updated_at_ist)
+                        VALUES (:id, :uid, 'New Chat', :last_msg, :lms_id, :now, :now AT TIME ZONE 'Asia/Kolkata')
+                        ON CONFLICT (id) DO UPDATE SET
+                            last_message = EXCLUDED.last_message,
+                            lms_id = COALESCE(EXCLUDED.lms_id, chats.lms_id),
+                            updated_at_utc = now(),
+                            updated_at_ist = now() AT TIME ZONE 'Asia/Kolkata'
+                    """), {
+                        "id": chat_id,
+                        "uid": user_id,
+                        "last_msg": (answer[:50] if answer else user_query[:50]),
+                        "lms_id": lms_id,
+                        "now": now_utc,
+                    })
+
+                    if not existing_feedback_id:
+                        final_user_msg_id = user_msg_id or f"u-{uuid.uuid4()}"
+                        conn.execute(text("""
+                            INSERT INTO chat_messages (id, chat_id, type, text, lms_id, created_at_utc, created_at_ist)
+                            VALUES (:id, :cid, 'user', :text, :lms_id, :now, :now AT TIME ZONE 'Asia/Kolkata')
+                            ON CONFLICT (id) DO UPDATE SET text = EXCLUDED.text, lms_id = COALESCE(EXCLUDED.lms_id, chat_messages.lms_id)
+                        """), {
+                            "id": final_user_msg_id,
+                            "cid": chat_id,
+                            "text": user_query,
+                            "lms_id": lms_id,
+                            "now": now_utc,
+                        })
+                except Exception as e:
+                    log.error("Failed to auto-populate chat entry in save_feedback: %s", e)
+
+            target_msg_id = user_msg_id or (f"a-{feedback_id}" if not is_mcq_answer else f"m-{feedback_id}")
+            
+            rich_extra = extra or {}
+            if data is not None: rich_extra["data"] = data
+            if thoughts: rich_extra["thoughts"] = thoughts
+            if mcq_data: rich_extra["mcq_data"] = json.loads(mcq_data)
+            
+            conn.execute(text("""
+                INSERT INTO chat_messages (
+                    id, chat_id, type, text, sql, answer, chart_type, execution_time, 
+                    model, session_id, user_query, feedback_id, token_usage, 
+                    sql_auto_fixed, error, lms_id, extra, created_at_utc, created_at_ist
+                ) VALUES (
+                    :id, :cid, :type, :text, :sql, :ans, :chart, :etime,
+                    :model, :sid, :q, :fid, CAST(:tokens AS jsonb),
+                    :saf, :err, :lms_id, CAST(:extra AS jsonb), :now, :now AT TIME ZONE 'Asia/Kolkata'
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                    sql = EXCLUDED.sql,
+                    answer = EXCLUDED.answer,
+                    chart_type = EXCLUDED.chart_type,
+                    execution_time = EXCLUDED.execution_time,
+                    token_usage = EXCLUDED.token_usage,
+                    sql_auto_fixed = EXCLUDED.sql_auto_fixed,
+                    error = EXCLUDED.error,
+                    extra = EXCLUDED.extra
+            """), {
+                "id": target_msg_id,
+                "cid": chat_id,
+                "type": "ai" if not is_mcq_answer else "mcq",
+                "text": answer,
+                "sql": generated_sql,
+                "ans": answer,
+                "chart": chart_type,
+                "etime": execution_time,
+                "model": model,
+                "sid": session_id,
+                "q": user_query,
+                "fid": feedback_id,
+                "tokens": token_usage_json,
+                "saf": sql_auto_fixed,
+                "err": sql_error or error_message,
+                "lms_id": lms_id,
+                "extra": json.dumps(rich_extra, default=str),
+                "now": now_utc
+            })
+
 
         _db_saved = True
+
+        if token_usage and model:
+            in_t = token_usage.get('input_tokens', 0)
+            out_t = token_usage.get('output_tokens', 0)
+            in_c, out_c = calculate_cost(model, in_t, out_t)
+            
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    INSERT INTO token_usage_logs (
+                        query_id, user_id, model, input_tokens, output_tokens, 
+                        input_token_cost, output_token_cost, created_at_utc, updated_at_utc
+                    ) VALUES (
+                        :qid, :uid, :model, :in_t, :out_t, :in_c, :out_c, now(), now()
+                    )
+                """), {
+                    "qid": feedback_id,
+                    "uid": user_id,
+                    "model": model,
+                    "in_t": in_t,
+                    "out_t": out_t,
+                    "in_c": in_c,
+                    "out_c": out_c
+                })
     except Exception as e:
         log.error("Failed to save query log to DB (id=%s will not persist): %s", feedback_id[:8], e)
 
@@ -177,7 +296,6 @@ def save_feedback(
     else:
         log.info("feedback[%s] session=%s exec=%.3fs query=%r", feedback_id[:8], session_id, execution_time, user_query[:80])
 
-    # Append to session memory only when DB save succeeded (feedback_id must exist in query_logs)
     if _db_saved:
         append_session_turn(session_id, user_query, generated_sql, answer, feedback_id, user_id=user_id)
 
@@ -244,14 +362,15 @@ def _ensure_session(conn, session_id: str, user_id: str = None):
 def get_session(session_id: str) -> dict:
     """Return session dict with 'turns' list (for backward compatibility)."""
     from config.database import get_auth_engine
+    print(f"Fetching session {session_id} from DB")
     try:
         engine = get_auth_engine()
         with engine.connect() as conn:
             rows = conn.execute(text("""
-                SELECT content FROM session_turns
-                WHERE session_id = :sid
-                ORDER BY created_at_utc ASC
-            """), {"sid": session_id}).fetchall()
+                SELECT content FROM conversation_memory
+                WHERE chat_id = :sid
+                ORDER BY created_at_utc DESC LIMIT :max_turns   
+            """), {"sid": session_id, "max_turns": settings.SESSION_MAX_TURNS}).fetchall()
 
         turns = []
         for row in rows:
@@ -260,6 +379,8 @@ def get_session(session_id: str) -> dict:
                 turns.append(turn)
             except Exception:
                 pass
+        
+        turns.reverse()
         return {"turns": turns}
     except Exception as e:
         log.error("get_session error: %s", e)
@@ -267,7 +388,7 @@ def get_session(session_id: str) -> dict:
 
 
 def append_session_turn(session_id: str, user_query: str, generated_sql: str, answer: str, feedback_id: str, user_id: str = None):
-    """Insert a turn into session_turns (keeps last SESSION_MAX_TURNS rows)."""
+    """Insert a turn into conversation_memory (keeps last SESSION_MAX_TURNS rows)."""
     from config.database import get_auth_engine
     now_utc = datetime.now(timezone.utc)
     content = json.dumps({
@@ -279,20 +400,22 @@ def append_session_turn(session_id: str, user_query: str, generated_sql: str, an
     try:
         engine = get_auth_engine()
         with engine.begin() as conn:
+            # Force ensure session exists using the session_id (which will be the chat_id)
             _ensure_session(conn, session_id, user_id)
+            
             conn.execute(text("""
-                INSERT INTO session_turns (id, session_id, role, content, created_at_utc, created_at_ist)
+                INSERT INTO conversation_memory (id, chat_id, role, content, created_at_utc, created_at_ist)
                 VALUES (:id, :sid, 'turn', :content, :now, :now AT TIME ZONE 'Asia/Kolkata')
             """), {"id": str(uuid.uuid4()), "sid": session_id, "content": content, "now": now_utc})
 
             # Trim to SESSION_MAX_TURNS — keep last N
             max_turns = settings.SESSION_MAX_TURNS
             conn.execute(text("""
-                DELETE FROM session_turns
-                WHERE session_id = :sid
+                DELETE FROM conversation_memory
+                WHERE chat_id = :sid
                   AND id NOT IN (
-                    SELECT id FROM session_turns
-                    WHERE session_id = :sid
+                    SELECT id FROM conversation_memory
+                    WHERE chat_id = :sid
                     ORDER BY created_at_utc DESC
                     LIMIT :max_turns
                   )
@@ -314,8 +437,8 @@ def update_session_turn(session_id: str, feedback_id: str, new_sql: str, new_ans
         engine = get_auth_engine()
         with engine.connect() as conn:
             rows = conn.execute(text("""
-                SELECT id, content FROM session_turns
-                WHERE session_id = :sid
+                SELECT id, content FROM conversation_memory
+                WHERE chat_id = :sid
                 ORDER BY created_at_utc DESC
                 LIMIT :max_turns
             """), {"sid": session_id, "max_turns": settings.SESSION_MAX_TURNS}).fetchall()
@@ -328,7 +451,7 @@ def update_session_turn(session_id: str, feedback_id: str, new_sql: str, new_ans
                     turn["answer"] = new_answer
                     with engine.begin() as conn:
                         conn.execute(text(
-                            "UPDATE session_turns SET content=:content WHERE id=:id"
+                            "UPDATE conversation_memory SET content=:content WHERE id=:id"
                         ), {"content": json.dumps(turn), "id": row.id})
                     break
             except Exception:
@@ -354,8 +477,76 @@ def format_session_for_prompt(session_id: str) -> str:
         if sql:
             lines.append(f'SQL: {sql}')
         lines.append(f'Answer: {t.get("answer", "")}\n')
-
+    print(f"Formatted session {session_id} for prompt with {len(recent)} turns")
     return "\n".join(lines)
+
+
+def save_mcq_step(chat_id: str, session_id: str, query_id: str, user_query: str, questions: list, model: str, user_id: str = None, msg_id: str = None, user_msg_id: str = None, lms_id: str = None):
+    """Save the MCQ generation step to chat_messages so it persists on refresh."""
+    from config.database import get_auth_engine
+    if not chat_id:
+        return
+    
+    now_utc = datetime.now(timezone.utc)
+    engine = get_auth_engine()
+    
+    try:
+        with engine.begin() as conn:
+            if chat_id:
+                chat_title = (user_query[:50] + '...') if len(user_query) > 50 else user_query
+                conn.execute(text("""
+                    INSERT INTO chats (id, user_id, title, last_message, lms_id, created_at_utc, updated_at_utc)
+                    VALUES (:id, :uid, :title, :msg, :lms_id, :now, :now)
+                    ON CONFLICT (id) DO UPDATE SET 
+                        lms_id = COALESCE(EXCLUDED.lms_id, chats.lms_id),
+                        updated_at_utc = EXCLUDED.updated_at_utc
+                """), {
+                    "id": chat_id,
+                    "uid": user_id,
+                    "title": chat_title,
+                    "msg": user_query,
+                    "lms_id": lms_id,
+                    "now": now_utc
+                })
+
+            final_user_msg_id = user_msg_id or f"u-{uuid.uuid4()}"
+            conn.execute(text("""
+                INSERT INTO chat_messages (id, chat_id, type, text, lms_id, created_at_utc, created_at_ist)
+                VALUES (:id, :cid, 'user', :text, :lms_id, :now, :now AT TIME ZONE 'Asia/Kolkata')
+                ON CONFLICT (id) DO UPDATE SET text = EXCLUDED.text, lms_id = COALESCE(EXCLUDED.lms_id, chat_messages.lms_id)
+            """), {"id": final_user_msg_id, "cid": chat_id, "text": user_query, "lms_id": lms_id, "now": now_utc})
+
+            mcq_msg_id = msg_id or f"m-{query_id}"
+            extra = {
+                "questions": questions,
+                "query_id": query_id,
+                "original_query": user_query,
+                "sessionId": session_id,
+                "chatId": chat_id,
+                "model": model
+            }
+            conn.execute(text("""
+                INSERT INTO chat_messages (id, chat_id, type, text, extra, model, session_id, user_query, lms_id, created_at_utc, created_at_ist)
+                VALUES (:id, :cid, 'mcq', :text, CAST(:extra AS jsonb), :model, :sid, :q, :lms_id, :now, :now AT TIME ZONE 'Asia/Kolkata')
+                ON CONFLICT (id) DO UPDATE SET
+                    text = EXCLUDED.text,
+                    extra = EXCLUDED.extra,
+                    model = EXCLUDED.model,
+                    lms_id = COALESCE(EXCLUDED.lms_id, chat_messages.lms_id)
+            """), {
+                "id": mcq_msg_id,
+                "cid": chat_id,
+                "text": "Please clarify your request:",
+                "extra": json.dumps(extra),
+                "model": model,
+                "sid": session_id,
+                "q": user_query,
+                "lms_id": lms_id,
+                "now": now_utc
+            })
+            log.info("Saved MCQ step to chat_messages chat=%s qid=%s", chat_id, query_id)
+    except Exception as e:
+        log.error("Failed to save MCQ step to chat_messages: %s", e)
 
 
 def _load_sessions() -> dict:

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import PropTypes from 'prop-types';
-import { executeSql } from '../services/api';
+import { executeSql, sendQuery, submitEnglishFeedback, exportExcel } from '../services/api';
 import { calcCost, formatCost, formatUsd, formatTokens } from '../services/tokenCost';
 import * as XLSX from 'xlsx';
 
@@ -198,10 +198,10 @@ function execBarStyle(secs) {
   return { pct, color };
 }
 
-export default function AiMessage({ msg, addToast, onFix, onRegen, settings, currentUser }) {
+const AiMessage = React.memo(({ msg, addToast, onFix, onRegen, onUpdate, settings, currentUser, lmsId }) => {
   const { id, model, isRegen, sql: apiSql, answer: apiAnswer, chart_type, data, execution_time,
-          session_context_alert, sessionId, userQuery, feedbackId: msgFeedbackId, token_usage, timestamp,
-          query_id: mcqQueryId, sql_auto_fixed, sql_error } = msg;
+          session_context_alert, sessionId, chatId: msgChatId, userQuery, feedbackId: msgFeedbackId, token_usage, timestamp,
+          query_id: mcqQueryId, sql_auto_fixed, sql_error, thoughts: apiThoughts, lms_type: msgLmsType } = msg;
 
   const tokenCost = token_usage
     ? calcCost(token_usage.model || model, token_usage.input_tokens, token_usage.output_tokens)
@@ -236,7 +236,9 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings, cur
   const [resultData, setResultData] = useState(data);
   const [resultAnswer, setResultAnswer] = useState(apiAnswer);
   const [resultExecTime, setResultExecTime] = useState(execution_time);
+  const [resultThoughts, setResultThoughts] = useState(apiThoughts);
   const [savingFix, setSavingFix] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   // Table sorting
   const [sortCol, setSortCol] = useState(null);
@@ -244,6 +246,13 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings, cur
 
   const fixInputRef = useRef(null);
   const editAreaRef = useRef(null);
+
+  useEffect(() => {
+    if (data) setResultData(data);
+    if (apiAnswer) setResultAnswer(apiAnswer);
+    if (execution_time) setResultExecTime(execution_time);
+    if (apiThoughts) setResultThoughts(apiThoughts);
+  }, [id, data, apiAnswer, execution_time, apiThoughts]);
 
   useEffect(() => {
     if (fixPanelOpen && fixInputRef.current) fixInputRef.current.focus();
@@ -297,6 +306,11 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings, cur
     setHistoryIdx(newHistory.length - 1);
     setIsEditing(false);
     setIsEdited(true);
+
+    // Sync to parent state
+    if (onUpdate) {
+      onUpdate(id, { sql: editText, isEdited: true });
+    }
   };
 
   const handleUndo = () => {
@@ -335,16 +349,30 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings, cur
 
   const handleRun = async () => {
     if (!sql || !sessionId) return;
+    const lmsType = msgLmsType || msg.extra?.lmsType || msg.extra?.lms_type;
+    const chatId = msgChatId || msg.extra?.chatId || msg.extra?.chat_id;
     setRunText('⟳ Running...');
     setRunError('');
     try {
-      const res = await executeSql(sql, sessionId, userQuery, msgFeedbackId);
+      const res = await executeSql(sql, sessionId, userQuery, msgFeedbackId, lmsType, chatId, lmsId);
       if (res.ok) {
-        const { answer, data: resultRows, execution_time: execTime } = res.data;
+        const { answer, data: resultRows, execution_time: execTime, thoughts: execThoughts } = res.data;
         setResultData(resultRows);
         setResultAnswer(answer);
         setResultExecTime(execTime);
+        setResultThoughts(execThoughts);
         setRunText(`✓ ${resultRows?.length || 0} rows`);
+        
+        // SYNC TO PARENT STATE TO PREVENT OVERWRITE ON NEXT SAVE
+        if (onUpdate) {
+          onUpdate(id, { 
+            answer, 
+            data: resultRows, 
+            execution_time: execTime, 
+            thoughts: execThoughts 
+          });
+        }
+
         setTimeout(() => setRunText('▶ Run'), 3000);
       } else {
         setRunText('▶ Run');
@@ -358,13 +386,19 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings, cur
     }
   };
 
-  const handleExportExcel = () => {
-    if (!displayData || displayData.length === 0) return;
-    const ws = XLSX.utils.json_to_sheet(displayData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Results');
-    const fileName = `query_results_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.xlsx`;
-    XLSX.writeFile(wb, fileName);
+  const handleExportExcel = async () => {
+    if (!sql || isExporting) return;
+    setIsExporting(true);
+    try {
+      const fileName = `query_results_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.xlsx`;
+      await exportExcel(sql, msg.lms_type, fileName);
+      addToast('Full results exported to Excel', 'success');
+    } catch (err) {
+      console.error('Export error:', err);
+      addToast(`❌ Export failed: ${err.message}`);
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   // Table sort logic
@@ -384,6 +418,10 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings, cur
       return sortDir === 'asc' ? as.localeCompare(bs) : bs.localeCompare(as);
     });
   }, [resultData, sortCol, sortDir]);
+
+  const highlightedSql = React.useMemo(() => highlightSql(sql), [sql]);
+  const renderedAnswer = React.useMemo(() => renderAnswer(resultAnswer || apiAnswer), [resultAnswer, apiAnswer]);
+  const renderedThoughts = React.useMemo(() => renderAnswer(resultThoughts || apiThoughts || msg.extra?.thoughts), [resultThoughts, apiThoughts, msg.extra?.thoughts]);
 
   const execBar = resultExecTime ? execBarStyle(resultExecTime) : null;
   const displayData = sortedData || resultData;
@@ -477,7 +515,7 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings, cur
           </div>
 
           {!isEditing ? (
-            <div className="query-code" dangerouslySetInnerHTML={{ __html: highlightSql(sql) }} />
+            <div className="query-code" dangerouslySetInnerHTML={{ __html: highlightedSql }} />
           ) : (
             <textarea
               className="query-edit-textarea"
@@ -545,6 +583,25 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings, cur
         </div>
       )}
 
+      {/* EXPLANATION / THOUGHTS */}
+      {(resultThoughts || apiThoughts || msg.extra?.thoughts) && (
+        <div className={`whisper-explanation ${showExplain ? 'open' : ''}`}>
+          <div className="explanation-header" onClick={() => setShowExplain(!showExplain)}>
+            <span className="explanation-icon">⬡</span>
+            <span className="explanation-title">Explanation</span>
+            <span className="explanation-toggle">{showExplain ? '−' : '+'}</span>
+          </div>
+          {showExplain && (
+            <div className="explanation-body markdown-content">
+              {renderedThoughts.map((seg, idx) => {
+                 if (seg.type === 'spacer') return <div key={idx} className="answer-spacer" />;
+                 return <p key={idx} dangerouslySetInnerHTML={{ __html: seg.html }} />;
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ANSWER */}
       {(resultAnswer || apiAnswer) && (
         <div className="whisper-answer">
@@ -554,7 +611,7 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings, cur
             <button className="query-btn answer-copy-btn" onClick={handleCopyAnswer}>{copyAnswerText}</button>
           </div>
           <div className="answer-text markdown-content">
-            {renderAnswer(resultAnswer || apiAnswer).map((seg, idx) => {
+            {renderedAnswer.map((seg, idx) => {
               if (seg.type === 'heading') {
                 const Tag = `h${seg.level + 2}`;
                 return <Tag key={idx} className="answer-heading" dangerouslySetInnerHTML={{ __html: seg.html }} />;
@@ -595,12 +652,15 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings, cur
       {displayData && displayData.length > 0 && (
         <div className="whisper-data">
           <div className="data-header">
-            <span className="data-icon">📊</span>
-            <span className={`row-count-badge ${rowBadgeClass(displayData.length)}`}>
-              {displayData.length} {displayData.length === 1 ? 'row' : 'rows'}
-            </span>
-
-            {execBar && (
+              <div className={`query-stat count-stat ${msg.total_rows > (displayData?.length || 0) ? 'stat-warning' : ''}`}>
+                <span className="stat-icon">📊</span>
+                <span className="stat-value">
+                  {msg.total_rows && msg.total_rows > (displayData?.length || 0) 
+                    ? `${displayData.length} of ${msg.total_rows.toLocaleString()}` 
+                    : (displayData?.length || 0)} 
+                  {displayData?.length === 1 ? ' row' : ' rows'}
+                </span>
+              </div>{execBar && (
               <div className="exec-bar-wrap" title={`Executed in ${resultExecTime}s`}>
                 <div className="exec-bar">
                   <div className="exec-bar-fill" style={{ width: `${execBar.pct}%`, background: execBar.color }} />
@@ -619,8 +679,13 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings, cur
                 Show Less
               </button>
             )}
-            <button className="export-excel-btn" onClick={handleExportExcel} title="Export to Excel">
-              ⬇ Excel
+            <button 
+              className={`export-excel-btn ${isExporting ? 'exporting' : ''}`} 
+              onClick={handleExportExcel} 
+              disabled={isExporting}
+              title="Export to Excel"
+            >
+              {isExporting ? '⟳ Preparing...' : '⬇ Excel'}
             </button>
           </div>
 
@@ -730,7 +795,7 @@ export default function AiMessage({ msg, addToast, onFix, onRegen, settings, cur
       )}
     </div>
   );
-}
+});
 
 AiMessage.propTypes = {
   msg: PropTypes.shape({
@@ -753,3 +818,5 @@ AiMessage.propTypes = {
   settings: PropTypes.object,
   currentUser: PropTypes.object,
 };
+
+export default AiMessage;

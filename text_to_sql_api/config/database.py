@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from config.settings import settings
+from utils.data_utils import enforce_sql_limit, scrub_results
 
 
 def _make_engine(url: str):
@@ -49,8 +50,10 @@ def test_connection() -> bool:
         return False
 
 
-def execute_sql(sql: str, database_id: str = "degreefyd_online_lms") -> list[dict]:
+def execute_sql(sql: str, database_id: str = None, apply_limit: bool = True) -> list[dict]:
     """Execute a read-only SQL query against the LMS database."""
+    if database_id is None:
+        database_id = "degreefyd_online_lms"
     engine = get_lms_engine(database_id)
     try:
         with engine.connect() as conn:
@@ -58,7 +61,8 @@ def execute_sql(sql: str, database_id: str = "degreefyd_online_lms") -> list[dic
             result = conn.execute(text(sql))
             columns = list(result.keys())
             rows = result.fetchall()
-            return [dict(zip(columns, row)) for row in rows]
+            data = [dict(zip(columns, row)) for row in rows]
+
+            return scrub_results(data) if apply_limit else data
     except Exception as e:
-        print(f"❌ SQL execution error: {e}")
         raise

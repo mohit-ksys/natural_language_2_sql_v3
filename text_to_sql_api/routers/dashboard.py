@@ -8,57 +8,112 @@ from sqlalchemy import text
 from typing import Optional
 
 from auth.dependencies import require_admin_or_supervisor
-
 from config.database import get_auth_engine
 
 
 def _parse_date(value: Optional[str], param_name: str) -> Optional[str]:
-    """Validate ISO date/datetime string; raise 400 on bad format."""
     if not value:
         return None
     try:
         datetime.fromisoformat(value)
         return value
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid date format for '{param_name}'. Use ISO 8601 (e.g. 2024-04-01 or 2024-04-01T00:00:00).")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid date format for '{param_name}'. Use ISO 8601."
+        )
+
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 
+
 @router.get("/stats")
-def get_stats(_: dict = Depends(require_admin_or_supervisor)):
+def get_stats(
+    _: dict = Depends(require_admin_or_supervisor),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    lms_id: Optional[str] = Query(None),
+):
+    date_from = _parse_date(date_from, "date_from")
+    date_to = _parse_date(date_to, "date_to")
 
-    """Summary cards — counts for last 24 hours and all time."""
     engine = get_auth_engine()
+
+    conditions = []
+    params = {}
+
+    if date_from:
+        conditions.append("ql.created_at_utc >= CAST(:date_from AS timestamptz)")
+        params["date_from"] = date_from
+
+    if date_to:
+        conditions.append("ql.created_at_utc <= CAST(:date_to AS timestamptz)")
+        params["date_to"] = date_to
+
+    if lms_id:
+        conditions.append("ql.lms_id = :lms_id")
+        params["lms_id"] = lms_id
+
+    if conditions:
+        where_clause = "WHERE " + " AND ".join(conditions)
+    else:
+        where_clause = "WHERE ql.created_at_utc >= now() - interval '24 hours'"
+
     with engine.connect() as conn:
-        total_24h = conn.execute(text("""
-            SELECT COUNT(*) FROM query_logs
-            WHERE created_at_utc >= now() - interval '24 hours'
-        """)).scalar()
 
-        total_all = conn.execute(text("SELECT COUNT(*) FROM query_logs")).scalar()
+        total_24h = conn.execute(text(f"""
+            SELECT COUNT(*) FROM query_logs ql
+            {where_clause}
+        """), params).scalar()
 
-        most_active_row = conn.execute(text("""
-            SELECT user_name as username, COUNT(*) as cnt
-            FROM query_logs
-            WHERE created_at_utc >= now() - interval '24 hours'
-            GROUP BY user_name
+        total_all = conn.execute(text(f"""
+            SELECT COUNT(*) FROM query_logs ql
+            {f"WHERE ql.lms_id = :lms_id" if lms_id else ""}
+        """), params if lms_id else {}).scalar()
+
+        token_stats_24h = conn.execute(text(f"""
+            SELECT 
+                SUM(tu.input_tokens) as in_t,
+                SUM(tu.output_tokens) as out_t,
+                SUM(tu.input_token_cost) as in_c,
+                SUM(tu.output_token_cost) as out_c
+            FROM token_usage_logs tu
+            JOIN query_logs ql ON ql.id = tu.query_id
+            {where_clause}
+        """), params).fetchone()
+
+        token_stats_all = conn.execute(text(f"""
+            SELECT 
+                SUM(input_tokens) as in_t,
+                SUM(output_tokens) as out_t,
+                SUM(input_token_cost) as in_c,
+                SUM(output_token_cost) as out_c
+            FROM token_usage_logs tu
+            JOIN query_logs ql ON ql.id = tu.query_id
+            {f"WHERE ql.lms_id = :lms_id" if lms_id else ""}
+        """), params if lms_id else {}).fetchone()
+
+        most_active_row = conn.execute(text(f"""
+            SELECT ql.user_name as username, COUNT(*) as cnt
+            FROM query_logs ql
+            {where_clause}
+            GROUP BY ql.user_name
             ORDER BY cnt DESC
             LIMIT 1
-        """)).fetchone()
+        """), params).fetchone()
 
+        errors_24h = conn.execute(text(f"""
+            SELECT COUNT(*) FROM query_logs ql
+            {where_clause}
+            AND ql.error_message IS NOT NULL AND ql.error_message != ''
+        """), params).scalar()
 
-        errors_24h = conn.execute(text("""
-            SELECT COUNT(*) FROM query_logs
-            WHERE created_at_utc >= now() - interval '24 hours'
-              AND error_message IS NOT NULL AND error_message != ''
-        """)).scalar()
-
-        feedback_24h = conn.execute(text("""
-            SELECT COUNT(*) FROM query_logs
-            WHERE created_at_utc >= now() - interval '24 hours'
-              AND has_any_feedback = true
-        """)).scalar()
+        feedback_24h = conn.execute(text(f"""
+            SELECT COUNT(*) FROM query_logs ql
+            {where_clause}
+            AND ql.has_any_feedback = true
+        """), params).scalar()
 
     return {
         "total_queries_24h": total_24h,
@@ -66,6 +121,22 @@ def get_stats(_: dict = Depends(require_admin_or_supervisor)):
         "most_active_user_24h": most_active_row.username if most_active_row else None,
         "errors_24h": errors_24h,
         "feedback_queries_24h": feedback_24h,
+        "tokens_24h": {
+            "input": int(token_stats_24h.in_t or 0),
+            "output": int(token_stats_24h.out_t or 0),
+            "total": int((token_stats_24h.in_t or 0) + (token_stats_24h.out_t or 0)),
+            "cost_input": float(token_stats_24h.in_c or 0),
+            "cost_output": float(token_stats_24h.out_c or 0),
+            "cost_total": float((token_stats_24h.in_c or 0) + (token_stats_24h.out_c or 0)),
+        },
+        "tokens_all_time": {
+            "input": int(token_stats_all.in_t or 0),
+            "output": int(token_stats_all.out_t or 0),
+            "total": int((token_stats_all.in_t or 0) + (token_stats_all.out_t or 0)),
+            "cost_input": float(token_stats_all.in_c or 0),
+            "cost_output": float(token_stats_all.out_c or 0),
+            "cost_total": float((token_stats_all.in_c or 0) + (token_stats_all.out_c or 0)),
+        }
     }
 
 
@@ -74,16 +145,16 @@ def get_logs(
     _: dict = Depends(require_admin_or_supervisor),
 
     page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
+    page_size: int = Query(10, ge=1, le=200), 
     username: Optional[str] = Query(None),
-    feedback_type: Optional[str] = Query(None),   # 'logic'|'sql'|'english'|'any'|None
-    has_error: Optional[str] = Query(None),        # 'yes'|'no'|None
+    feedback_type: Optional[str] = Query(None),
+    has_error: Optional[str] = Query(None),
     model: Optional[str] = Query(None),
     lms_type: Optional[str] = Query(None),
-    date_from: Optional[str] = Query(None),        # ISO date string
+    date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
+    lms_id: Optional[str] = Query(None),
 ):
-    """Paginated + filtered query log for dashboard table."""
     date_from = _parse_date(date_from, "date_from")
     date_to = _parse_date(date_to, "date_to")
 
@@ -95,7 +166,6 @@ def get_logs(
     if username:
         conditions.append("ql.user_name = :username")
         params["username"] = username
-
 
     if feedback_type == "logic":
         conditions.append("ql.has_logic_feedback = true")
@@ -127,32 +197,25 @@ def get_logs(
         conditions.append("ql.created_at_utc <= CAST(:date_to AS timestamptz)")
         params["date_to"] = date_to
 
+    if lms_id:
+        conditions.append("ql.lms_id = :lms_id")
+        params["lms_id"] = lms_id
+
     where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 
     query = f"""
-        SELECT
-            ql.id, ql.session_id, ql.chat_id,
-            ql.user_name as username, ql.user_email as email, ql.user_role as role,
-            ql.user_query, ql.generated_sql, ql.answer,
-
-            ql.execution_time, ql.error_message, ql.model, ql.lms_type,
-            ql.chart_type, ql.token_usage, ql.mcq_data,
-            ql.has_logic_feedback, ql.logic_feedback_text,
-            ql.has_sql_feedback, ql.corrected_sql,
-            ql.has_any_feedback,
-            ql.created_at_utc, ql.created_at_ist
+        SELECT *
         FROM query_logs ql
+        LEFT JOIN token_usage_logs tu ON tu.query_id = ql.id
         {where_clause}
         ORDER BY ql.created_at_utc DESC
         LIMIT :limit OFFSET :offset
     """
 
-
     count_query = f"""
         SELECT COUNT(*) FROM query_logs ql
         {where_clause}
     """
-
 
     with engine.connect() as conn:
         rows = conn.execute(text(query), params).fetchall()
@@ -162,7 +225,6 @@ def get_logs(
     logs = []
     for row in rows:
         d = dict(row._mapping)
-        # Serialize non-serializable types
         for k in ("created_at_utc", "created_at_ist"):
             if d.get(k):
                 d[k] = d[k].isoformat()

@@ -48,7 +48,7 @@ CREATE TABLE query_logs (
   chart_type            TEXT,
   mcq_data              JSONB,
   is_fix                BOOLEAN DEFAULT false,
-  is_regen              BOOLEAN DEFAULT false,
+  is_regenerate              BOOLEAN DEFAULT false,
 
   -- feedback/logic
   has_logic_feedback    BOOLEAN DEFAULT false,
@@ -82,11 +82,58 @@ CREATE TABLE sessions (
 
 CREATE TABLE session_turns (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  session_id      TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+  chat_id      TEXT REFERENCES sessions(id) ON DELETE CASCADE,
   role            TEXT NOT NULL,    -- 'turn'
   content         TEXT NOT NULL,    -- JSON blob: {user_query, generated_sql, answer, feedback_id}
   created_at_utc  TIMESTAMPTZ DEFAULT now(),
   created_at_ist  TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')
+);
+
+CREATE TABLE chats (
+  id              TEXT PRIMARY KEY,           -- frontend chat id
+  user_id         TEXT,                       -- Reference to users(id)
+  title           TEXT,
+  last_message    TEXT,
+  is_pinned       BOOLEAN DEFAULT false,
+  created_at_utc  TIMESTAMPTZ DEFAULT now(),
+  created_at_ist  TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata'),
+  updated_at_utc  TIMESTAMPTZ DEFAULT now(),
+  updated_at_ist  TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')
+);
+
+CREATE TABLE chat_messages (
+  id              TEXT PRIMARY KEY,           -- frontend message id
+  chat_id         TEXT REFERENCES chats(id) ON DELETE CASCADE,
+  type            TEXT NOT NULL,
+  text            TEXT,
+  is_fix          BOOLEAN DEFAULT false,
+  is_regenerate        BOOLEAN DEFAULT false,
+  sql             TEXT,
+  answer          TEXT,
+  chart_type      TEXT,
+  execution_time  FLOAT,
+  model           TEXT,
+  session_id      TEXT,
+  user_query      TEXT,
+  feedback_id     TEXT,
+  token_usage     JSONB,
+  error           TEXT,
+  extra           JSONB,                      -- for any extra frontend fields (MCQ etc.)
+  created_at_utc   TIMESTAMPTZ DEFAULT now(),
+  created_at_ist   TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')
+);
+
+CREATE TABLE token_usage_logs (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  query_id            UUID REFERENCES query_logs(id) ON DELETE SET NULL,
+  user_id             TEXT,
+  model               TEXT,
+  input_tokens        INTEGER DEFAULT 0,
+  output_tokens       INTEGER DEFAULT 0,
+  input_token_cost    NUMERIC(15, 10) DEFAULT 0,
+  output_token_cost   NUMERIC(15, 10) DEFAULT 0,
+  created_at_utc      TIMESTAMPTZ DEFAULT now(),
+  updated_at_utc      TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE TABLE user_chats (
@@ -103,3 +150,8 @@ CREATE INDEX idx_query_logs_created_at_utc ON query_logs(created_at_utc DESC);
 CREATE INDEX idx_session_turns_session_id ON session_turns(session_id);
 CREATE INDEX idx_refresh_tokens_user_id ON refresh_tokens(user_id);
 CREATE INDEX idx_refresh_tokens_token_hash ON refresh_tokens(token_hash);
+CREATE INDEX idx_chats_user_id ON chats(user_id);
+CREATE INDEX idx_chat_messages_chat_id ON chat_messages(chat_id);
+CREATE INDEX idx_chat_messages_created_at_utc ON chat_messages(created_at_utc DESC);
+CREATE INDEX idx_token_usage_logs_query_id ON token_usage_logs(query_id);
+CREATE INDEX idx_token_usage_logs_user_id ON token_usage_logs(user_id);

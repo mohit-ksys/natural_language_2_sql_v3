@@ -1,9 +1,6 @@
-/**
- * Backend API service for GrepSQL AI — with JWT auth and silent refresh.
- */
 
-const API_BASE = 'https://api-sql.degreefyd.com';
-const LMS_API_BASE = 'https://central-lms-api-test.degreefyd.com';
+const API_BASE = 'http://localhost:8000';
+const LMS_API_BASE = 'http://localhost:5000';
 
 function setCookie(name, value, days = 7) {
   const date = new Date();
@@ -23,6 +20,34 @@ function getCookie(name) {
   return null;
 }
 
+export async function exportExcel(sql, lmsType, fileName) {
+  const token = getAccessToken();
+  const response = await fetch(`${API_BASE}/export-excel`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify({
+      sql,
+      lms_type: lmsType,
+      filename: fileName
+    })
+  });
+
+  if (!response.ok) throw new Error('Export failed');
+
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  a.remove();
+}
+
 function eraseCookie(name) {
   document.cookie = name + '=; Max-Age=-99999999; path=/; SameSite=Lax';
 }
@@ -30,12 +55,16 @@ function eraseCookie(name) {
 
 
 export function getAccessToken() {
-  return getCookie('degreefyd_nlp_token') || localStorage.getItem('access_token');
+  return localStorage.getItem('df_at') || getCookie('degreefyd_nlp_token');
+}
+
+export function getRefreshToken() {
+  return null;
 }
 
 export function getUser() {
   try {
-    const raw = localStorage.getItem('user');
+    const raw = localStorage.getItem('df_user');
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -47,42 +76,35 @@ export function isLoggedIn() {
 }
 
 export function logout() {
-  const refresh_token = localStorage.getItem('refresh_token');
-  if (refresh_token) {
-    fetch(`${API_BASE}/auth/logout`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token }),
-    }).catch(() => {});
-  }
-  localStorage.removeItem('access_token');
-  localStorage.removeItem('refresh_token');
-  localStorage.removeItem('user');
-  eraseCookie('degreefyd_nlp_token');
-  window.location.reload();
+  apiFetch(`${LMS_API_BASE}/api/auth/logout`, {
+    method: 'POST',
+  }).finally(() => {
+    localStorage.removeItem('df_at');
+    localStorage.removeItem('df_user');
+    eraseCookie('degreefyd_nlp_token');
+    window.location.reload();
+  });
 }
 
 async function tryRefresh() {
-  const refresh_token = localStorage.getItem('refresh_token');
-  if (!refresh_token) return false;
   try {
-    const res = await fetch(`${API_BASE}/auth/refresh`, {
+    const res = await fetch(`${LMS_API_BASE}/api/auth/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token }),
+      credentials: 'include',
     });
     if (res.ok) {
       const data = await res.json();
-      localStorage.setItem('access_token', data.access_token);
+      localStorage.setItem('df_at', data.df_at);
       return true;
     }
-  } catch {}
+  } catch (e) {
+    console.error('Refresh failed:', e);
+  }
   return false;
 }
 
-/**
- * Central fetch wrapper — injects Authorization header and handles 401 silently.
- */
+
 async function apiFetch(url, options = {}, _retry = false) {
   const token = getAccessToken();
   const headers = {
@@ -90,7 +112,11 @@ async function apiFetch(url, options = {}, _retry = false) {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 
-  const res = await fetch(url, { ...options, headers });
+  const res = await fetch(url, { 
+    ...options, 
+    headers,
+    credentials: 'include' 
+  });
 
   if (res.status === 401 && !_retry) {
     const refreshed = await tryRefresh();
@@ -105,26 +131,20 @@ async function apiFetch(url, options = {}, _retry = false) {
   return res;
 }
 
-// ─── Auth endpoints ───────────────────────────────────────────────────────────
 
-export async function login(username, password) {
+export async function loginStaff(email, password) {
   try {
-    // Calling Unified LMS Login instead of local NLP login
     const res = await fetch(`${LMS_API_BASE}/api/auth/login/staff`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: username, password }),
+      body: JSON.stringify({ email, password }),
+      credentials: 'include',
     });
     
     if (res.ok) {
       const data = await res.json();
-      // Store token in cookie as requested
-      setCookie('degreefyd_nlp_token', data.token, 7);
-      
-      // Store in localStorage for backward compatibility with existing components
-      localStorage.setItem('access_token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      
+      localStorage.setItem('df_at', data.df_at);
+      localStorage.setItem('df_user', JSON.stringify(data.user));
       return { ok: true, user: data.user };
     }
     
@@ -135,7 +155,37 @@ export async function login(username, password) {
   }
 }
 
-// ─── User management (superadmin) ─────────────────────────────────────────────
+export async function validateSSO(token) {
+  try {
+    const res = await fetch(`${LMS_API_BASE}/api/auth/sso/validate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+      credentials: 'include',
+    });
+    
+    if (res.ok) {
+      const data = await res.json();
+      localStorage.setItem('df_at', data.df_at);
+      localStorage.setItem('df_user', JSON.stringify(data.user));
+      return { ok: true, user: data.user };
+    }
+    
+    const err = await res.json();
+    return { ok: false, error: err.error || 'SSO Validation failed' };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+export async function fetchLMSTargets() {
+  try {
+    const res = await apiFetch(`${LMS_API_BASE}/api/auth/lms-targets`);
+    if (!res.ok) throw new Error((await res.json()).error || 'Failed to fetch LMS targets');
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
 
 export async function fetchUsers() {
   try {
@@ -197,11 +247,13 @@ export async function reactivateUser(username) {
   }
 }
 
-// ─── Dashboard ────────────────────────────────────────────────────────────────
 
-export async function fetchDashboardStats() {
+export async function fetchDashboardStats(params = {}) {
+   const qs = new URLSearchParams(
+    Object.entries(params).filter(([, v]) => v != null && v !== '')
+  ).toString();
   try {
-    const res = await apiFetch(`${API_BASE}/dashboard/stats`);
+    const res = await apiFetch(`${API_BASE}/dashboard/stats${qs ? '?' + qs : ''}`);
     if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
     return { ok: true, data: await res.json() };
   } catch (e) {
@@ -222,7 +274,6 @@ export async function fetchDashboardLogs(params = {}) {
   }
 }
 
-// ─── Utilities ────────────────────────────────────────────────────────────────
 
 export function formatUtcTimestamp(isoString) {
   try {
@@ -247,9 +298,8 @@ export async function checkHealth() {
   }
 }
 
-// ─── Query endpoints ──────────────────────────────────────────────────────────
 
-export async function sendQuery(sessionId, userQuery, model = 'gemini-3.1-flash-lite-preview', execute = true, chatId = '', lmsType = null) {
+export async function sendQuery(sessionId, userQuery, model = 'gemini-3.1-flash-lite-preview', execute = true, chatId = '', lmsType = null, userMsgId = null, lmsId = null) {
   try {
     const res = await apiFetch(`${API_BASE}/query`, {
       method: 'POST',
@@ -258,9 +308,11 @@ export async function sendQuery(sessionId, userQuery, model = 'gemini-3.1-flash-
         session_id: sessionId,
         chat_id: chatId,
         user_query: userQuery,
+        user_msg_id: userMsgId,
         model,
         execute,
         lms_type: lmsType,
+        lms_id: lmsId, 
         thinking_enabled: false,
         thinking_level: 'high',
         include_thoughts: false,
@@ -276,7 +328,7 @@ export async function sendQuery(sessionId, userQuery, model = 'gemini-3.1-flash-
   }
 }
 
-export async function executeSql(sql, sessionId, originalQuery = '', feedbackId = '', lmsType = null) {
+export async function executeSql(sql, sessionId, originalQuery = '', feedbackId = '', lmsType = null, chatId = '', lmsId = null) {
   try {
     const res = await apiFetch(`${API_BASE}/execute`, {
       method: 'POST',
@@ -284,6 +336,8 @@ export async function executeSql(sql, sessionId, originalQuery = '', feedbackId 
       body: JSON.stringify({
         sql, session_id: sessionId, original_query: originalQuery,
         feedback_id: feedbackId, lms_type: lmsType,
+        lms_id: lmsId, 
+        chat_id: chatId
       }),
     });
     if (!res.ok) {
@@ -296,9 +350,10 @@ export async function executeSql(sql, sessionId, originalQuery = '', feedbackId 
   }
 }
 
-export async function loadChatsFromBackend() {
+export async function loadChatsFromBackend(lmsId = null) {
   try {
-    const res = await apiFetch(`${API_BASE}/chats/load`);
+    const url = lmsId ? `${API_BASE}/chats/load?lms_id=${lmsId}` : `${API_BASE}/chats/load`;
+    const res = await apiFetch(url);
     if (res.ok) {
       const data = await res.json();
       return { ok: true, ...data };
@@ -323,16 +378,30 @@ export async function saveChatsToBackend(chats, lastChatId) {
   }
 }
 
+export async function loadChatMessages(chatId, limit = 50, offset = 0) {
+  try {
+    const res = await apiFetch(`${API_BASE}/chats/${chatId}/messages?limit=${limit}&offset=${offset}`);
+    console.log(`API loadChatMessages: chatId=${chatId}, limit=${limit}, offset=${offset}, response=`, res);
+    if (res.ok) {
+      const data = await res.json();
+      return { ok: true, messages: data.messages, hasMore: data.has_more };
+    }
+    return { ok: false, error: 'Failed to load messages', messages: [], hasMore: false };
+  } catch (e) {
+    return { ok: false, error: e.message, messages: [], hasMore: false };
+  }
+}
+
 export async function switchModel(modelId) {
   return { ok: true, model: modelId };
 }
 
-export async function requestMCQs(sessionId, userQuery, model = 'gemini-3.1-flash-lite-preview', chatId = '', lmsType = null) {
+export async function requestMCQs(sessionId, userQuery, model = 'gemini-3.1-flash-lite-preview', chatId = '', lmsType = null, userMsgId = null, lmsId = null) {
   try {
     const res = await apiFetch(`${API_BASE}/disambiguate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_query: userQuery, session_id: sessionId, chat_id: chatId, model, lms_type: lmsType }),
+      body: JSON.stringify({ user_query: userQuery, session_id: sessionId, chat_id: chatId, model, lms_type: lmsType, user_msg_id: userMsgId, lms_id: lmsId }),
     });
     if (!res.ok) {
       const errData = await res.json();
@@ -344,12 +413,12 @@ export async function requestMCQs(sessionId, userQuery, model = 'gemini-3.1-flas
   }
 }
 
-export async function submitMCQAnswers(queryId, sessionId, answers, model = 'gemini-3.1-flash-lite-preview', execute = true, chatId = '') {
+export async function submitMCQAnswers(queryId, sessionId, answers, model = 'gemini-3.1-flash-lite-preview', execute = true, chatId = '', lmsId = null) {
   try {
     const res = await apiFetch(`${API_BASE}/answer-mcq`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query_id: queryId, session_id: sessionId, chat_id: chatId, answers, model, execute }),
+      body: JSON.stringify({ query_id: queryId, session_id: sessionId, chat_id: chatId, answers, model, execute, lms_id: lmsId }),
     });
     if (!res.ok) {
       const errData = await res.json();
@@ -361,12 +430,12 @@ export async function submitMCQAnswers(queryId, sessionId, answers, model = 'gem
   }
 }
 
-export async function submitEnglishFeedback(queryId, sessionId, feedback, model = 'gemini-3.1-flash-lite-preview', execute = true, chatId = '') {
+export async function submitEnglishFeedback(queryId, sessionId, feedback, model = 'gemini-3.1-flash-lite-preview', execute = true, chatId = '', lmsId = null) {
   try {
     const res = await apiFetch(`${API_BASE}/english-feedback`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query_id: queryId, session_id: sessionId, chat_id: chatId, feedback, model, execute }),
+      body: JSON.stringify({ query_id: queryId, session_id: sessionId, chat_id: chatId, feedback, model, execute, lms_id: lmsId }),
     });
     if (!res.ok) {
       const errData = await res.json();

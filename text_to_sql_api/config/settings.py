@@ -45,6 +45,7 @@ class Settings(BaseSettings):
 
     SESSION_MAX_TURNS: int = 5
     SESSION_PROMPT_TURNS: int = 5
+    DATA_LIMIT: int = 100
 
     # Maps database_id → (settings attribute name for URL, knowledge-base category)
     # Add new entries here when a new client DB is provisioned.
@@ -89,6 +90,5 @@ class Settings(BaseSettings):
     @property
     def VALID_DATABASE_IDS(self) -> list[str]:
         return list(self.DATABASE_MAP.keys())
-
 
 settings = Settings()
