@@ -43,8 +43,8 @@ class Settings(BaseSettings):
         "gemini-3-flash-preview",
     ]
 
-    SESSION_MAX_TURNS: int = 5
-    SESSION_PROMPT_TURNS: int = 5
+    SESSION_MAX_TURNS: int = 10
+    SESSION_PROMPT_TURNS: int = 10
     DATA_LIMIT: int = 100
 
     # Maps database_id → (settings attribute name for URL, knowledge-base category)

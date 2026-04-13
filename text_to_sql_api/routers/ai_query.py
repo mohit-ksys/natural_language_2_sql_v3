@@ -95,7 +95,7 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
     session_history = memory_service.format_session_for_prompt(req.session_id)
     session = memory_service.get_session(req.session_id)
     turns_count = len(session.get("turns", []))
-    should_show_context_alert = turns_count >= 5
+    should_show_context_alert = turns_count >= settings.SESSION_MAX_TURNS
 
     try:
         generated_sql, thoughts, sql_usage = llm_service.generate_sql(
@@ -171,7 +171,7 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
         return QueryResponse(
             feedback_id=fid, session_id=req.session_id, chat_id=chat_id, sql=generated_sql,
             execution_time=execution_time, cached=False, executed=False,
-            session_context_alert="⚠️ Session context limited to last 5 queries" if should_show_context_alert else None,
+            session_context_alert=f"⚠️ Session context limited to last {settings.SESSION_MAX_TURNS} queries" if should_show_context_alert else None,
             token_usage=_token_usage, thoughts=thoughts
         )
 
@@ -203,7 +203,7 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
         executed=True,
         token_usage=res.token_usage,
         thoughts=res.thoughts,
-        session_context_alert="⚠️ Session context limited to last 5 queries" if should_show_context_alert else None
+        session_context_alert=f"⚠️ Session context limited to last {settings.SESSION_MAX_TURNS} queries" if should_show_context_alert else None
     )
 
 
@@ -405,7 +405,7 @@ def _generate_and_respond(
     session_history = memory_service.format_session_for_prompt(session_id)
     session = memory_service.get_session(session_id)
     turns_count = len(session.get("turns", []))
-    should_show_context_alert = turns_count >= 5
+    should_show_context_alert = turns_count >= settings.SESSION_MAX_TURNS
 
     combined_history = session_history
     if extra_context:
@@ -471,7 +471,7 @@ def _generate_and_respond(
         return QueryResponse(
             feedback_id=fid, session_id=session_id, chat_id=chat_id, sql=generated_sql,
             execution_time=execution_time, cached=False, executed=False,
-            session_context_alert="⚠️ Session context limited to last 5 queries" if should_show_context_alert else None,
+            session_context_alert=f"⚠️ Session context limited to last {settings.SESSION_MAX_TURNS} queries" if should_show_context_alert else None,
             token_usage=_token_usage, thoughts=thoughts
         )
 
@@ -504,7 +504,7 @@ def _generate_and_respond(
         executed=True,
         token_usage=res.token_usage,
         thoughts=res.thoughts,
-        session_context_alert="⚠️ Session context limited to last 5 queries" if should_show_context_alert else None
+        session_context_alert=f"⚠️ Session context limited to last {settings.SESSION_MAX_TURNS} queries" if should_show_context_alert else None
     )
 
 
