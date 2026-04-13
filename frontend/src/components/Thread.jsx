@@ -97,6 +97,25 @@ export default function Thread({ messages, addToast, onFix, onRegen, onUpdate, o
               </div>
             );
           }
+          if (m.type === 'ai-loading') {
+            return (
+              <div key={m.id || i} className="message msg-ai">
+                <div className="msg-ai-header">
+                  <div className="ai-avatar loading-avatar">◈</div>
+                  <span className="ai-name">GrepSQL AI</span>
+                  <div className="think-pulse" style={{ marginLeft: '6px' }}>
+                    <span></span><span></span><span></span>
+                  </div>
+                  <span className="sql-hint">Regenerating fresh response...</span>
+                </div>
+                <div style={{ padding: '14px 0', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div className="skeleton-line" style={{ width: '82%', height: '11px' }} />
+                  <div className="skeleton-line" style={{ width: '65%', height: '11px' }} />
+                  <div className="skeleton-line" style={{ width: '75%', height: '11px' }} />
+                </div>
+              </div>
+            );
+          }
           if (m.type === 'mcq') {
             return (
               <MCQMessage

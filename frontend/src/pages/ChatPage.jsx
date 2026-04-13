@@ -478,6 +478,10 @@ export default function ChatPage({
     const lastUserMsg = [...messages].reverse().find(m => m.type === 'user');
     if (!lastUserMsg) return;
     
+    // IMMEDIATELY ADD LOADING MESSAGE
+    const loadingId = `regen-loading-${Date.now()}`;
+    safeSetMessages(prev => [...prev, { id: loadingId, type: 'ai-loading' }]);
+    
     const currentSessionId = sessionId;
     
     setTimeout(async () => {
@@ -485,7 +489,7 @@ export default function ChatPage({
         const res = await sendQuery(sessionId, lastUserMsg.text, model, true, chatId, lmsType, null, currentLmsId);
         if (res.ok) {
           const { feedback_id, sql, answer, chart_type, data, execution_time, token_usage, thoughts } = res.data;
-          safeSetMessages(prev => [...prev, {
+          const newMsg = {
             id: feedback_id ? `a-${feedback_id}` : `ai-regen-${Date.now()}`, 
             type: 'ai', 
             model, 
@@ -502,13 +506,25 @@ export default function ChatPage({
             token_usage,
             thoughts: thoughts || '',
             timestamp: new Date().toISOString(),
-          }]);
+          };
+          
+          // REPLACE LOADING MESSAGE WITH REAL ONE
+          safeSetMessages(prev => {
+            const filtered = prev.filter(m => m.id !== loadingId);
+            return [...filtered, newMsg];
+          });
+        } else {
+          // REMOVE LOADING ON ERROR
+          safeSetMessages(prev => prev.filter(m => m.id !== loadingId));
+          addToast(`Error: ${res.error}`);
         }
       } catch (err) {
+        // REMOVE LOADING ON ERROR
+        safeSetMessages(prev => prev.filter(m => m.id !== loadingId));
         console.error('[Chat] Regen failed:', err);
         addToast('Regenerate failed');
       }
-    }, 1400);
+    }, 400); // Reduced delay
   };
 
   const handleLoadMore = async () => {

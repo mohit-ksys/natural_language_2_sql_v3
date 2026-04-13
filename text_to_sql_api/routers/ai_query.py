@@ -193,6 +193,7 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
     return QueryResponse(
         feedback_id=res.feedback_id,
         session_id=res.session_id,
+        chat_id=chat_id,
         sql=res.sql,
         answer=res.answer,
         chart_type=res.chart_type,
@@ -288,7 +289,7 @@ def execute_query(req: ExecuteRequest, current_user: dict = Depends(get_current_
     return ExecuteResponse(
         answer=answer, chart_type=chart_type, data=truncated_results,
         execution_time=execution_time, feedback_id=fid,
-        sql=req.sql, session_id=req.session_id,
+        sql=req.sql, session_id=req.session_id, chat_id=req.chat_id,
         token_usage=_exec_token_usage,
         thoughts=_exec_thoughts or req.thoughts,
         total_rows=total_rows 
