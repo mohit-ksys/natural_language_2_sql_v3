@@ -1,7 +1,7 @@
+const API_BASE = import.meta.env.VITE_API_BASE;
+const LMS_API_BASE = import.meta.env.VITE_LMS_API_BASE;
 
-const API_BASE = 'http://localhost:8000';
-const LMS_API_BASE = 'http://localhost:5000';
-
+console.log('API_BASE:', API_BASE, 'LMS_API_BASE:', LMS_API_BASE);
 function setCookie(name, value, days = 7) {
   const date = new Date();
   date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
