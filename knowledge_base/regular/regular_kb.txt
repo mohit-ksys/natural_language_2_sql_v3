@@ -102,7 +102,7 @@ One row per staff member or partner.
 |--------|------|-------| 
 | counsellor_id | VARCHAR PK | CNS-XXXX for staff, PAR-XXXX for partners. |
 | counsellor_name | VARCHAR | Always filter with ILIKE after JOIN. |
-| role | VARCHAR | 'l2', 'l3', 'to', 'admission_to', 'enrollment_counsellor'. |
+| role | VARCHAR | 'l2', 'l3', 'to', 'to_l3'. Team owners have roles containing 'to' (`to` for L2 teams, `to_l3` for L3 teams). |
 | assigned_to | VARCHAR → self | Manager's counsellor_id (self-referential hierarchy). |
 | status | VARCHAR | 'active', 'inactive', 'suspended'. Default 'active'. Filter ONLY if user says "active counsellors". |
 | counsellor_preferred_mode | VARCHAR | Preferred working mode. Default 'Regular'. |
@@ -116,9 +116,17 @@ One row per staff member or partner.
 ### Counsellor FK selection:
 - Pre-application queries (Fresh, Pre Application, ICC, NI before application) → `students.assigned_counsellor_id` (L2)
 - Application / admission queries (form filled, exam scheduled, offer letter) → `students.assigned_counsellor_l3_id` (L3)
-- "Supervisor" / "Team Owner" → `role = 'to'`
+- **"Supervisor" / "Team Owner" → `role ILIKE '%to%'`** — covers both `to` (L2 team owners) and `to_l3` (L3 team owners). NEVER use `role = 'to'` alone — it misses `to_l3` team owners.
 - Team of a manager → `WHERE assigned_to = '<manager_counsellor_id>'`
 - NEVER OR across two counsellor FK columns in one JOIN (Rule J1).
+
+### Counsellor role meanings (Regular LMS):
+| Role | Meaning |
+|------|--------|
+| `l2` | L2 counsellor — owns pre-application stages |
+| `l3` | L3 counsellor — owns application/admission stages |
+| `to` | Team Owner for L2 teams |
+| `to_l3` | Team Owner for L3 teams |
 
 ### L2 vs L3 ownership (Regular LMS):
 - **L2 counsellor** (`assigned_counsellor_id` on `students`) owns the student from **Fresh through all pre-application stages** (Fresh → Pre Application → Initial Counselling Completed → NotInterested before application). All these stages live in the `students` table.
@@ -195,8 +203,7 @@ Snapshot — current application status per student-course pair. One row per stu
 | student_id | VARCHAR → students | |
 | course_id | VARCHAR → university_courses | |
 | created_by | VARCHAR → counsellors | Counsellor who shortlisted. |
-| latest_course_status | VARCHAR | Current course-application status. Default 'Shortlisted'. |
-| latest_course_status | VARCHAR | Use `latest_course_status = 'Shortlisted'` to find shortlisted courses/universities. |
+| latest_course_status | VARCHAR | Current course-application status. Default 'Shortlisted'. Use `latest_course_status = 'Shortlisted'` to find shortlisted courses/universities. |
 | college_api_sent_status | VARCHAR | 'Success', 'Failed due to Technical Issues', 'Do Not Proceed'. Default ''. |
 | created_at | TIMESTAMPTZ | When shortlisted (UTC). |
 | updated_at | TIMESTAMPTZ | When record was last updated (UTC). |
@@ -351,6 +358,8 @@ Marketing touchpoints only. One row per activity, multiple per student.
 - "Activities/touchpoints from Facebook" → this table's `source ILIKE 'FaceBook%'`.
 - One city per student (avoid duplicates): `SELECT student_id, MAX(ip_city) FROM student_lead_activities WHERE ip_city IS NOT NULL AND ip_city != '' GROUP BY student_id`.
 - For demographic segmentation (comparing working vs non-working, breakdown by education level): drive the query from `student_lead_activities` using its `working_professional` and `highest_qualification` columns. Do NOT use `students.current_profession` or `students.highest_degree` as substitutes for these attributes.
+- "campaign [X]" / "camping [X]" (common misspelling of campaign) / "utm campaign [X]" → query `sla.utm_campaign ILIKE '%X%'` from `student_lead_activities`. NEVER use `students.source` for campaign queries. Always JOIN `student_lead_activities sla ON s.student_id = sla.student_id` and filter on `utm_campaign`.
+- "utm [X]" (generic, no specific field mentioned) → search across all UTM fields: `sla.utm_source ILIKE '%X%' OR sla.utm_medium ILIKE '%X%' OR sla.utm_keyword ILIKE '%X%' OR sla.utm_campaign ILIKE '%X%' OR sla.utm_campaign_id ILIKE '%X%' OR sla.utm_adgroup_id ILIKE '%X%' OR sla.utm_creative_id ILIKE '%X%'`.
 
 ---
 
@@ -452,7 +461,7 @@ course_status_journeys.course_id  → university_courses.course_id
 | "first NI" / "first time NI" / "newly NI" / "students who became NI for the first time" | `DISTINCT ON (student_id)` earliest remark for current NI students — see NI-7 and PATTERN 16. NOT the same as Pre-NI or Total NI |
 | "NI reason" / "NI breakdown" / "why NI" / "NI sub-status" / "NI categories" | `students.current_student_ni_sub_status` GROUP BY, filter `current_student_status = 'NotInterested'` — see NI-5 |
 | "shortlisted courses" / "shortlisted universities" | `latest_course_status = 'Shortlisted'` on `latest_course_statuses` |
-| "supervisor" / "team owner" | `counsellors.role = 'to'` |
+| "supervisor" / "team owner" | `counsellors.role ILIKE '%to%'` — matches both `to` (L2 team owners) and `to_l3` (L3 team owners) |
 | "team performance" / "how is each team doing" | manager JOIN team_member JOIN student_remarks — call metrics |
 | "above/below average" | CTE per entity + CROSS JOIN overall AVG+STDDEV benchmark |
 | "count for each student status" / "each status count" / "status breakdown" / "current status breakdown" | `GROUP BY course_status` on `course_status_journeys`. ALWAYS add `AND student_id IN (SELECT student_id FROM students)` filter. Use `COUNT(DISTINCT student_id)`, never `COUNT(*)`. For Admission status, add `AND (fee_type NOT IN ('Admission Block', 'Admission Blocked') OR fee_type IS NULL)` |
@@ -545,7 +554,7 @@ ORDER BY success_rate DESC;
 
 ### PATTERN 4 — Team call performance
 
-Team queries ALWAYS require: `manager → team_member (counsellors self-join) → student_remarks`. NEVER join students table for call metrics. ALWAYS include `WHERE manager.role = 'to'`.
+Team queries ALWAYS require: `manager → team_member (counsellors self-join) → student_remarks`. NEVER join students table for call metrics. ALWAYS include `WHERE manager.role ILIKE '%to%'` to cover both `to` (L2 team owners) and `to_l3` (L3 team owners).
 
 ```sql
 SELECT
@@ -559,7 +568,7 @@ SELECT
 FROM counsellors manager
 LEFT JOIN counsellors team_member ON manager.counsellor_id = team_member.assigned_to
 LEFT JOIN student_remarks sr ON team_member.counsellor_id = sr.counsellor_id
-WHERE manager.role = 'to'          -- ← ALWAYS required to identify team owners
+WHERE manager.role ILIKE '%to%'    -- ← covers both 'to' (L2 team owners) and 'to_l3' (L3 team owners)
 GROUP BY manager.counsellor_id, manager.counsellor_name
 ORDER BY success_rate DESC;
 ```
@@ -576,7 +585,7 @@ SELECT
 FROM counsellors manager
 LEFT JOIN counsellors team_member ON manager.counsellor_id = team_member.assigned_to
 LEFT JOIN student_remarks sr ON team_member.counsellor_id = sr.counsellor_id
-WHERE manager.role = 'to'
+WHERE manager.role ILIKE '%to%'    -- ← covers both 'to' (L2 team owners) and 'to_l3' (L3 team owners)
 GROUP BY manager.counsellor_id, manager.counsellor_name, team_member.counsellor_id, team_member.counsellor_name
 ORDER BY success_rate DESC;
 ```
@@ -589,7 +598,7 @@ SELECT
 FROM counsellors manager
 LEFT JOIN counsellors team_member ON manager.counsellor_id = team_member.assigned_to
 LEFT JOIN student_remarks sr ON team_member.counsellor_id = sr.counsellor_id
-WHERE manager.role ILIKE '%to%'
+WHERE manager.role ILIKE '%to%'    -- ← covers both 'to' (L2 team owners) and 'to_l3' (L3 team owners)
   AND sr.created_at >= '2026-04-08 00:00:00'::timestamptz - interval '5 hours 30 minutes'
   AND sr.created_at < '2026-04-09 00:00:00'::timestamptz - interval '5 hours 30 minutes'
 GROUP BY manager.counsellor_id, manager.counsellor_name;
@@ -753,7 +762,7 @@ SELECT
 FROM counsellors manager
 LEFT JOIN counsellors team_member ON manager.counsellor_id = team_member.assigned_to
 LEFT JOIN student_remarks sr ON team_member.counsellor_id = sr.counsellor_id
-WHERE manager.role = 'to'
+WHERE manager.role ILIKE '%to%'    -- covers both 'to' (L2 team owners) and 'to_l3' (L3 team owners)
 GROUP BY manager.counsellor_id, manager.counsellor_name
 ORDER BY success_rate DESC;
 ```
@@ -1423,7 +1432,7 @@ ORDER BY students_with_connected_calls DESC;
 **RULE F8.** NEVER add WHERE filters that were not asked for. Specifically:
 - NEVER add `WHERE manager.role = 'to'` when the query identifies a team by manager name (ILIKE '%Name%'). The name filter alone is sufficient — adding a role guard will silently return zero rows if the role value differs.
 - NEVER add `WHERE c.role IN ('l2','l3')` or any role filter on counsellor queries unless the user explicitly specifies a role.
-- `WHERE manager.role = 'to'` is ONLY valid for ALL-teams queries (no specific manager named).
+- `WHERE manager.role ILIKE '%to%'` is ONLY valid for ALL-teams queries (no specific manager named). This covers both `to` (L2 team owners) and `to_l3` (L3 team owners).
 
 ---
 
@@ -1450,7 +1459,11 @@ ORDER BY students_with_connected_calls DESC;
 - "Deposit" / "deposit amount" / "amount paid" / "payment collected" / "fees received" → `course_status_journeys.deposit_amount` (actual payment made by student).
 - `university_courses` also has `semester_fees` (per semester) and `annual_fees` (per year) — use these when the user asks specifically for per-semester or per-year fee breakdowns.
 
-**RULE T12.** **Validation Check.** You **MUST** ensure every query filters for valid students. Test leads may have been deleted from `students` but their records persist in child tables (`student_remarks`, `course_status_journeys`, `latest_course_statuses`, `student_lead_activities`) as orphaned rows. These orphaned records must NEVER be counted or returned.
+**RULE T12.** **State disambiguation — form filled / admission queries:** When a query asks for form filled, admission, enrolled, or any `course_status_journeys` stage **filtered or grouped by state**, ALWAYS use `uc.university_state` from `university_courses` (joined via `course_status_journeys.course_id`). NEVER use `students.student_current_state` (student's home state) for these queries. `students.student_current_state` is only for queries explicitly about where the student lives/resides.
+- Trigger phrases: "form filled in [state]" / "admissions from [state]" / "enrolled in [state]" / "applications by state" / "state-wise form fills" → `uc.university_state`.
+- "students living in [state]" / "students based in [state]" / "students from [state]" (when no course action is mentioned) → `students.student_current_state`.
+
+**RULE T13.** **Validation Check.** You **MUST** ensure every query filters for valid students. Test leads may have been deleted from `students` but their records persist in child tables (`student_remarks`, `course_status_journeys`, `latest_course_statuses`, `student_lead_activities`) as orphaned rows. These orphaned records must NEVER be counted or returned.
 - When the child table is already JOINed to `students` (directly or via a chain), no extra filter is needed.
 - If the `students` table is not explicitly JOINed, you **MUST** add: `WHERE student_id IN (SELECT student_id FROM students)`
 - This applies to **every single query** using child tables — counts, lists, aggregations, subqueries, and CTEs. No exceptions.

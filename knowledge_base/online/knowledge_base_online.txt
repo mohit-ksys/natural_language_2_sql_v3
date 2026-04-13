@@ -66,7 +66,7 @@ One row per staff member or partner.
 |--------|------|-------|
 | counsellor_id | VARCHAR PK | CNS-XXXX for staff, PAR-XXXX for partners. |
 | counsellor_name | VARCHAR | Always filter with ILIKE after JOIN. |
-| role | VARCHAR | 'l2', 'l3', 'to', 'admission_to', 'enrollment_counsellor'. |
+| role | VARCHAR | 'l2', 'l3', 'to', 'admission_to', 'enrollment_counsellor'. Do NOT use `enrollment_counsellor`, `admission_to`, or `to` in SELECT output. Use only `counsellor_name` and relevant FK columns. |
 | assigned_to | VARCHAR → self | Manager's counsellor_id (self-referential hierarchy). |
 | status | VARCHAR | 'active', 'inactive', 'suspended'. Filter ONLY if user says "active counsellors". |
 | is_partner | BOOLEAN | Filter ONLY if user mentions "internal", "partner", or "external". |
@@ -75,12 +75,22 @@ One row per staff member or partner.
 | updated_at | TIMESTAMPTZ | When record was last updated (UTC). |
 
 ### Counsellor FK selection:
-- General queries → `students.assigned_counsellor_id`
-- L3-specific → `students.assigned_counsellor_l3_id`
-- Enrollment phase → `students.enrollment_counsellor_id`
+- General queries (L2) → `students.assigned_counsellor_id` (role = 'l2')
+- L3-specific → `students.assigned_counsellor_l3_id` (role = 'l3')
+- Enrollment phase → `students.enrollment_counsellor_id` (role = 'enrollment_counsellor')
+- Admission counsellor → `course_status_journeys.enrollment_counsellor_id` (role = 'admission_to')
 - "Supervisor" / "Team Owner" → `role = 'to'`
 - Team of a manager → `WHERE assigned_to = '<manager_counsellor_id>'`
 - NEVER OR across two counsellor FK columns in one JOIN (Rule J1).
+
+### Counsellor role meanings:
+| Role | Meaning | FK used |
+|------|---------|--------|
+| `l2` | L2 counsellor (primary/general) | `students.assigned_counsellor_id` |
+| `l3` | L3 counsellor (senior/specialist) | `students.assigned_counsellor_l3_id` |
+| `to` | Team Owner / Supervisor | `counsellors.assigned_to` (self-ref manager) |
+| `admission_to` | Admission Team Owner | `course_status_journeys.enrollment_counsellor_id` |
+| `enrollment_counsellor` | Enrollment-phase counsellor | `students.enrollment_counsellor_id` |
 
 ---
 
@@ -146,14 +156,13 @@ Snapshot — current application status per student-course pair. One row per stu
 | student_id | VARCHAR → students | |
 | course_id | VARCHAR → university_courses | |
 | created_by | VARCHAR | Counsellor who shortlisted. |
-| latest_course_status | VARCHAR | Current course-application status. |
-| is_shortlisted | BOOLEAN | True if counsellor marked as serious option. |
+| latest_course_status | VARCHAR | Current course-application status. Use `latest_course_status = 'Shortlisted'` to find counsellor-shortlisted courses. |
 | college_api_sent_status | VARCHAR | 'Success', 'Failed due to Technical Issues', 'Do Not Proceed'. |
 | created_at | TIMESTAMPTZ | When shortlisted (UTC). |
 | updated_at | TIMESTAMPTZ | When record was last updated (UTC). |
 
 ### Business rules:
-- Use this table ONLY for shortlisted courses/universities. When user asks about shortlisted courses or universities, query `is_shortlisted = true` from this table.
+- Use this table ONLY for shortlisted courses/universities. When user asks about shortlisted courses or universities, query `latest_course_status = 'Shortlisted'` from this table.
 - For Application, Admission, Enrolled, NotInterested (after application) queries → use `course_status_journeys` instead.
 - Any payment: `latest_course_status ILIKE '%Paid%'`
 
@@ -188,7 +197,7 @@ Full audit trail of every status change. One row per event, multiple per student
 - When user asks "document submitted" / "docs submitted" → query `course_status = 'Document Submitted'` from this table.
 - When user asks "enrolled" → query `course_status = 'Enrolled'` from this table.
 - NotInterested after application → `course_status = 'NotInterested'` from this table.
-- No "Shortlisted" status exists in this table — for shortlisted queries use `latest_course_statuses.is_shortlisted`.
+- No "Shortlisted" status exists in this table — for shortlisted queries use `latest_course_statuses.latest_course_status = 'Shortlisted'`.
 - Latest status per student-course: `DISTINCT ON (student_id, course_id) ORDER BY student_id, course_id, created_at DESC` — gets the most recent status change for each student-course pair.
 - First occurrence of each status per student-course: `DISTINCT ON (student_id, course_id, course_status) ORDER BY student_id, course_id, course_status, created_at ASC` — gets when each student first reached each specific status.
 - Total fees collected: `SUM(deposit_amount) WHERE deposit_amount > 0`.
@@ -223,6 +232,8 @@ Marketing touchpoints only. One row per activity, multiple per student.
 - "Activities/touchpoints from Facebook" → this table's `source ILIKE 'FaceBook%'`.
 - One city per student (avoid duplicates): `SELECT student_id, MAX(ip_city) FROM student_lead_activities WHERE ip_city IS NOT NULL AND ip_city != '' GROUP BY student_id`.
 - For demographic segmentation (comparing working vs non-working, breakdown by education level): drive the query from `student_lead_activities` using its `working_professional` and `highest_qualification` columns. Do NOT use `students.current_profession` or `students.highest_degree` as substitutes for these attributes.
+- "campaign [X]" / "camping [X]" (common misspelling of campaign) / "utm campaign [X]" → query `sla.utm_campaign ILIKE '%X%'` from `student_lead_activities`. NEVER use `students.source` for campaign queries. Always JOIN `student_lead_activities sla ON s.student_id = sla.student_id` and filter on `utm_campaign`.
+- "utm [X]" (generic, no specific field mentioned) → search across all UTM fields: `sla.utm_source ILIKE '%X%' OR sla.utm_medium ILIKE '%X%' OR sla.utm_keyword ILIKE '%X%' OR sla.utm_campaign ILIKE '%X%' OR sla.utm_campaign_id ILIKE '%X%' OR sla.utm_adgroup_id ILIKE '%X%' OR sla.utm_creative_id ILIKE '%X%'`.
 
 ---
 
@@ -251,6 +262,63 @@ One row per break session taken by a counsellor.
 
 ---
 
+## TABLE: l2_assignment_rulesets
+Lead assignment rules for L2 counsellors. One row per rule.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| lead_assignment_rule_l2_id | int4 PK | Auto-incremented. |
+| name | varchar(255) | Internal rule code name (e.g. 'Rule_7b92ea'). |
+| conditions | jsonb | JSON object of matching conditions (e.g. `{"source":[...],"first_source_url":[...]}`) |
+| assigned_counsellor_ids | text[] | Array of counsellor IDs (CNS-XXXX format) assigned under this rule. |
+| is_active | bool | Whether the rule is currently active. Default true. |
+| priority | int4 | Rule priority order. Default 0. |
+| round_robin_index | int4 | Current position in round-robin assignment. Default 0. |
+| created_at | timestamptz | When rule was created (UTC). |
+| updated_at | timestamptz | When rule was last updated (UTC). |
+| custom_rule_name | varchar(255) | Human-readable rule label (e.g. 'Punjab Specific', 'CP_Ref'). |
+| description | text | Optional description of the rule. |
+| total_matched_leads | int4 | Total leads matched by this rule. Default 0. |
+| last_matched_at | timestamp | When the rule last matched a lead. NULL if never matched. |
+
+### Business rules:
+- `conditions` is a JSONB column — use `->>` or `@>` operators to filter by source, first_source_url, etc.
+- `assigned_counsellor_ids` is a PostgreSQL text array — use `ANY()` or `@>` to check for a specific counsellor.
+- To find which rule covers a given source: `WHERE conditions @> '{"source":["<Source Name>"]}'::jsonb`
+- `custom_rule_name` is the user-friendly label; `name` is the internal code.
+- Only query `is_active = true` rules unless user asks for inactive/all rules.
+
+---
+
+## TABLE: admission_assignment_rulesets
+Lead assignment rules for admission counsellors. One row per rule.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| admission_assignment_rulesets_id | int4 PK | Auto-incremented. |
+| name | varchar(255) | Internal rule code name (e.g. 'Rule_1ab86c'). |
+| college | varchar(255) | College filter for this rule. |
+| university_name | text[] | Array of university names this rule applies to. |
+| course_conditions | jsonb | JSON object with course-level conditions (keys: level, degree, stream, courseName, specialization). |
+| source | text[] | Array of lead sources this rule applies to. |
+| assigned_counsellor_ids | text[] | Array of counsellor IDs (CNS-XXXX format) assigned under this rule. |
+| is_active | bool | Whether the rule is currently active. Default true. |
+| priority | int4 | Rule priority order. Default 0. |
+| round_robin_index | int4 | Current position in round-robin assignment. Default 0. |
+| created_at | timestamptz | When rule was created (UTC). |
+| updated_at | timestamptz | When rule was last updated (UTC). |
+| custom_rule_name | varchar(255) | Human-readable rule label (e.g. 'Admission RUle set test'). |
+
+### Business rules:
+- `university_name` is a PostgreSQL text array — use `'Uni Name' = ANY(university_name)` to check membership.
+- `source` is a PostgreSQL text array — use `'Source Name' = ANY(source)` to filter by source.
+- `assigned_counsellor_ids` is a PostgreSQL text array — use `ANY()` to find a specific counsellor.
+- `course_conditions` is JSONB — use `->>` or `@>` operators for filtering by level, degree, stream, courseName, or specialization.
+- Only query `is_active = true` rules unless user asks for inactive/all rules.
+- These rules govern admission-phase counsellor assignment (role = 'admission_to').
+
+---
+
 # SECTION 2 — TABLE RELATIONSHIPS
 
 ```
@@ -262,6 +330,8 @@ students.assigned_counsellor_id   → counsellors.counsellor_id  (L2)
 students.assigned_counsellor_l3_id → counsellors.counsellor_id (L3)
 students.enrollment_counsellor_id → counsellors.counsellor_id
 counsellors.assigned_to           → counsellors.counsellor_id  (manager, self-ref)
+l2_assignment_rulesets.assigned_counsellor_ids (array) → counsellors.counsellor_id
+admission_assignment_rulesets.assigned_counsellor_ids (array) → counsellors.counsellor_id
 student_remarks.counsellor_id     → counsellors.counsellor_id
 latest_course_statuses.course_id  → university_courses.course_id
 course_status_journeys.course_id  → university_courses.course_id
@@ -292,7 +362,7 @@ course_status_journeys.course_id  → university_courses.course_id
 | Enrolled / "enrollment count" | course_status_journeys | `course_status` | `= 'Enrolled'` |
 | NotInterested before application | students | `current_student_status` | `= 'NotInterested'` |
 | NotInterested after application | course_status_journeys | `course_status` | `= 'NotInterested'` |
-| Shortlisted courses/universities | latest_course_statuses | `is_shortlisted` | `= true` |
+| Shortlisted courses/universities | latest_course_statuses | `latest_course_status` | `= 'Shortlisted'` |
 
 - "form filled" / "form fills" = `course_status = 'Application'` on `course_status_journeys`. NEVER use `latest_course_statuses` for this.
 - Early funnel stages (Fresh, Pre Application, ICC) = `students.current_student_status`. NEVER use `course_status_journeys` for these.
@@ -304,7 +374,7 @@ course_status_journeys.course_id  → university_courses.course_id
 | Column | Table | Use for |
 |--------|-------|---------|
 | `current_student_status` | students | Early funnel stages: Fresh, Pre Application, Initial Counselling Completed, NotInterested (before application) |
-| `is_shortlisted` | latest_course_statuses | Whether a course/university has been shortlisted by counsellor |
+| `latest_course_status = 'Shortlisted'` | latest_course_statuses | Whether a course/university has been shortlisted by counsellor |
 | `course_status` | course_status_journeys | Application, Admission, Document Pending, Document Submitted, Enrolled, NotInterested (after application), payment events |
 
 ---
@@ -398,18 +468,18 @@ Full post-application flow on `course_status_journeys`:
 |---|---|---|
 | "Students interested in [course]" / "course interest" / "how many students are interested" | `course_status_journeys` | `COUNT(DISTINCT student_id)` for that course_id — students who have taken action on this course |
 | "Students who prefer/stated [course]" / "student preference" | `students.preferred_course` | `'Course Name' = ANY(preferred_course)` — student's self-declared preference at lead capture |
-| "Shortlisted courses" / "courses shortlisted by counsellor" | `latest_course_statuses` | `is_shortlisted = true` — counsellor-flagged serious options |
+| "Shortlisted courses" / "courses shortlisted by counsellor" | `latest_course_statuses` | `latest_course_status = 'Shortlisted'` — counsellor-flagged serious options |
 
 **Key rule:** 
 - **Interest** = action taken (student has a record in `course_status_journeys` for that course).
 - **Preference** = stated intent (student declared it in `preferred_course` array at lead capture).
-- **Shortlisted** = counsellor flagged (counsellor marked `is_shortlisted = true` in `latest_course_statuses`).
+- **Shortlisted** = counsellor flagged (counsellor marked `latest_course_status = 'Shortlisted'` in `latest_course_statuses`).
 
 **CRITICAL:**
 - NEVER use `latest_course_statuses` for general "interest" queries — it is ONLY for shortlisted courses and API status tracking.
 - NEVER use `students.preferred_course` for "interest" metrics — it's only for self-stated preferences before counsellor interaction.
 - For "which courses have most interest" / "student interest by course" → ALWAYS use `course_status_journeys`.
-- NEVER look for "Shortlisted" status in `course_status_journeys` — that table has no shortlisted concept. Always use `latest_course_statuses.is_shortlisted`.
+- NEVER look for "Shortlisted" status in `course_status_journeys` — that table has no shortlisted concept. Always use `latest_course_statuses.latest_course_status = 'Shortlisted'`.
 
 ---
 
@@ -744,7 +814,7 @@ WHERE course_status = 'Admission'
 | "NI students at [stage]" / "NI students marked as [stage]" | NI always from `course_status_journeys.course_status = 'NotInterested'`, stage as subquery IN — see NI-4. NEVER query NI and stage both from students table |
 | "first NI" / "first time NI" / "newly NI" / "students who became NI for the first time" | `DISTINCT ON (student_id)` earliest remark for current NI students — see NI-7 and PATTERN 16. NOT the same as Pre-NI or Total NI |
 | "NI reason" / "NI breakdown" / "why NI" / "NI sub-status" / "NI categories" | `students.current_student_ni_sub_status` GROUP BY, filter `current_student_status = 'NotInterested'` — see NI-5 |
-| "shortlisted courses" / "shortlisted universities" | `latest_course_statuses.is_shortlisted = true` |
+| "shortlisted courses" / "shortlisted universities" | `latest_course_statuses.latest_course_status = 'Shortlisted'` |
 | "supervisor" / "team owner" | `counsellors.role = 'to'` |
 | "team performance" / "how is each team doing" | manager JOIN team_member JOIN student_remarks — call metrics |
 | "above/below average" | CTE per entity + CROSS JOIN overall AVG+STDDEV benchmark |
@@ -1322,7 +1392,11 @@ GROUP BY uc.university_name;
 - "Deposit" / "deposit amount" / "amount paid" / "payment collected" / "fees received" → `course_status_journeys.deposit_amount` (actual payment made by student).
 - `university_courses` also has `semester_fees` (per semester) and `annual_fees` (per year) — use these when the user asks specifically for per-semester or per-year fee breakdowns.
 
-**RULE T12.** **Validation Check.** You **MUST** ensure every query filters for valid students. Test leads may have been deleted from `students` but their records persist in child tables (`student_remarks`, `course_status_journeys`, `latest_course_statuses`, `student_lead_activities`) as orphaned rows. These orphaned records must NEVER be counted or returned.
+**RULE T12.** **State disambiguation — form filled / admission queries:** When a query asks for form filled, admission, enrolled, or any `course_status_journeys` stage **filtered or grouped by state**, ALWAYS use `uc.university_state` from `university_courses` (joined via `course_status_journeys.course_id`). NEVER use `students.student_current_state` (student's home state) for these queries. `students.student_current_state` is only for queries explicitly about where the student lives/resides.
+- Trigger phrases: "form filled in [state]" / "admissions from [state]" / "enrolled in [state]" / "applications by state" / "state-wise form fills" → `uc.university_state`.
+- "students living in [state]" / "students based in [state]" / "students from [state]" (when no course action is mentioned) → `students.student_current_state`.
+
+**RULE T13.** **Validation Check.** You **MUST** ensure every query filters for valid students. Test leads may have been deleted from `students` but their records persist in child tables (`student_remarks`, `course_status_journeys`, `latest_course_statuses`, `student_lead_activities`) as orphaned rows. These orphaned records must NEVER be counted or returned.
 - When the child table is already JOINed to `students` (directly or via a chain), no extra filter is needed.
 - If the `students` table is not explicitly JOINed, you **MUST** add: `WHERE student_id IN (SELECT student_id FROM students)`
 - This applies to **every single query** using child tables — counts, lists, aggregations, subqueries, and CTEs. No exceptions.
