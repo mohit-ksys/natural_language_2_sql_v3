@@ -350,7 +350,6 @@ WHERE sr.created_at >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
   AND c.counsellor_name ILIKE '%counsellor_name%'
 GROUP BY c.counsellor_id, c.counsellor_name;
 ```
-Key patterns: "login" is defined as the first remark between 9:30 AM (570 minutes from midnight) to 8:30 PM (1230 minutes from midnight) for that day. Use MIN(created_at) for login time and MAX(created_at) for logout time. Filter remarks using time-of-day calculation: `EXTRACT(HOUR FROM created_at AT TIME ZONE 'Asia/Kolkata') * 60 + EXTRACT(MINUTE FROM created_at AT TIME ZONE 'Asia/Kolkata') BETWEEN 570 AND 1230`. Always apply IST timezone conversion and today's date filter. Always guard with student_id IN (SELECT student_id FROM students). For specific counsellor queries, add `c.counsellor_name ILIKE '%name%'` filter.
 
 ---
 

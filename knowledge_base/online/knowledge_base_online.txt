@@ -1324,6 +1324,8 @@ GROUP BY uc.university_name;
 - Replace the `university_name IN (...)` filter and `GROUP BY` as needed — this pattern works for any grouping entity (counsellor, course, etc.).
 - Always include `AND student_id IN (SELECT student_id FROM students)` inside the subquery to exclude orphaned test records.
 
+Key patterns: "login" is defined as the first remark between 9:30 AM (570 minutes from midnight) to 8:30 PM (1230 minutes from midnight) for that day. Use MIN(created_at) for login time and MAX(created_at) for logout time. Filter remarks using time-of-day calculation: `EXTRACT(HOUR FROM created_at AT TIME ZONE 'Asia/Kolkata') * 60 + EXTRACT(MINUTE FROM created_at AT TIME ZONE 'Asia/Kolkata') BETWEEN 570 AND 1230`. Always apply IST timezone conversion and today's date filter. Always guard with student_id IN (SELECT student_id FROM students). For specific counsellor queries, add `c.counsellor_name ILIKE '%name%'` filter.
+
 ---
 
 **RULE O1.** Output ONLY raw PostgreSQL SQL — no markdown fences, no comments, no explanations.
