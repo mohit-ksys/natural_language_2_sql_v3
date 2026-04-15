@@ -115,7 +115,7 @@ One row per staff member or partner.
 
 ### Counsellor FK selection:
 - Pre-application queries (Fresh, Pre Application, ICC, NI before application) → `students.assigned_counsellor_id` (L2)
-- Application / admission queries (form filled, exam scheduled, offer letter) → `students.assigned_counsellor_l3_id` (L3)
+- Application / admission queries (form filled, exam scheduled, offer letter) → `course_status_journeys.assigned_l3_counsellor_id` (L3) — NEVER use `students.assigned_counsellor_l3_id`, it is sparsely populated
 - **"Supervisor" / "Team Owner" → `role ILIKE '%to%'`** — covers both `to` (L2 team owners) and `to_l3` (L3 team owners). NEVER use `role = 'to'` alone — it misses `to_l3` team owners.
 - Team of a manager → `WHERE assigned_to = '<manager_counsellor_id>'`
 - NEVER OR across two counsellor FK columns in one JOIN (Rule J1).
@@ -239,7 +239,7 @@ Full audit trail of every status change. One row per event, multiple per student
 ### Business rules:
 - **Primary table for Application, Admission, Document Pending, Document Submitted, Enrolled, and NotInterested (after application) queries.** Use `course_status` column.
 - **This table is owned by L3 counsellors.** For L3-level queries, ALWAYS join via `course_status_journeys.assigned_l3_counsellor_id` — this is the correct column for identifying which L3 counsellor owns each course row. Do NOT use `students.assigned_counsellor_l3_id` for L3 lead counts — it is sparsely populated. `counsellor_id` on this table is who *logged* the event, not who is assigned.
-- When user asks "form filled" / "form fills" / "applied" / "walkin" / "exam scheduled" / "offer letter" / "ready for admission" → query `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released')` from this table. These are the application-stage statuses for the Regular LMS.
+- When user asks "form filled" / "form fills" / "applied" / "walkin" / "exam scheduled" / "offer letter" / "ready for admission" → query `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')` from this table. These are the application-stage statuses for the Regular LMS.
 - When user asks "admitted" / "got admission" / "admission" / "admissions" → query `course_status IN ('Admission', 'Enrolled')` from this table. **ALWAYS exclude partial payments from Admission status:** add `AND (fee_type NOT IN ('Partial Done', 'Partial Paid', 'Partially Paid') OR fee_type IS NULL)`. These are partial payment records, not complete admissions. **IMPORTANT:** Admission queries include BOTH Admission and Enrolled statuses because enrolled students have already been admitted.
 - When user asks "document pending" / "docs pending" → query `course_status = 'Document Pending'` from this table.
 - When user asks "document submitted" / "docs submitted" → query `course_status = 'Document Submitted'` from this table.
@@ -421,7 +421,7 @@ course_status_journeys.course_id  → university_courses.course_id
 | User asks about... | Table | Column | Filter | Counsellor |
 |---|---|---|---|---|
 | Fresh / Pre Application / Initial Counselling Completed | students | `current_student_status` | `= 'Fresh'`, `= 'Pre Application'`, `= 'Initial Counselling Completed'` | L2 (`assigned_counsellor_id`) |
-| Application / "form filled" / "applied" / "walkin" / "exam scheduled" / "offer letter" / "ready for admission" | course_status_journeys | `course_status` | `IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released')` | L3 (`assigned_l3_counsellor_id`) |
+| Application / "form filled" / "applied" / "walkin" / "exam scheduled" / "offer letter" / "ready for admission" | course_status_journeys | `course_status` | `IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')` | L3 (`assigned_l3_counsellor_id`) |
 | Admission / "got admission" / "admitted" / "admissions" | course_status_journeys | `course_status` | `IN ('Admission', 'Enrolled')` AND exclude partial payments | L3 (`assigned_l3_counsellor_id`) |
 | Document Pending / "docs pending" | course_status_journeys | `course_status` | `= 'Document Pending'` | L3 (`assigned_l3_counsellor_id`) |
 | Document Submitted / "docs submitted" | course_status_journeys | `course_status` | `= 'Document Submitted'` | L3 (`assigned_l3_counsellor_id`) |
@@ -430,15 +430,15 @@ course_status_journeys.course_id  → university_courses.course_id
 | NotInterested after application | course_status_journeys | `course_status` | `= 'NotInterested'` | L3 |
 | Shortlisted courses/universities | latest_course_statuses | `latest_course_status` | `= 'Shortlisted'` | — |
 
-- "form filled" / "form fills" / "applied" / "walkin" / "exam scheduled" / "offer letter" / "ready for admission" = `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released')` on `course_status_journeys` |
+- "form filled" / "form fills" / "applied" / "walkin" / "exam scheduled" / "offer letter" / "ready for admission" = `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')` on `course_status_journeys` |
 |---|---|
-| "at least applied / ever applied or beyond" | `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')` on `course_status_journeys` |
+| "at least applied / ever applied or beyond" | `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')` on `course_status_journeys` |
 | "admitted" / "got admission" / "admission" / "admissions" / "how many got admission" / "admission count" | `course_status IN ('Admission', 'Enrolled')` on `course_status_journeys` AND exclude partial payments. **CRITICAL:** Admission queries include BOTH Admission and Enrolled because enrolled students are already admitted. |
 | "document pending" / "docs pending" / "documents awaited" | `course_status = 'Document Pending'` on `course_status_journeys` |
 | "document submitted" / "docs submitted" / "documents received" | `course_status = 'Document Submitted'` on `course_status_journeys` |
 | "enrolled" / "enrollment" / "enrollment count" / "how many enrolled" / "enrollments" | `course_status = 'Enrolled'` ONLY on `course_status_journeys`. **CRITICAL:** Enrollment queries include ONLY Enrolled status, NOT Admission. |
 | "converted" / "conversion" / "admitted or beyond" | `course_status IN ('Admission', 'Document Pending', 'Document Submitted', 'Enrolled')` on `course_status_journeys` |
-| "applications by source" | JOIN `course_status_journeys` + `students`, filter `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released')`, group by `students.source` |
+| "applications by source" | JOIN `course_status_journeys` + `students`, filter `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')`, group by `students.source` |
 | "connected call" / "raw connection" | `calling_status = 'Connected'` only |
 | "success rate" / "performance" / "efficiency" (counsellor/team) | `COUNT(Connected)/COUNT(all)` from student_remarks — NOT conversion |
 | "conversion rate" / "admission rate" (student outcomes) | `COUNT(DISTINCT student_id WHERE course_status IN ('Admission','Document Pending','Document Submitted','Enrolled'))` from `course_status_journeys` |
@@ -453,7 +453,7 @@ course_status_journeys.course_id  → university_courses.course_id
 | "overdue callback" | `callback_date < CURRENT_DATE` on student_remarks |
 | "upcoming callback" | `callback_date >= CURRENT_DATE` on student_remarks |
 | "dormant" / "no recent follow-up" | `HAVING MAX(sr.created_at) < CURRENT_DATE - INTERVAL '7 days' OR MAX(sr.created_at) IS NULL` |
-| "forward movement" / "progressed" | `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')` on `course_status_journeys` |
+| "forward movement" / "progressed" | `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')` on `course_status_journeys` |
 | "NI" / "not interested" (general, no stage given) | Use BOTH tables UNION, COUNT(DISTINCT student_id) — see NI-3 in DISTINCTION 9 |
 | "NI before application" / "NI who never applied" | `students.current_student_status = 'NotInterested'` — see NI-1 |
 | "NI after application" / "NI who applied" | `course_status_journeys.course_status = 'NotInterested'` — see NI-2 |
@@ -495,7 +495,7 @@ SELECT 'Pre Application', COUNT(DISTINCT student_id) FROM students WHERE current
 UNION ALL
 SELECT 'Initial Counselling Completed', COUNT(DISTINCT student_id) FROM students WHERE current_student_status = 'Initial Counselling Completed'
 UNION ALL
-SELECT 'Application (Form Submitted)', COUNT(DISTINCT student_id) FROM course_status_journeys WHERE course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released')
+SELECT 'Application (Form Submitted)', COUNT(DISTINCT student_id) FROM course_status_journeys WHERE course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')
 UNION ALL
 SELECT 'Admission', COUNT(DISTINCT student_id) FROM course_status_journeys WHERE course_status = 'Admission'
 UNION ALL
@@ -518,7 +518,7 @@ SELECT
     c.counsellor_name,
     COUNT(DISTINCT s.student_id) AS total_students,
     COUNT(DISTINCT CASE WHEN s.current_student_status = 'Pre Application' THEN s.student_id END) AS pre_application,
-    COUNT(DISTINCT CASE WHEN csj.course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released') THEN csj.student_id END) AS applications,
+    COUNT(DISTINCT CASE WHEN csj.course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission') THEN csj.student_id END) AS applications,
     COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' THEN csj.student_id END) AS admissions,
     COUNT(DISTINCT CASE WHEN csj.course_status = 'Document Pending' THEN csj.student_id END) AS document_pending,
     COUNT(DISTINCT CASE WHEN csj.course_status = 'Document Submitted' THEN csj.student_id END) AS document_submitted,
@@ -585,7 +585,7 @@ SELECT
 FROM counsellors manager
 LEFT JOIN counsellors team_member ON manager.counsellor_id = team_member.assigned_to
 LEFT JOIN student_remarks sr ON team_member.counsellor_id = sr.counsellor_id
-WHERE manager.role ILIKE '%to%'    -- ← covers both 'to' (L2 team owners) and 'to_l3' (L3 team owners)
+WHERE manager.role ILIKE '%to%'    -- covers both 'to' (L2 team owners) and 'to_l3' (L3 team owners)
 GROUP BY manager.counsellor_id, manager.counsellor_name, team_member.counsellor_id, team_member.counsellor_name
 ORDER BY success_rate DESC;
 ```
@@ -598,7 +598,7 @@ SELECT
 FROM counsellors manager
 LEFT JOIN counsellors team_member ON manager.counsellor_id = team_member.assigned_to
 LEFT JOIN student_remarks sr ON team_member.counsellor_id = sr.counsellor_id
-WHERE manager.role ILIKE '%to%'    -- ← covers both 'to' (L2 team owners) and 'to_l3' (L3 team owners)
+WHERE manager.role ILIKE '%to%'    -- covers both 'to' (L2 team owners) and 'to_l3' (L3 team owners)
   AND sr.created_at >= '2026-04-08 00:00:00'::timestamptz - interval '5 hours 30 minutes'
   AND sr.created_at < '2026-04-09 00:00:00'::timestamptz - interval '5 hours 30 minutes'
 GROUP BY manager.counsellor_id, manager.counsellor_name;
@@ -665,7 +665,7 @@ WITH stage_priority AS (
             WHEN csj.course_status = 'Document Submitted' THEN 5
             WHEN csj.course_status = 'Document Pending'   THEN 4
             WHEN csj.course_status = 'Admission'          THEN 3
-            WHEN csj.course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released') THEN 2
+            WHEN csj.course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission') THEN 2
             ELSE 0
         END AS stage_rank
     FROM university_courses uc
@@ -696,7 +696,7 @@ SELECT COUNT(DISTINCT student_id) AS count
 FROM (
     SELECT student_id, MIN(created_at) AS first_event_date
     FROM course_status_journeys
-    WHERE course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released')
+    WHERE course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')
       AND student_id IN (SELECT student_id FROM students)
     GROUP BY student_id
 ) sub
@@ -723,11 +723,11 @@ Use `course_status_journeys` for both Application and Admission counts:
 
 ```sql
 SELECT
-    COUNT(DISTINCT CASE WHEN csj.course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released') THEN csj.student_id END) AS applications,
+    COUNT(DISTINCT CASE WHEN csj.course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission') THEN csj.student_id END) AS applications,
     COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' THEN csj.student_id END) AS admissions,
     ROUND(
         COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' THEN csj.student_id END) * 100.0 /
-        NULLIF(COUNT(DISTINCT CASE WHEN csj.course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released') THEN csj.student_id END), 0), 2
+        NULLIF(COUNT(DISTINCT CASE WHEN csj.course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission') THEN csj.student_id END), 0), 2
     ) AS conversion_rate
 FROM course_status_journeys csj;
 ```
@@ -772,7 +772,7 @@ ORDER BY success_rate DESC;
 ### PATTERN 11 — First Connected (total count + counsellor wise)
 
 Counts students whose **very first Connected call** falls within a given date window. Uses `MIN(created_at)` to find each student's first connected event.
-Apply the standard IST date window (see TIMEZONE RULES) for today / yesterday / last N days as needed.
+Apply the standard IST date window (see TIMEZONE RULES) for today / yesterday / last N days.
 
 **Total first connected (any date window):**
 ```sql
@@ -822,7 +822,6 @@ ORDER BY first_connected_count DESC;
 ### PATTERN 12 — Pre-NI Students (date-filtered)
 
 Counts students who went NI without ever having an ICC or progressing to application stage. Apply the standard IST date window (see TIMEZONE RULES) to `students.created_at` for today / yesterday / last N days.
-
 **Pre-NI students added in a given date window:**
 ```sql
 WITH never_progressed AS (
@@ -833,7 +832,7 @@ WITH never_progressed AS (
       AND s.student_id NOT IN (
           SELECT DISTINCT student_id
           FROM course_status_journeys
-          WHERE course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')
+          WHERE course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')
       )
 )
 SELECT COUNT(DISTINCT np.student_id) AS pre_ni_count
@@ -857,13 +856,12 @@ WHERE s.current_student_status = 'NotInterested'
   AND s.student_id NOT IN (
       SELECT DISTINCT student_id
       FROM course_status_journeys
-      WHERE course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')
+      WHERE course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission', 'Admission', 'Document Pending', 'Document Submitted', 'Enrolled')
   )
   AND s.created_at >= <start_ist>
   AND s.created_at <  <end_ist>
 GROUP BY c.counsellor_id, c.counsellor_name
 ORDER BY pre_ni_count DESC;
-```
 
 **Definition of Pre-NI:** `current_student_status = 'NotInterested'` AND `first_Icc_Date IS NULL` AND student never appeared in `course_status_journeys` with a forward-progression status.
 
@@ -1014,15 +1012,30 @@ WITH first_form AS (
     SELECT 
         student_id,
         course_id,
+        assigned_l3_counsellor_id,
         MIN(created_at) AS first_form_date
     FROM course_status_journeys
     WHERE course_status IN (
         'Form Submitted – Portal Pending', 
         'Form Submitted – Completed', 
         'Walkin Completed', 
-        'Walkin Marked'
+        'Walkin Marked',
+        'Exam/Interview Scheduled',
+        'Offer Letter/Results Pending',
+        'Offer Letter/Results Released',
+        'Ready For Admission'
     )
-    GROUP BY student_id, course_id
+    AND student_id IN (SELECT student_id FROM students)
+    GROUP BY student_id, course_id, assigned_l3_counsellor_id
+),
+-- Deduplicate to one row per student (earliest form event) for counsellor-wise counting
+deduped_forms AS (
+    SELECT DISTINCT ON (student_id)
+        student_id,
+        assigned_l3_counsellor_id,
+        first_form_date
+    FROM first_form
+    ORDER BY student_id, first_form_date ASC
 ),
 
 -- ================= ADMISSIONS =================
@@ -1120,6 +1133,7 @@ ORDER BY uc.university_name, metric;
 - Date filters use IST timezone offset (`- INTERVAL '5 hours 30 minutes'`)
 - **Alternative deduplication method:** Instead of `MIN(created_at) GROUP BY student_id, course_id`, you can use `DISTINCT ON (student_id, course_id) ORDER BY student_id, course_id, created_at ASC` to get the first occurrence per student-course pair. Both methods work equally well.
 - **CRITICAL:** `course_status_journeys` has multiple entries for the same student-course-status combination due to re-triggers and updates. ALWAYS deduplicate using either `MIN(created_at)` or `DISTINCT ON` before applying date filters or counting.
+- **CRITICAL — counsellor-wise forms:** After `first_form` CTE, ALWAYS add a `deduped_forms` CTE using `DISTINCT ON (student_id) ORDER BY student_id, first_form_date ASC` before joining counsellors. Without this, a student who applied to N universities is counted N times under the same counsellor, inflating the total. NEVER drive the final SELECT directly from `first_form` for counsellor-wise counts.
 
 ---
 
@@ -1434,9 +1448,6 @@ ORDER BY students_with_connected_calls DESC;
 - NEVER add `WHERE c.role IN ('l2','l3')` or any role filter on counsellor queries unless the user explicitly specifies a role.
 - `WHERE manager.role ILIKE '%to%'` is ONLY valid for ALL-teams queries (no specific manager named). This covers both `to` (L2 team owners) and `to_l3` (L3 team owners).
 
-
-Key patterns: "login" is defined as the first remark between 9:30 AM (570 minutes from midnight) to 8:30 PM (1230 minutes from midnight) for that day. Use MIN(created_at) for login time and MAX(created_at) for logout time. Filter remarks using time-of-day calculation: `EXTRACT(HOUR FROM created_at AT TIME ZONE 'Asia/Kolkata') * 60 + EXTRACT(MINUTE FROM created_at AT TIME ZONE 'Asia/Kolkata') BETWEEN 570 AND 1230`. Always apply IST timezone conversion and today's date filter. Always guard with student_id IN (SELECT student_id FROM students). For specific counsellor queries, add `c.counsellor_name ILIKE '%name%'` filter.
-
 ---
 
 ### TABLE SELECTION RULES
@@ -1453,7 +1464,7 @@ Key patterns: "login" is defined as the first remark between 9:30 AM (570 minute
 
 **RULE T8.** Team performance queries route through: manager → team_member (counsellors self-join) → student_remarks. Do NOT route through students table for call metrics.
 
-**RULE T9.** "Applications by source" MUST use `course_status_journeys JOIN students`, filter `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released')`, group by `students.source`. NEVER use `student_lead_activities` or `latest_course_statuses` for this.
+**RULE T9.** "Applications by source" MUST use `course_status_journeys JOIN students`, filter `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')`, group by `students.source`. NEVER use `student_lead_activities` or `latest_course_statuses` for this.
 
 **RULE T10.** When a query involves university courses and mentions delivery format (online / regular / hybrid / distance / in-person), ALWAYS use `university_courses.study_mode`. `students.mode` is the student's personal study preference and must NEVER appear in course or university-level analysis. These two columns share similar values but are entirely different — they are not interchangeable.
 
@@ -1473,7 +1484,7 @@ Key patterns: "login" is defined as the first remark between 9:30 AM (570 minute
 
 **RULE S1.** `students.current_student_status` is the source for early funnel stages (Fresh, Pre Application, Initial Counselling Completed, NotInterested before application). For Application, Admission, Document Pending, Document Submitted, Enrolled, and NotInterested after application → use `course_status_journeys.course_status`.
 
-**RULE S2.** When user asks "form filled" or "form fills" or "applied" → query `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')` from `course_status_journeys`. NEVER use `latest_course_statuses` for this. NEVER use `course_status = 'Application'` in Regular LMS — that status does not exist.
+**RULE S2.** When user asks "form filled" or "form fills" or "applied" → query `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')` from `course_status_journeys`. NEVER use `latest_course_statuses` for this. NEVER use `course_status = 'Application'` in Regular LMS — that status does not exist.
 
 **RULE S3.** Count callbacks using `remark_id`, not `student_id`.
 
@@ -1512,7 +1523,7 @@ For date-filtered queries on `course_status_journeys` (Application, Admission, D
 
 **RULE S5.** ALWAYS use `COUNT(DISTINCT student_id)` when counting students — never `COUNT(*)` after a JOIN.
 
-**RULE S6.** "Form filled" / "form fills" / "applied" → `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')` on `course_status_journeys`. Do NOT use `latest_course_statuses` for form fill queries. NEVER use `course_status = 'Application'` in Regular LMS.
+**RULE S6.** "Form filled" / "form fills" / "applied" → `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')` on `course_status_journeys`. Do NOT use `latest_course_statuses` for form fill queries. NEVER use `course_status = 'Application'` in Regular LMS.
 
 **RULE S8.** For time-slot / hourly performance queries ("best time", "worst time", "perform best at what hour", "connected at 9 AM"):
 - ALWAYS use `EXTRACT(HOUR FROM created_at AT TIME ZONE 'Asia/Kolkata')` on `student_remarks`.
