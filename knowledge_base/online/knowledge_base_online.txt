@@ -1,3 +1,5 @@
+Online KB 
+
 # TEXT-TO-SQL KNOWLEDGE BASE
 # READ SECTION 6 (CRITICAL RULES) BEFORE WRITING ANY SQL.
 
@@ -199,9 +201,11 @@ Full audit trail of every status change. One row per event, multiple per student
 - NotInterested after application → `course_status = 'NotInterested'` from this table.
 - No "Shortlisted" status exists in this table — for shortlisted queries use `latest_course_statuses.latest_course_status = 'Shortlisted'`.
 - Latest status per student-course: `DISTINCT ON (student_id, course_id) ORDER BY student_id, course_id, created_at DESC` — gets the most recent status change for each student-course pair.
-- First occurrence of each status per student-course: `DISTINCT ON (student_id, course_id, course_status) ORDER BY student_id, course_id, course_status, created_at ASC` — gets when each student first reached each specific status.
+- First occurrence of each status per student-course: `DISTINCT ON (student_id, course_id) ORDER BY student_id, course_id,created_at ASC` — gets when each student first reached each specific status.
 - Total fees collected: `SUM(deposit_amount) WHERE deposit_amount > 0`.
-- Use DISTINCT ON (student_id, course_id) with MIN(created_at) to deduplicate each student-course pair to their first application event, then apply the date filter on that deduplicated timestamp.
+- Use DISTINCT ON (student_id, course_id) with MIN(created_at) to deduplicate each student-course pair to their first application , admission or enrollment event, then apply the date filter on that deduplicated timestamp.
+
+
 ---
 
 ## TABLE: student_lead_activities
@@ -345,6 +349,9 @@ course_status_journeys.course_id  → university_courses.course_id
 - Application/Admission/Enrolled by university: `course_status_journeys → university_courses`
 
 ---
+
+**RULE CSJ5 — Never include NULL values in fee_type filters:**
+NEVER use `fee_type IS NULL` or add `OR fee_type IS NULL` in any fee_type filter. The database is not clean. Always use `fee_type NOT IN (...)` without the NULL clause to exclude dirty NULL records.
 
 # SECTION 3 — CRITICAL DISTINCTIONS
 
@@ -1323,8 +1330,6 @@ GROUP BY uc.university_name;
 - The date filter goes on the outer query (on the already-deduplicated `fs.created_at`), not inside the subquery.
 - Replace the `university_name IN (...)` filter and `GROUP BY` as needed — this pattern works for any grouping entity (counsellor, course, etc.).
 - Always include `AND student_id IN (SELECT student_id FROM students)` inside the subquery to exclude orphaned test records.
-
-Key patterns: "login" is defined as the first remark between 9:30 AM (570 minutes from midnight) to 8:30 PM (1230 minutes from midnight) for that day. Use MIN(created_at) for login time and MAX(created_at) for logout time. Filter remarks using time-of-day calculation: `EXTRACT(HOUR FROM created_at AT TIME ZONE 'Asia/Kolkata') * 60 + EXTRACT(MINUTE FROM created_at AT TIME ZONE 'Asia/Kolkata') BETWEEN 570 AND 1230`. Always apply IST timezone conversion and today's date filter. Always guard with student_id IN (SELECT student_id FROM students). For specific counsellor queries, add `c.counsellor_name ILIKE '%name%'` filter.
 
 ---
 

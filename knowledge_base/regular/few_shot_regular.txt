@@ -1,3 +1,5 @@
+Regular Few Shots 
+
 ## FEW-SHOT EXAMPLES
 Study these examples carefully. Each one demonstrates a pattern you MUST follow when you see a similar query.
 Do not deviate from these patterns.
@@ -13,7 +15,7 @@ SELECT
     COUNT(DISTINCT CASE WHEN s.current_student_status = 'Pre Application' THEN s.student_id END) AS pre_application,
     COUNT(DISTINCT CASE WHEN s.current_student_status = 'Initial Counselling Completed' THEN s.student_id END) AS counselling_completed,
     COUNT(DISTINCT CASE WHEN csj.course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission') THEN csj.student_id END) AS applications,
-    COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done') THEN csj.student_id END) AS admissions,
+    COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('Partial Done', 'Partial Paid', 'Partially Paid') THEN csj.student_id END) AS admissions,
     COUNT(DISTINCT CASE WHEN csj.course_status = 'Enrolled' THEN csj.student_id END) AS enrolled
 FROM counsellors c
 JOIN students s ON c.counsellor_id = s.assigned_counsellor_id
@@ -33,12 +35,12 @@ Question: For each counsellor, show me how many students reached admission or en
 SELECT
     c.counsellor_name,
     COUNT(DISTINCT s.student_id) AS total_students,
-    (COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done') THEN csj.student_id END) + COUNT(DISTINCT CASE WHEN csj.course_status = 'Enrolled' THEN csj.student_id END)) AS converted_students,
+    (COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('Partial Done', 'Partial Paid', 'Partially Paid') THEN csj.student_id END) + COUNT(DISTINCT CASE WHEN csj.course_status = 'Enrolled' THEN csj.student_id END)) AS converted_students,
     COUNT(DISTINCT sr.remark_id) AS total_remarks,
     COUNT(DISTINCT CASE WHEN sr.callback_date >= CURRENT_DATE THEN sr.remark_id END) AS upcoming_callbacks,
     COUNT(DISTINCT CASE WHEN sr.callback_date < CURRENT_DATE THEN sr.remark_id END) AS overdue_callbacks,
     ROUND(
-        (COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done') THEN csj.student_id END) + COUNT(DISTINCT CASE WHEN csj.course_status = 'Enrolled' THEN csj.student_id END))::numeric
+        (COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('Partial Done', 'Partial Paid', 'Partially Paid') THEN csj.student_id END) + COUNT(DISTINCT CASE WHEN csj.course_status = 'Enrolled' THEN csj.student_id END))::numeric
         / NULLIF(COUNT(DISTINCT s.student_id), 0) * 100, 2
     ) AS conversion_rate_pct
 FROM counsellors c
@@ -77,7 +79,7 @@ WITH stage_priority AS (
         MAX(
             CASE
                 WHEN csj.course_status = 'Enrolled'        THEN 4
-                WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done') THEN 3
+                WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('Partial Done', 'Partial Paid', 'Partially Paid') THEN 3
                 WHEN csj.course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission') THEN 2
                 WHEN s.current_student_status = 'Pre Application' THEN 1
                 ELSE 0
@@ -113,7 +115,7 @@ JOIN (
         course_id,
         MIN(created_at) AS first_milestone_date
     FROM course_status_journeys
-    WHERE (course_status = 'Admission' AND fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done'))
+    WHERE (course_status = 'Admission' AND fee_type NOT IN ('Partial Done', 'Partial Paid', 'Partially Paid'))
        OR course_status = 'Enrolled'
     GROUP BY student_id, course_id
 ) sub ON s.student_id = sub.student_id
@@ -136,7 +138,7 @@ JOIN (
         course_id,
         MIN(created_at) AS first_milestone_date
     FROM course_status_journeys
-    WHERE (course_status = 'Admission' AND fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done'))
+    WHERE (course_status = 'Admission' AND fee_type NOT IN ('Partial Done', 'Partial Paid', 'Partially Paid'))
        OR course_status = 'Enrolled'
     GROUP BY student_id, course_id
 ) sub ON s.student_id = sub.student_id
@@ -181,7 +183,7 @@ JOIN course_status_journeys csj ON s.student_id = csj.student_id
 JOIN counsellors c ON s.assigned_counsellor_id = c.counsellor_id
 LEFT JOIN student_remarks sr ON s.student_id = sr.student_id
 WHERE (csj.course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')
-    OR (csj.course_status = 'Admission' AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done'))
+    OR (csj.course_status = 'Admission' AND csj.fee_type NOT IN ('Partial Done', 'Partial Paid', 'Partially Paid'))
     OR csj.course_status = 'Enrolled')
 GROUP BY s.student_id, s.student_name, s.student_email, s.student_phone, c.counsellor_name, csj.course_status
 HAVING MAX(sr.created_at) < CURRENT_DATE - INTERVAL '7 days' OR MAX(sr.created_at) IS NULL
@@ -199,9 +201,9 @@ WITH counsellor_metrics AS (
         c.counsellor_id,
         c.counsellor_name,
         COUNT(DISTINCT s.student_id) AS total_students,
-        (COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done') THEN csj.student_id END) + COUNT(DISTINCT CASE WHEN csj.course_status = 'Enrolled' THEN csj.student_id END)) AS conversions,
+        (COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('Partial Done', 'Partial Paid', 'Partially Paid') THEN csj.student_id END) + COUNT(DISTINCT CASE WHEN csj.course_status = 'Enrolled' THEN csj.student_id END)) AS conversions,
         ROUND(
-            (COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done') THEN csj.student_id END) + COUNT(DISTINCT CASE WHEN csj.course_status = 'Enrolled' THEN csj.student_id END))::numeric
+            (COUNT(DISTINCT CASE WHEN csj.course_status = 'Admission' AND csj.fee_type NOT IN ('Partial Done', 'Partial Paid', 'Partially Paid') THEN csj.student_id END) + COUNT(DISTINCT CASE WHEN csj.course_status = 'Enrolled' THEN csj.student_id END))::numeric
             / NULLIF(COUNT(DISTINCT s.student_id), 0) * 100, 2
         ) AS conversion_rate_pct
     FROM counsellors c
@@ -265,7 +267,7 @@ WITH admitted_students AS (
         MIN(created_at) AS first_admission_date
     FROM course_status_journeys
     WHERE course_status = 'Admission'
-      AND fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done')
+      AND fee_type NOT IN ('Partial Done', 'Partial Paid', 'Partially Paid')
       AND student_id IN (SELECT student_id FROM students)
     GROUP BY student_id, course_id
 ),
@@ -350,6 +352,7 @@ WHERE sr.created_at >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
   AND c.counsellor_name ILIKE '%counsellor_name%'
 GROUP BY c.counsellor_id, c.counsellor_name;
 ```
+Key patterns: "login" is defined as the first remark between 9:30 AM (570 minutes from midnight) to 8:30 PM (1230 minutes from midnight) for that day. Use MIN(created_at) for login time and MAX(created_at) for logout time. Filter remarks using time-of-day calculation: `EXTRACT(HOUR FROM created_at AT TIME ZONE 'Asia/Kolkata') * 60 + EXTRACT(MINUTE FROM created_at AT TIME ZONE 'Asia/Kolkata') BETWEEN 570 AND 1230`. Always apply IST timezone conversion and today's date filter. Always guard with student_id IN (SELECT student_id FROM students). For specific counsellor queries, add `c.counsellor_name ILIKE '%name%'` filter.
 
 ---
 
