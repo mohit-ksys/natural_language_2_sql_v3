@@ -201,7 +201,7 @@ Full audit trail of every status change. One row per event, multiple per student
 - Latest status per student-course: `DISTINCT ON (student_id, course_id) ORDER BY student_id, course_id, created_at DESC` — gets the most recent status change for each student-course pair.
 - First occurrence of each status per student-course: `DISTINCT ON (student_id, course_id, course_status) ORDER BY student_id, course_id, course_status, created_at ASC` — gets when each student first reached each specific status.
 - Total fees collected: `SUM(deposit_amount) WHERE deposit_amount > 0`.
-
+- Use DISTINCT ON (student_id, course_id) with MIN(created_at) to deduplicate each student-course pair to their first application event, then apply the date filter on that deduplicated timestamp.
 ---
 
 ## TABLE: student_lead_activities
