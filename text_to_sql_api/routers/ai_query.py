@@ -64,14 +64,11 @@ def _enforce_query_rate_limit(session_id: str):
 
 
 def _resolve_database_id(current_user: dict, req_id: str = None) -> str:
-    """Resolve the target database ID. Prioritizes the requested ID from the frontend."""
-    # 1. Priority: Explicit selection from the UI (req_id)
     if req_id:
-        return req_id
-
-    # 2. Fallback: User's profile default
+        return settings._resolve_id(req_id)  
     profile_lms = current_user.get("lms_type") or current_user.get("database_id")
-    return str(profile_lms) if profile_lms else "degreefyd_online_lms"
+    resolved = settings._resolve_id(str(profile_lms)) if profile_lms else None
+    return resolved if resolved else "degreefyd_online_lms"  
 
 
 @router.post("/query", response_model=QueryResponse)

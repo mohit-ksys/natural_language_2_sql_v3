@@ -50,9 +50,9 @@ def test_connection() -> bool:
         return False
 
 
-def execute_sql(sql: str, lms_type: str = "online", apply_limit: bool = True) -> list[dict]:
+def execute_sql(sql: str, database_id: str, apply_limit: bool = True) -> list[dict]:
     """Execute a read-only SQL query against the LMS database."""
-    engine = get_lms_engine(lms_type)
+    engine = get_lms_engine(database_id)
     
     if apply_limit:
         sql = enforce_sql_limit(sql, settings.DATA_LIMIT)
