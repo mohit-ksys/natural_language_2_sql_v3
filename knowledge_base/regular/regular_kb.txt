@@ -252,7 +252,8 @@ Full audit trail of every status change. One row per event, multiple per student
 - First occurrence per student-course: `DISTINCT ON (student_id, course_id) ORDER BY student_id, course_id, created_at ASC` — gets the earliest status change for each student-course pair (e.g., first admission date).
 - First occurrence of each status per student-course: `DISTINCT ON (student_id, course_id) ORDER BY student_id, course_id created_at ASC` — gets when each student first reached each specific status (see PATTERN 17).
 - Total fees collected: `SUM(deposit_amount) WHERE deposit_amount > 0`.
-- Use DISTINCT ON (student_id, course_id) with MIN(created_at) to deduplicate each student-course pair to their first application , admission or enrollment event, then apply the date filter on that deduplicated timestamp.
+- **All date-bounded stage counts (forms, admissions, enrolled, document pending/submitted):** For ANY query counting students in a date window from this table, ALWAYS use `MIN(created_at)` per `(student_id, course_id)` for the target status. A student-course pair is counted ONLY if it was their **first time** reaching that stage for that course within the window. Students who had already reached that stage before the window are excluded. See RULE CSJ-FORM.
+- Use `MIN(created_at)` per `(student_id, course_id)` to deduplicate each student-course pair to their first application, admission or enrollment event, then apply the date filter on that deduplicated timestamp.
 
 ### MANDATORY FILTERS for course_status_journeys:
 
@@ -306,6 +307,42 @@ WITH first_admission AS (
 ```
 **RULE CSJ5 — Never include NULL values in fee_type filters:**
 NEVER use `fee_type IS NULL` or add `OR fee_type IS NULL` in any fee_type filter. The database is not clean. Always use `fee_type NOT IN (...)` without the NULL clause to exclude dirty NULL records.
+
+**RULE CSJ-FORM — ALL date-bounded stage counts use first-ever event per student-course:**
+For ANY date-bounded count from `course_status_journeys` — forms, admissions, document pending, document submitted, enrolled, or any other stage — ALWAYS use `MIN(created_at)` per `(student_id, course_id)` for that status. A student-course pair is counted in the window ONLY if that was the **first time** they ever reached that stage for that course. Students who had already reached that stage before the window are excluded — regardless of re-triggers or additional rows.
+
+This applies to:
+- **Form fills** → `MIN(created_at)` per `(student_id, course_id)` across all application-stage statuses
+- **Admissions yesterday/today** → `MIN(created_at)` per `(student_id, course_id)` where `course_status IN ('Admission', 'Enrolled')`
+- **Document Pending yesterday/today** → `MIN(created_at)` per `(student_id, course_id)` where `course_status = 'Document Pending'`
+- **Document Submitted yesterday/today** → `MIN(created_at)` per `(student_id, course_id)` where `course_status = 'Document Submitted'`
+- **Enrolled yesterday/today** → `MIN(created_at)` per `(student_id, course_id)` where `course_status = 'Enrolled'`
+
+**CORRECT pattern (applies to any stage — replace status filter as needed):**
+```sql
+WITH first_event AS (
+    SELECT student_id, course_id, MIN(created_at) AS first_event_date
+    FROM course_status_journeys
+    WHERE course_status IN (<target statuses>)
+    AND student_id IN (SELECT student_id FROM students)
+    GROUP BY student_id, course_id
+)
+SELECT COUNT(DISTINCT fe.student_id)
+FROM first_event fe
+JOIN university_courses uc ON fe.course_id = uc.course_id
+WHERE uc.university_name ILIKE '%University Name%'
+  AND fe.first_event_date >= <start_ist>
+  AND fe.first_event_date <  <end_ist>;
+```
+
+**WRONG pattern (DO NOT USE for any stage):**
+```sql
+-- WRONG: counts all rows in window, not first-ever event per student-course
+SELECT COUNT(DISTINCT student_id)
+FROM course_status_journeys
+WHERE course_status IN (...)
+  AND created_at >= <start_ist> AND created_at < <end_ist>;
+```
 ---
 
 ## TABLE: student_lead_activities
@@ -447,7 +484,10 @@ course_status_journeys.course_id  → university_courses.course_id
 | "success rate" / "performance" / "efficiency" (counsellor/team) | `COUNT(Connected)/COUNT(all)` from student_remarks — NOT conversion |
 | "conversion rate" / "admission rate" (student outcomes) | `COUNT(DISTINCT student_id WHERE course_status IN ('Admission','Document Pending','Document Submitted','Enrolled'))` from `course_status_journeys` |
 | "admissions each month" / "monthly admission trend" / "admission trend" / "admissions over time" | COUNT by date bucket WHERE `course_status IN ('Admission', 'Enrolled')` on `course_status_journeys` AND exclude partial payments |
-| "recent admissions" / "admissions in last N days" / "admissions done yesterday" / "admissions done today" / "admissions yesterday" / "admissions today" / "admissions this week" / "admissions this month" / ANY date-bounded admission query | Use MIN(created_at) per student WHERE `course_status IN ('Admission', 'Enrolled')` on `course_status_journeys` AND exclude partial payments — see PATTERN 11 |
+| "recent admissions" / "admissions in last N days" / "admissions done yesterday" / "admissions done today" / "admissions yesterday" / "admissions today" / "admissions this week" / "admissions this month" / ANY date-bounded admission query | Use `MIN(created_at)` per `(student_id, course_id)` WHERE `course_status IN ('Admission', 'Enrolled')` AND exclude partial payments. Count only students whose **first admission** for that course fell in the window. See RULE CSJ-FORM. |
+| "document pending today" / "document pending yesterday" / "docs pending this week" / ANY date-bounded document-pending query | Use `MIN(created_at)` per `(student_id, course_id)` WHERE `course_status = 'Document Pending'`. Count only students whose **first** Document Pending event for that course fell in the window. See RULE CSJ-FORM. |
+| "document submitted today" / "document submitted yesterday" / ANY date-bounded document-submitted query | Use `MIN(created_at)` per `(student_id, course_id)` WHERE `course_status = 'Document Submitted'`. Count only students whose **first** Document Submitted event for that course fell in the window. See RULE CSJ-FORM. |
+| "enrolled today" / "enrolled yesterday" / "enrollments this week" / ANY date-bounded enrolled query | Use `MIN(created_at)` per `(student_id, course_id)` WHERE `course_status = 'Enrolled'`. Count only students whose **first** Enrolled event for that course fell in the window. See RULE CSJ-FORM. |
 | "total leads over time" / "lead count by month" / "leads created" | COUNT by date bucket from `students` — never filter by `current_student_status` |
 | "total ICC" / "total initial counselling calls" / "how many ICC" / "ICC count" / "ICC done" / "students who had ICC" (any form) | `COUNT(DISTINCT student_id) WHERE first_Icc_Date IS NOT NULL` from `students` — ALWAYS use `first_Icc_Date` column, NOT `current_student_status` |
 | "call at 9 AM" / "hourly call breakdown" / "best/worst time slot" | `EXTRACT(HOUR FROM ... AT TIME ZONE 'Asia/Kolkata')` on `student_remarks` |
@@ -481,7 +521,8 @@ course_status_journeys.course_id  → university_courses.course_id
 | "pre NI" / "NI with no ICC" / "NI who never progressed" | `current_student_status='NotInterested'` + `first_Icc_Date IS NULL` + NOT IN course_status_journeys progression — see NI-6 in DISTINCTION 9 and PATTERN 13 |
 | "attempted calls on new leads" / "calls made to students added yesterday" / "leads attempted yesterday" | COUNT(DISTINCT sr.student_id) joining students filtered by `created_at` yesterday window — see PATTERN 14 |
 | "total leads today" / "attempted leads today" / "leads and attempts today" (counsellor wise) | Two COUNT(DISTINCT) on students and student_remarks filtered by today's IST window — see PATTERN 15 |
-| "form fills today" / "applications today" / "how many applied today" / "portal pending today" / "status breakdown today" / any date-bounded count of specific `course_status` values by university or counsellor | Use PATTERN 17 — `DISTINCT ON (student_id, course_id, course_status) ORDER BY ... ASC` to get first occurrence of each status per student, then apply the IST date filter on that first-occurrence timestamp |
+| "form fills today" / "form fills yesterday" / "applications today" / "how many applied today" / "how many forms yesterday" / any date-bounded **aggregate** form-fill count by university or counsellor | Use PATTERN 17 — `MIN(created_at)` per `(student_id, course_id)` across ALL application-stage statuses (first-ever form per student-course), then apply the IST date filter. See RULE CSJ-FORM. |
+| "portal pending today" / "status breakdown today" / per-individual-status breakdown for a date window | Use PATTERN 16 — `DISTINCT ON (student_id, course_id, course_status) ORDER BY ... ASC` to get first occurrence of each individual status per student, then apply the IST date filter |
 | "forms and admissions for [university]" / "application and admission count for [university]" / "how many applied and admitted to [university]" / "forms and admissions by university" / "monthly forms and admissions" / "forms and admissions till date" / "forms and admissions today" | Use PATTERN 18 — CTEs with `MIN(created_at)` deduplication per `(student_id, course_id)`, UNION ALL for both metrics, excludes partial payments from admissions |
 | "L3 form metrics" / "how many forms per L3" / "L3 response time breakdown" / "forms not initiated by L3" / "L3 counsellor form TAT" / "active vs completed forms per L3" / "L3 form assignment performance" / "L3 follow-up time" / "which L3 counsellors are not following up" | Use PATTERN 19 — Complex CTE with first/latest status deduplication, tracks first remark by assigned L3 counsellor, categorizes response time (0-3 days, 4-6 days, 7+ days), shows active vs completed forms |
 | "how many forms per L2" / "L2 form count" / "forms filled by L2 counsellors" / "L2 today's forms" / "how many students moved forward under L2" / "L2 counsellor form count" | Use PATTERN 20 Variant A — L2 form count = students *assigned to L2* (via `students.assigned_counsellor_id`) who first hit an application-stage `course_status` in `course_status_journeys`. Join `students s JOIN course_status_journeys csj ON s.student_id = csj.student_id`, deduplicate with `DISTINCT ON (s.student_id) ORDER BY csj.created_at ASC`, attribute to L2 via `s.assigned_counsellor_id`. Date filter on `csj.created_at` in the LEFT JOIN ON clause. |
@@ -961,12 +1002,14 @@ WHERE first_ni_at >= <start_ist>   -- e.g. CURRENT_DATE - INTERVAL '1 day' - INT
 
 ---
 
-### PATTERN 16 — First-Time Date Range: Status Count by University (or any entity)
+### PATTERN 16 — First-Time Date Range: Per-Status Breakdown by University (or any entity)
 
-Use when the user asks how many students reached a specific `course_status` **for the first time** within a date window — e.g. "how many form fills today", "portal pending today by university", "applications today".
+**Use when the user asks for a breakdown by individual status** (e.g. "how many are Portal Pending vs Completed today", "status breakdown today by university"). This pattern deduplicates per individual status.
 
-**Why this pattern is needed:**
-`course_status_journeys` is append-only. Same student can have **two rows**. Filtering raw `created_at` on both rows would count the student in both columns simultaneously, inflating the "Portal Pending" count with students who have already moved forward. This pattern uses `DISTINCT ON (student_id, course_id, course_status) ORDER BY ... ASC` to capture the **first time** a student ever reached each status, then applies the date filter on that first-occurrence timestamp.
+**DO NOT use this pattern for aggregate form-fill counts** (e.g. "how many forms yesterday", "how many applied today"). For aggregate form-fill counts, use PATTERN 17's `first_form` CTE with `MIN(created_at)` per `(student_id, course_id)` — see RULE CSJ-FORM.
+
+**Why this pattern is needed for per-status breakdowns:**
+`course_status_journeys` is append-only. Same student can have **two rows**. Filtering raw `created_at` on both rows would count the student in both columns simultaneously, inflating the "Portal Pending" count with students who have already moved forward. This pattern uses `DISTINCT ON (student_id, course_id, course_status) ORDER BY ... ASC` to capture the **first time** a student ever reached each individual status, then applies the date filter on that first-occurrence timestamp.
 
 **Rule:** NEVER filter directly on raw `course_status_journeys.created_at` when counting per-status breakdowns for a date window. Always pick the earliest event per (student_id, course_id, course_status) first.
 
@@ -1001,14 +1044,16 @@ GROUP BY uc.university_name;
 
 ### PATTERN 17 — Forms and Admissions by University (Monthly/Custom Date Range)
 
-Use when user asks for forms and admissions counts for specific universities over a date range (monthly, till date, today, custom period). This pattern uses CTEs to deduplicate both forms and admissions, then counts them separately with UNION ALL.
+Use when user asks for forms and admissions counts for specific universities over a date range (monthly, till date, today, yesterday, custom period). This pattern uses CTEs to deduplicate both forms and admissions, then counts them separately with UNION ALL.
+
+**Definition of "form filled yesterday/today/this week":** A student-course pair is counted in the date window only if it was the **first time** that student ever applied to that course (`MIN(created_at)` per `student_id, course_id`). Students who had previously applied to the same course before the window are excluded. This matches RULE CSJ-FORM.
 
 **Key features:**
-- Deduplicates forms per `(student_id, course_id)` using `MIN(created_at)`
+- Deduplicates forms per `(student_id, course_id)` using `MIN(created_at)` — first-ever form per student-course
 - Deduplicates admissions per `(student_id, course_id)` using `MIN(created_at)`
 - **Does NOT exclude any fee_type values** - counts all admissions regardless of payment status
 - Validates student existence
-- Flexible date range (can be adapted for monthly, today, till date, etc.)
+- Flexible date range (can be adapted for monthly, today, yesterday, till date, etc.)
 - Works for any university
 
 **Template:**
@@ -1405,13 +1450,14 @@ ORDER BY students_with_connected_calls DESC;
 ```
 
 **Key rules:**
-- Always join via `course_status_journeys.assigned_l3_counsellor_id` for L3 lead ownership — `students.assigned_counsellor_l3_id` is sparsely populated and will return zero for most L3 counsellors.
-- Variant A joins `student_remarks` on both `student_id` AND `counsellor_id` to ensure the connected call was made by that L3, not another counsellor.
-- Variant B joins only on `student_id` — use when overall avg TAT is needed regardless of who made the call.
-- `first_connected_at >= first_assigned_at` guard prevents negative TAT from pre-assignment calls.
-- Result is in **hours**. Divide by 24 for days.
-
----
+- **CRITICAL:** Uses `course_status_journeys.assigned_l3_counsellor_id` for L3 ownership (NOT `students.assigned_counsellor_l3_id`)
+- **Deduplication:** `DISTINCT ON (student_id, course_id)` with `ORDER BY created_at ASC` for first status, `DESC` for latest status
+- **Student-course key:** Uses `CONCAT(student_id, '_', course_id)` to ensure accurate counting of unique combinations
+- **Response time logic:** Only calculates days if a remark exists; uses `GREATEST(0, ...)` to handle pre-status remarks
+- **Remark filtering:** Only counts remarks where `sr.counsellor_id = fs.assigned_l3_counsellor_id` (remarks by the assigned L3, not other counsellors)
+- **Active forms:** Excludes terminal statuses (Registration done, Partially Paid, Semester Paid, Enrollment in Process, Enrolled)
+- **Student validation:** Applies `AND student_id IN (SELECT student_id FROM students)` in all CTEs to exclude orphaned records
+- **Excludes Shortlisted:** Filters out `course_status = 'Shortlisted'` as it's not an active form submission
 
 ---
 
@@ -1420,15 +1466,13 @@ ORDER BY students_with_connected_calls DESC;
 Use when user asks for form counts per L2 counsellor, per L3 counsellor, or both combined.
 
 **CRITICAL ownership rules:**
-- **L2 form count** = students *assigned to an L2 counsellor* (`students.assigned_counsellor_id`) who first hit an application-stage `course_status` in `course_status_journeys`. L2 owns the student relationship; the form event is tracked in CSJ. Join: `students s JOIN course_status_journeys csj ON s.student_id = csj.student_id`, deduplicate with `DISTINCT ON (s.student_id) ORDER BY csj.created_at ASC`, attribute to L2 via `s.assigned_counsellor_id`.
-- **L3 form count** = students whose application-stage CSJ entry was assigned to an L3 counsellor (`course_status_journeys.assigned_l3_counsellor_id`). Join directly from `course_status_journeys`, deduplicate with `DISTINCT ON (student_id) ORDER BY created_at ASC`.
-- Both halves query `course_status_journeys` for the form event but use **different FK columns** for counsellor attribution — never mix them. Combine with UNION ALL when both roles are needed.
+- **L2 form count** = students assigned to L2 via `students.assigned_counsellor_id` who first hit an application-stage status in `course_status_journeys`. Deduplicate with `DISTINCT ON (s.student_id, csj.course_id)`.
+- **L3 form count** = students whose CSJ entry has `assigned_l3_counsellor_id` set. Deduplicate with `DISTINCT ON (student_id, course_id)`.
+- Never mix the two FK columns. Combine with UNION ALL when both roles needed.
 
 ---
 
 **Variant A — L2 only (form count, any date window):**
-
-Counts students assigned to each L2 counsellor who first filled a form (hit an application-stage status in `course_status_journeys`) within the IST date window. L2 owns the student via `assigned_counsellor_id`; the form event is tracked in `course_status_journeys`.
 
 ```sql
 SELECT
@@ -1437,8 +1481,9 @@ SELECT
     COALESCE(COUNT(DISTINCT fs.student_id), 0) AS form_count
 FROM counsellors c
 LEFT JOIN (
-    SELECT DISTINCT ON (s.student_id)
+    SELECT DISTINCT ON (s.student_id, csj.course_id)
         s.student_id,
+        csj.course_id,
         s.assigned_counsellor_id,
         csj.created_at AS form_date
     FROM students s
@@ -1454,7 +1499,7 @@ LEFT JOIN (
         'Ready For Admission'
     )
       AND csj.student_id IN (SELECT student_id FROM students)
-    ORDER BY s.student_id, csj.created_at ASC
+    ORDER BY s.student_id, csj.course_id, csj.created_at ASC
 ) fs
     ON c.counsellor_id = fs.assigned_counsellor_id
     AND fs.form_date >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
@@ -1468,7 +1513,7 @@ ORDER BY form_count DESC;
 **Key rules for L2 block:**
 - The form event is in `course_status_journeys` — join via `s.student_id = csj.student_id`.
 - Counsellor attribution is via `students.assigned_counsellor_id` (L2 owns the student).
-- `DISTINCT ON (s.student_id) ORDER BY csj.created_at ASC` gets the first form event per student (RULE S18).
+- `DISTINCT ON (s.student_id, csj.course_id) ORDER BY s.student_id, csj.course_id, csj.created_at ASC` gets the first form event per student-course pair. `COUNT(DISTINCT fs.student_id)` on the outer query gives unique student headcount (RULE S18).
 - Date filter on `form_date` goes in the LEFT JOIN ON clause (RULE J8).
 - `csj.student_id IN (SELECT student_id FROM students)` guards against orphaned rows (RULE T12).
 
@@ -1476,7 +1521,7 @@ ORDER BY form_count DESC;
 
 **Variant B — L3 only (form count, any date window):**
 
-Counts students who first hit an application-stage status assigned to each L3 counsellor within the IST date window. Deduplicates on `student_id` only — counts each student once regardless of how many courses they applied to.
+Counts students who first hit an application-stage status assigned to each L3 counsellor within the IST date window. Deduplicates on `(student_id, course_id)` — counts each student-course pair once.
 
 ```sql
 SELECT
@@ -1485,7 +1530,7 @@ SELECT
     COALESCE(COUNT(DISTINCT fs.student_id), 0) AS form_count
 FROM counsellors c
 LEFT JOIN (
-    SELECT DISTINCT ON (student_id)
+    SELECT DISTINCT ON (student_id, course_id)
         student_id,
         assigned_l3_counsellor_id,
         created_at AS form_date
@@ -1501,7 +1546,7 @@ LEFT JOIN (
         'Ready For Admission'
     )
       AND student_id IN (SELECT student_id FROM students)
-    ORDER BY student_id, created_at ASC
+    ORDER BY student_id, course_id, created_at ASC
 ) fs
     ON c.counsellor_id = fs.assigned_l3_counsellor_id
     AND fs.form_date >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
@@ -1514,7 +1559,7 @@ ORDER BY form_count DESC;
 
 **Key rules for L3 block:**
 - Source table is `course_status_journeys`, FK column is `assigned_l3_counsellor_id`.
-- `DISTINCT ON (student_id) ORDER BY student_id, created_at ASC` — deduplicates per student (not per student-course) so each student is counted once (RULE S18).
+- `DISTINCT ON (student_id, course_id) ORDER BY student_id, course_id, created_at ASC` — deduplicates per student-course pair. `COUNT(DISTINCT fs.student_id)` on the outer query gives unique student headcount (RULE S18).
 - Date filter on `form_date` goes in the LEFT JOIN ON clause (RULE J8).
 - `student_id IN (SELECT student_id FROM students)` guards against orphaned rows (RULE T12).
 
@@ -1522,18 +1567,17 @@ ORDER BY form_count DESC;
 
 **Variant C — L2 and L3 combined (UNION ALL):**
 
-Use when user asks for form counts across both roles in one result set. The two halves are fundamentally different queries against different tables — they must be combined with UNION ALL, never merged into a single JOIN.
-
 ```sql
--- L2 Counsellors: students assigned to L2 who first filled a form (tracked in course_status_journeys)
+-- L2 Counsellors
 SELECT
     c.counsellor_name,
     'L2' AS counsellor_role,
     COALESCE(COUNT(DISTINCT fs.student_id), 0) AS form_count
 FROM counsellors c
 LEFT JOIN (
-    SELECT DISTINCT ON (s.student_id)
+    SELECT DISTINCT ON (s.student_id, csj.course_id)
         s.student_id,
+        csj.course_id,
         s.assigned_counsellor_id,
         csj.created_at AS form_date
     FROM students s
@@ -1549,7 +1593,7 @@ LEFT JOIN (
         'Ready For Admission'
     )
       AND csj.student_id IN (SELECT student_id FROM students)
-    ORDER BY s.student_id, csj.created_at ASC
+    ORDER BY s.student_id, csj.course_id, csj.created_at ASC
 ) fs
     ON c.counsellor_id = fs.assigned_counsellor_id
     AND fs.form_date >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
@@ -1560,14 +1604,14 @@ GROUP BY c.counsellor_id, c.counsellor_name
 
 UNION ALL
 
--- L3 Counsellors: application stages from course_status_journeys
+-- L3 Counsellors
 SELECT
     c.counsellor_name,
     'L3' AS counsellor_role,
     COALESCE(COUNT(DISTINCT fs.student_id), 0) AS form_count
 FROM counsellors c
 LEFT JOIN (
-    SELECT DISTINCT ON (student_id)
+    SELECT DISTINCT ON (student_id, course_id)
         student_id,
         assigned_l3_counsellor_id,
         created_at AS form_date
@@ -1583,7 +1627,7 @@ LEFT JOIN (
         'Ready For Admission'
     )
       AND student_id IN (SELECT student_id FROM students)
-    ORDER BY student_id, created_at ASC
+    ORDER BY student_id, course_id, created_at ASC
 ) fs
     ON c.counsellor_id = fs.assigned_l3_counsellor_id
     AND fs.form_date >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
@@ -1599,14 +1643,10 @@ ORDER BY counsellor_role, form_count DESC;
 
 **Variant D — Counsellor-wise remarks + form count for BOTH L2 and L3 (any date window):**
 
-Use when user asks: "counsellor wise remark count and form count", "share remarks and forms for each counsellor today", "how many remarks and forms did each counsellor do today". This combines remarks (common to both roles via `student_remarks`) with role-appropriate form counts via UNION ALL.
-
-- **L2 form count** = students whose `current_student_status` moved to a pre-application stage (from `students` table).
-- **L3 form count** = students who first reached an application-stage `course_status` (from `course_status_journeys`).
-- Remarks are counted from `student_remarks` for both halves independently.
+Use when user asks: "counsellor wise remark count and form count", "share remarks and forms for each counsellor today", "how many remarks and forms did each counsellor do today".
 
 ```sql
--- L2: remarks today + form count today (students assigned to L2 who filled a form)
+-- L2: remarks today + form count today
 SELECT
     c.counsellor_name,
     'L2' AS counsellor_role,
@@ -1619,8 +1659,9 @@ LEFT JOIN student_remarks sr
     AND sr.created_at <  CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
     AND sr.student_id IN (SELECT student_id FROM students)
 LEFT JOIN (
-    SELECT DISTINCT ON (s.student_id)
+    SELECT DISTINCT ON (s.student_id, csj.course_id)
         s.student_id,
+        csj.course_id,
         s.assigned_counsellor_id,
         csj.created_at AS form_date
     FROM students s
@@ -1636,7 +1677,7 @@ LEFT JOIN (
         'Ready For Admission'
     )
       AND csj.student_id IN (SELECT student_id FROM students)
-    ORDER BY s.student_id, csj.created_at ASC
+    ORDER BY s.student_id, csj.course_id, csj.created_at ASC
 ) fs
     ON c.counsellor_id = fs.assigned_counsellor_id
     AND fs.form_date >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
@@ -1647,7 +1688,7 @@ GROUP BY c.counsellor_id, c.counsellor_name
 
 UNION ALL
 
--- L3: remarks today + application-stage form count today
+-- L3: remarks today + form count today
 SELECT
     c.counsellor_name,
     'L3' AS counsellor_role,
@@ -1689,16 +1730,14 @@ ORDER BY counsellor_role, total_remarks DESC;
 ```
 
 **Key rules for Variant D:**
-- `WHERE c.role = 'l2'` and `WHERE c.role = 'l3'` are mandatory on each half — without them, the opposite-role counsellors appear with `form_count = 0` (misleading, since L2s never have CSJ entries and L3s never have `assigned_counsellor_id` entries).
+- `WHERE c.role = 'l2'` and `WHERE c.role = 'l3'` are mandatory on each half.
 - Remarks JOIN is identical on both halves — via `sr.counsellor_id = c.counsellor_id` with date in the ON clause (RULE J8).
-- L2 form JOIN: `students s JOIN course_status_journeys csj ON s.student_id = csj.student_id`, deduplicated with `DISTINCT ON (s.student_id)`, attributed via `s.assigned_counsellor_id`.
-- L3 form JOIN is on `course_status_journeys.assigned_l3_counsellor_id` with `DISTINCT ON` deduplication before the date filter.
-- All four filters (both remarks and both form joins) go in the ON clause, not WHERE, to preserve zero-count counsellors.
+- L2 form JOIN: deduplicated with `DISTINCT ON (s.student_id, csj.course_id) ORDER BY s.student_id, csj.course_id, csj.created_at ASC`, attributed via `s.assigned_counsellor_id`.
+- L3 form JOIN: on `course_status_journeys.assigned_l3_counsellor_id` with `DISTINCT ON (student_id, course_id)` deduplication.
+- All filters go in the ON clause, not WHERE, to preserve zero-count counsellors.
 - Output columns must be identical across both UNION ALL halves: `counsellor_name`, `counsellor_role`, `total_remarks`, `form_count`.
 
 ---
-
-**RULE O1.** Output ONLY raw PostgreSQL SQL — no markdown fences, no comments, no explanations.
 
 **RULE O2.** ALWAYS use wide-format (pivot) for stage breakdown — one row per entity, one column per stage. Never one row per status.
 
@@ -1738,6 +1777,18 @@ ORDER BY counsellor_role, total_remarks DESC;
 - NEVER add `WHERE manager.role = 'to'` when the query identifies a team by manager name (ILIKE '%Name%'). The name filter alone is sufficient — adding a role guard will silently return zero rows if the role value differs.
 - NEVER add `WHERE c.role IN ('l2','l3')` or any role filter on counsellor queries unless the user explicitly specifies a role.
 - `WHERE manager.role ILIKE '%to%'` is ONLY valid for ALL-teams queries (no specific manager named). This covers both `to` (L2 team owners) and `to_l3` (L3 team owners).
+
+**RULE F9.** **University Name with Location Qualifier — Always use AND, never OR.**
+When the user refers to a university by a name that includes a location (e.g. "Chandigarh University, Lucknow", "Chandigarh University Lucknow", "Amity University Noida"), the `university_name` column in `university_courses` stores the **full composite name** including the city/campus. You MUST match both the university name and the location using `AND`:
+- **CORRECT:** `uc.university_name ILIKE '%Chandigarh University%' AND uc.university_name ILIKE '%Lucknow%'`
+- **WRONG:** `uc.university_name ILIKE '%Chandigarh University%' OR uc.university_name ILIKE '%Lucknow%'`
+
+**Why this matters:** Using `OR` will match:
+1. Every campus of "Chandigarh University" (e.g. Chandigarh University Punjab, Chandigarh University Mohali) — not just Lucknow, AND
+2. Any unrelated university that happens to contain "Lucknow" in its name.
+This inflates results and produces an incorrect count. Using `AND` ensures only courses from the specific campus (university name containing BOTH terms) are matched.
+
+**This rule applies everywhere** `university_name` is filtered: in WHERE clauses, CTEs, subqueries, and any pattern (PATTERN 11, 17, 18, etc.).
 
 ---
 

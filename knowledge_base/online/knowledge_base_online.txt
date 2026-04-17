@@ -203,8 +203,8 @@ Full audit trail of every status change. One row per event, multiple per student
 - Latest status per student-course: `DISTINCT ON (student_id, course_id) ORDER BY student_id, course_id, created_at DESC` — gets the most recent status change for each student-course pair.
 - First occurrence of each status per student-course: `DISTINCT ON (student_id, course_id) ORDER BY student_id, course_id,created_at ASC` — gets when each student first reached each specific status.
 - Total fees collected: `SUM(deposit_amount) WHERE deposit_amount > 0`.
-- Use DISTINCT ON (student_id, course_id) with MIN(created_at) to deduplicate each student-course pair to their first application , admission or enrollment event, then apply the date filter on that deduplicated timestamp.
-
+- **All date-bounded stage counts (application, admission, enrolled, document pending/submitted):** For ANY query counting students in a date window from this table, ALWAYS use `MIN(created_at)` per `(student_id, course_id)` for the target status. A student-course pair is counted ONLY if it was their **first time** reaching that stage for that course within the window. Students who had already reached that stage before the window are excluded. See RULE CSJ-FORM.
+- Use `MIN(created_at)` per `(student_id, course_id)` to deduplicate each student-course pair to their first application, admission or enrollment event, then apply the date filter on that deduplicated timestamp.
 
 ---
 
@@ -352,6 +352,42 @@ course_status_journeys.course_id  → university_courses.course_id
 
 **RULE CSJ5 — Never include NULL values in fee_type filters:**
 NEVER use `fee_type IS NULL` or add `OR fee_type IS NULL` in any fee_type filter. The database is not clean. Always use `fee_type NOT IN (...)` without the NULL clause to exclude dirty NULL records.
+
+**RULE CSJ-FORM — ALL date-bounded stage counts use first-ever event per student-course:**
+For ANY date-bounded count from `course_status_journeys` — application, admission, document pending, document submitted, enrolled, or any other stage — ALWAYS use `MIN(created_at)` per `(student_id, course_id)` for that status. A student-course pair is counted in the window ONLY if that was the **first time** they ever reached that stage for that course. Students who had already reached that stage before the window are excluded — regardless of re-triggers or additional rows.
+
+This applies to:
+- **Form fills / applications** → `MIN(created_at)` per `(student_id, course_id)` where `course_status = 'Application'`
+- **Admissions yesterday/today** → `MIN(created_at)` per `(student_id, course_id)` where `course_status = 'Admission'`
+- **Document Pending yesterday/today** → `MIN(created_at)` per `(student_id, course_id)` where `course_status = 'Document Pending'`
+- **Document Submitted yesterday/today** → `MIN(created_at)` per `(student_id, course_id)` where `course_status = 'Document Submitted'`
+- **Enrolled yesterday/today** → `MIN(created_at)` per `(student_id, course_id)` where `course_status = 'Enrolled'`
+
+**CORRECT pattern (applies to any stage — replace status filter as needed):**
+```sql
+WITH first_event AS (
+    SELECT student_id, course_id, MIN(created_at) AS first_event_date
+    FROM course_status_journeys
+    WHERE course_status IN (<target statuses>)
+    AND student_id IN (SELECT student_id FROM students)
+    GROUP BY student_id, course_id
+)
+SELECT COUNT(DISTINCT fe.student_id)
+FROM first_event fe
+JOIN university_courses uc ON fe.course_id = uc.course_id
+WHERE uc.university_name ILIKE '%University Name%'
+  AND fe.first_event_date >= <start_ist>
+  AND fe.first_event_date <  <end_ist>;
+```
+
+**WRONG pattern (DO NOT USE for any stage):**
+```sql
+-- WRONG: counts all rows in window, not first-ever event per student-course
+SELECT COUNT(DISTINCT student_id)
+FROM course_status_journeys
+WHERE course_status IN (...)
+  AND created_at >= <start_ist> AND created_at < <end_ist>;
+```
 
 # SECTION 3 — CRITICAL DISTINCTIONS
 
@@ -804,7 +840,10 @@ WHERE course_status = 'Admission'
 | "success rate" / "performance" / "efficiency" (counsellor/team) | `COUNT(Connected)/COUNT(all)` from student_remarks — NOT conversion |
 | "conversion rate" / "admission rate" (student outcomes) | `COUNT(DISTINCT student_id WHERE course_status IN ('Admission','Document Pending','Document Submitted','Enrolled'))` from `course_status_journeys` |
 | "admissions each month" / "monthly admission trend" | COUNT by date bucket WHERE `course_status = 'Admission'` on `course_status_journeys` |
-| "recent admissions" / "admissions in last N days" / "admissions done yesterday" / "admissions done today" / "admissions yesterday" / "admissions today" / "admissions this week" / "admissions this month" / ANY date-bounded admission query | Use MIN(created_at) per student WHERE `course_status = 'Admission'` on `course_status_journeys` — see PATTERN 11 |
+| "recent admissions" / "admissions in last N days" / "admissions done yesterday" / "admissions done today" / "admissions yesterday" / "admissions today" / "admissions this week" / "admissions this month" / ANY date-bounded admission query | Use `MIN(created_at)` per `(student_id, course_id)` WHERE `course_status = 'Admission'` AND exclude partial payments. Count only students whose **first admission** for that course fell in the window. See RULE CSJ-FORM. |
+| "document pending today" / "document pending yesterday" / "docs pending this week" / ANY date-bounded document-pending query | Use `MIN(created_at)` per `(student_id, course_id)` WHERE `course_status = 'Document Pending'`. Count only students whose **first** Document Pending event for that course fell in the window. See RULE CSJ-FORM. |
+| "document submitted today" / "document submitted yesterday" / ANY date-bounded document-submitted query | Use `MIN(created_at)` per `(student_id, course_id)` WHERE `course_status = 'Document Submitted'`. Count only students whose **first** Document Submitted event for that course fell in the window. See RULE CSJ-FORM. |
+| "enrolled today" / "enrolled yesterday" / "enrollments this week" / ANY date-bounded enrolled query | Use `MIN(created_at)` per `(student_id, course_id)` WHERE `course_status = 'Enrolled'`. Count only students whose **first** Enrolled event for that course fell in the window. See RULE CSJ-FORM. |
 | "total leads over time" / "lead count by month" / "leads created" | COUNT by date bucket from `students` — never filter by `current_student_status` |
 | "total ICC" / "total initial counselling calls" / "how many ICC" / "ICC count" / "ICC done" / "students who had ICC" (any form) | `COUNT(DISTINCT student_id) WHERE "first_Icc_Date" IS NOT NULL` from `students` — ALWAYS use `"first_Icc_Date"` column (double-quoted), NOT `current_student_status` |
 | "call at 9 AM" / "hourly call breakdown" / "best/worst time slot" | `EXTRACT(HOUR FROM ... AT TIME ZONE 'Asia/Kolkata')` on `student_remarks` |
@@ -838,7 +877,8 @@ WHERE course_status = 'Admission'
 | "pre NI" / "NI with no ICC" / "NI who never progressed" | `current_student_status='NotInterested'` + `"first_Icc_Date" IS NULL` + NOT IN course_status_journeys progression — see NI-6 in DISTINCTION 9 and PATTERN 13 |
 | "attempted calls on new leads" / "calls made to students added yesterday" / "leads attempted yesterday" | COUNT(DISTINCT sr.student_id) joining students filtered by `created_at` yesterday window — see PATTERN 14 |
 | "total leads today" / "attempted leads today" / "leads and attempts today" (counsellor wise) | Two COUNT(DISTINCT) on students and student_remarks filtered by today's IST window — see PATTERN 15 |
-| "applications today" / "how many applied today" / "status breakdown today" / any date-bounded count of specific `course_status` values by university or counsellor | Use PATTERN 17 — `DISTINCT ON (student_id, course_id, course_status) ORDER BY ... ASC` to get first occurrence of each status per student, then apply the IST date filter on that first-occurrence timestamp |
+| "form fills today" / "form fills yesterday" / "applications today" / "how many applied today" / "how many forms yesterday" / any date-bounded **aggregate** application count by university or counsellor | Use `MIN(created_at)` per `(student_id, course_id)` where `course_status = 'Application'` (first-ever application per student-course), then apply the IST date filter on that deduplicated timestamp. See RULE CSJ-FORM. |
+| "status breakdown today" / per-individual-status breakdown for a date window | Use `DISTINCT ON (student_id, course_id, course_status) ORDER BY ... ASC` to get first occurrence of each individual status per student, then apply the IST date filter |
 
 ---
 
@@ -1373,6 +1413,18 @@ GROUP BY uc.university_name;
 - NEVER add `WHERE manager.role = 'to'` when the query identifies a team by manager name (ILIKE '%Name%'). The name filter alone is sufficient — adding a role guard will silently return zero rows if the role value differs.
 - NEVER add `WHERE c.role IN ('l2','l3')` or any role filter on counsellor queries unless the user explicitly specifies a role.
 - `WHERE manager.role = 'to'` is ONLY valid for ALL-teams queries (no specific manager named).
+
+**RULE F9.** **University Name with Location Qualifier — Always use AND, never OR.**
+When the user refers to a university by a name that includes a location (e.g. "Chandigarh University, Lucknow", "Chandigarh University Lucknow", "Amity University Noida"), the `university_name` column in `university_courses` stores the **full composite name** including the city/campus. You MUST match both the university name and the location using `AND`:
+- **CORRECT:** `uc.university_name ILIKE '%Chandigarh University%' AND uc.university_name ILIKE '%Lucknow%'`
+- **WRONG:** `uc.university_name ILIKE '%Chandigarh University%' OR uc.university_name ILIKE '%Lucknow%'`
+
+**Why this matters:** Using `OR` will match:
+1. Every campus of "Chandigarh University" (e.g. Chandigarh University Punjab, Chandigarh University Mohali) — not just Lucknow, AND
+2. Any unrelated university that happens to contain "Lucknow" in its name.
+This inflates results and produces an incorrect count. Using `AND` ensures only courses from the specific campus (university name containing BOTH terms) are matched.
+
+**This rule applies everywhere** `university_name` is filtered: in WHERE clauses, CTEs, subqueries, and any pattern (PATTERN 11, 17, 18, etc.).
 
 ---
 
