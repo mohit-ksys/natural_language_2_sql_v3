@@ -1753,7 +1753,7 @@ ORDER BY counsellor_role, total_remarks DESC;
 
 **RULE O8.** Whenever a date or timestamp column (`created_at`, `updated_at`, or any derived date) is returned to the user, it MUST be converted to IST using `AT TIME ZONE 'Asia/Kolkata'`. Always use `MIN(created_at)` (not raw `created_at`) when selecting event dates from append-only tables to avoid duplicates from re-triggers. Never expose UTC timestamps directly in query output.
 
----
+-----
 
 ### FILTER RULES
 
