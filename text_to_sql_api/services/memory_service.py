@@ -330,7 +330,7 @@ _ALLOWED_FEEDBACK_COLUMNS = frozenset({
     "has_logic_feedback", "logic_feedback_text",
     "has_sql_feedback", "corrected_sql",
     "has_english_feedback", "english_feedback_text", "regenerated_sql",
-    "has_any_feedback",
+    "has_any_feedback", "query_verdict", "failure_reason",
 })
 
 def update_query_log_field(feedback_id: str, updates: dict):
@@ -393,7 +393,7 @@ def get_session(session_id: str) -> dict:
 
 
 def append_session_turn(session_id: str, user_query: str, generated_sql: str, answer: str, feedback_id: str, user_id: str = None):
-    """Insert a turn into conversation_memory (keeps last SESSION_MAX_TURNS rows)."""
+    """Insert or update a turn in conversation_memory using feedback_id column."""
     from config.database import get_auth_engine
     now_utc = datetime.now(timezone.utc)
     content = json.dumps({
@@ -405,15 +405,26 @@ def append_session_turn(session_id: str, user_query: str, generated_sql: str, an
     try:
         engine = get_auth_engine()
         with engine.begin() as conn:
-            # Force ensure session exists using the session_id (which will be the chat_id)
             _ensure_session(conn, session_id, user_id)
             
-            conn.execute(text("""
-                INSERT INTO conversation_memory (id, chat_id, role, content, created_at_utc, created_at_ist)
-                VALUES (:id, :sid, 'turn', :content, :now, :now AT TIME ZONE 'Asia/Kolkata')
-            """), {"id": str(uuid.uuid4()), "sid": session_id, "content": content, "now": now_utc})
+            existing = conn.execute(text("""
+                SELECT id FROM conversation_memory 
+                WHERE feedback_id = :fid
+                LIMIT 1
+            """), {"fid": feedback_id}).fetchone()
 
-            # Trim to SESSION_MAX_TURNS — keep last N
+            if existing:
+                conn.execute(text("""
+                    UPDATE conversation_memory 
+                    SET content = :content
+                    WHERE id = :id
+                """), {"content": content, "id": existing.id})
+            else:
+                conn.execute(text("""
+                    INSERT INTO conversation_memory (id, chat_id, feedback_id, role, content, created_at_utc, created_at_ist)
+                    VALUES (:id, :sid, :fid, 'turn', :content, :now, :now AT TIME ZONE 'Asia/Kolkata')
+                """), {"id": str(uuid.uuid4()), "sid": session_id, "fid": feedback_id, "content": content, "now": now_utc})
+
             max_turns = settings.SESSION_MAX_TURNS
             conn.execute(text("""
                 DELETE FROM conversation_memory
@@ -426,41 +437,42 @@ def append_session_turn(session_id: str, user_query: str, generated_sql: str, an
                   )
             """), {"sid": session_id, "max_turns": max_turns})
 
-            # Update session updated_at
             conn.execute(text("""
                 UPDATE sessions SET updated_at_utc=:now, updated_at_ist=:now AT TIME ZONE 'Asia/Kolkata'
                 WHERE id=:sid
             """), {"now": now_utc, "sid": session_id})
+            
+        print(f"Successfully saved turn for feedback {feedback_id} in session {session_id}")
     except Exception as e:
         log.error("append_session_turn error: %s", e)
 
 
-def update_session_turn(session_id: str, feedback_id: str, new_sql: str, new_answer: str):
-    """Update the answer/sql on a session turn that matches feedback_id."""
+def update_session_turn(session_id: str, feedback_id: str, new_sql: str = None, new_answer: str = None, verdict: str = None, reason: str = None):
+    """Update a turn record directly using the feedback_id column."""
     from config.database import get_auth_engine
     try:
         engine = get_auth_engine()
-        with engine.connect() as conn:
-            rows = conn.execute(text("""
-                SELECT id, content FROM conversation_memory
-                WHERE chat_id = :sid
-                ORDER BY created_at_utc DESC
-                LIMIT :max_turns
-            """), {"sid": session_id, "max_turns": settings.SESSION_MAX_TURNS}).fetchall()
+        with engine.begin() as conn:
+            row = conn.execute(text("""
+                SELECT content FROM conversation_memory WHERE feedback_id = :fid
+            """), {"fid": feedback_id}).fetchone()
+            
+            if not row:
+                log.warning("update_session_turn: No turn found with feedback_id %s", feedback_id)
+                return
 
-        for row in rows:
-            try:
-                turn = json.loads(row.content)
-                if turn.get("feedback_id") == feedback_id:
-                    turn["generated_sql"] = new_sql
-                    turn["answer"] = new_answer
-                    with engine.begin() as conn:
-                        conn.execute(text(
-                            "UPDATE conversation_memory SET content=:content WHERE id=:id"
-                        ), {"content": json.dumps(turn), "id": row.id})
-                    break
-            except Exception:
-                pass
+            turn = json.loads(row.content)
+            
+            if new_sql is not None: turn["generated_sql"] = new_sql
+            if new_answer is not None: turn["answer"] = new_answer
+            if verdict is not None: turn["query_verdict"] = verdict
+            if reason is not None: turn["failure_reason"] = reason
+            
+            conn.execute(text(
+                "UPDATE conversation_memory SET content = :content WHERE feedback_id = :fid"
+            ), {"content": json.dumps(turn), "fid": feedback_id})
+            
+        log.info("Successfully updated session turn for feedback %s", feedback_id)
     except Exception as e:
         log.error("update_session_turn error: %s", e)
 
@@ -481,8 +493,21 @@ def format_session_for_prompt(session_id: str) -> str:
         sql = t.get("generated_sql")
         if sql:
             lines.append(f'SQL: {sql}')
-        lines.append(f'Answer: {t.get("answer", "")}\n')
-    print(f"Formatted session {session_id} for prompt with {len(recent)} turns")
+        lines.append(f'Answer: {t.get("answer", "")}')
+        
+        # Inject Feedback so the LLM can learn from mistakes
+        verdict = t.get("query_verdict")
+        reason = t.get("failure_reason")
+        if verdict:
+            verdict_label = "✅ CORRECT" if verdict == "correct" else "❌ WRONG"
+            feedback_line = f"Status: {verdict_label}"
+            if reason:
+                feedback_line += f" (Reason: {reason})"
+            lines.append(feedback_line)
+        
+        lines.append("") # Spacer
+        
+    print(f"Formatted session {session_id} for prompt with {len(recent)} turns (including feedback)")
     return "\n".join(lines)
 
 

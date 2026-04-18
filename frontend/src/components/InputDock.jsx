@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import PropTypes from 'prop-types';
 
-export default function InputDock({ onSendMessage, model, setModel, thinkOn, setThinkOn, chatStarted }) {
+export default function InputDock({ onSendMessage, model, setModel, thinkOn, setThinkOn, chatStarted, isLocked }) {
   const [inputVal, setInputVal] = useState('');
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
@@ -41,6 +41,7 @@ export default function InputDock({ onSendMessage, model, setModel, thinkOn, set
   };
 
   const handleSend = () => {
+    if (isLocked) return;
     const v = inputVal.trim();
     if (!v) return;
     onSendMessage(v);
@@ -53,20 +54,21 @@ export default function InputDock({ onSendMessage, model, setModel, thinkOn, set
   return (
     <div className={`input-dock ${chatStarted ? 'dock-compact' : ''}`}>
       <div className="input-container">
-        <div className={`input-console ${isFocused ? 'focused' : ''} ${chatStarted ? 'compact' : ''}`}>
+        <div className={`input-console ${isFocused ? 'focused' : ''} ${chatStarted ? 'compact' : ''} ${isLocked ? 'locked' : ''}`}>
           <div className="input-row">
             <div className="textarea-wrap">
               <textarea
                 className="input-textarea"
                 ref={textareaRef}
                 value={inputVal}
-                placeholder="Ask your database anything..."
+                placeholder={isLocked ? "Please rate the last answer to continue..." : "Ask your database anything..."}
                 rows={1}
                 maxLength={2000}
                 onChange={handleInput}
                 onKeyDown={handleKeyDown}
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
+                disabled={isLocked}
               />
             </div>
             <div className="input-actions">
@@ -74,6 +76,7 @@ export default function InputDock({ onSendMessage, model, setModel, thinkOn, set
                 <button
                   className={`model-pill-btn ${dropdownOpen ? 'open' : ''}`}
                   onClick={() => setDropdownOpen(!dropdownOpen)}
+                  disabled={isLocked}
                 >
                   <span className="model-dot" style={{ background: models.find(m => m.id === model)?.color || 'var(--green)', boxShadow: `0 0 5px ${models.find(m => m.id === model)?.color || 'var(--green)'}` }}></span>
                   <span>{models.find(m => m.id === model)?.name || model}</span>
@@ -113,7 +116,7 @@ export default function InputDock({ onSendMessage, model, setModel, thinkOn, set
                 )}
 
               </div>
-              <button className="send-btn" onClick={handleSend} disabled={!inputVal.trim()} aria-label="Send message">
+              <button className="send-btn" onClick={handleSend} disabled={isLocked || !inputVal.trim()} aria-label="Send message">
                 <span className="send-icon">↑</span>
               </button>
             </div>
@@ -131,4 +134,5 @@ InputDock.propTypes = {
   thinkOn: PropTypes.bool.isRequired,
   setThinkOn: PropTypes.func.isRequired,
   chatStarted: PropTypes.bool,
+  isLocked: PropTypes.bool,
 };

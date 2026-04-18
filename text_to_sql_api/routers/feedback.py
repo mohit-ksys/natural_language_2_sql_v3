@@ -2,6 +2,7 @@
 Feedback router — logs feedback to query_logs and star ratings to chat_messages.
 """
 
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 from models.schemas import FeedbackResponse, LogicFeedbackRequest, SqlFeedbackRequest, RatingRequest
@@ -9,9 +10,8 @@ from services import llm_service, memory_service
 from auth.dependencies import get_current_user
 from config.database import get_auth_engine
 
+log = logging.getLogger("text2sql")
 router = APIRouter()
-
-
 
 
 @router.post("/feedback/logic", response_model=FeedbackResponse)
@@ -49,20 +49,43 @@ def sql_feedback(req: SqlFeedbackRequest, _: dict = Depends(get_current_user)):
 
 @router.post("/feedback/rating")
 def rating_feedback(req: RatingRequest, _: dict = Depends(get_current_user)):
-    """Save verdict and failure reason to chat_messages."""
+    """Save verdict and failure reason across all storage layers."""
     if req.query_verdict not in ("correct", "incorrect"):
         raise HTTPException(status_code=422, detail="query_verdict must be 'correct' or 'incorrect'")
 
     engine = get_auth_engine()
-    with engine.begin() as conn:
-        conn.execute(text("""
-            UPDATE chat_messages
-            SET query_verdict = :verdict,
-                failure_reason = :reason
-            WHERE feedback_id = :fid
-        """), {
-            "verdict": req.query_verdict,
-            "reason": req.failure_reason,
-            "fid": req.feedback_id,
+    try:
+        # 1. Update chat_messages (UI state)
+        with engine.begin() as conn:
+            conn.execute(text("""
+                UPDATE chat_messages
+                SET query_verdict = :verdict,
+                    failure_reason = :reason
+                WHERE feedback_id = :fid
+            """), {
+                "verdict": req.query_verdict,
+                "reason": req.failure_reason,
+                "fid": req.feedback_id,
+            })
+
+        # 2. Update query_logs (Analytics/Audit state)
+        memory_service.update_query_log_field(req.feedback_id, {
+            "has_any_feedback": True,
+            "query_verdict": req.query_verdict,
+            "failure_reason": req.failure_reason
         })
-    return {"success": True}
+
+        # 3. Update Conversation Memory (Session Turn)
+        if req.session_id:
+            memory_service.update_session_turn(
+                req.session_id, 
+                req.feedback_id, 
+                verdict=req.query_verdict, 
+                reason=req.failure_reason
+            )
+
+        return {"ok": True, "message": "Feedback synchronized across all layers"}
+    except Exception as e:
+        log.error("Global feedback sync failure: %s", e)
+        # We don't raise here to avoid breaking the frontend if one sync layer fails
+        return {"ok": False, "error": str(e)}

@@ -430,12 +430,17 @@ export async function submitMCQAnswers(queryId, sessionId, answers, model = 'gem
   }
 }
 
-export async function submitVerdict(feedbackId, queryVerdict, failureReason = null) {
+export async function submitVerdict(feedbackId, queryVerdict, failureReason = null, sessionId = null) {
   try {
     const res = await apiFetch(`${API_BASE}/feedback/rating`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ feedback_id: feedbackId, query_verdict: queryVerdict, failure_reason: failureReason }),
+      body: JSON.stringify({ 
+        feedback_id: feedbackId, 
+        query_verdict: queryVerdict, 
+        failure_reason: failureReason,
+        session_id: sessionId
+      }),
     });
     if (!res.ok) return { ok: false };
     return { ok: true };

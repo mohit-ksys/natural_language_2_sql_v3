@@ -65,6 +65,8 @@ CREATE TABLE query_logs (
 
   -- any feedback flag for easy filtering
   has_any_feedback      BOOLEAN DEFAULT false,
+  query_verdict         TEXT,
+  failure_reason        TEXT,
 
   created_at_utc        TIMESTAMPTZ DEFAULT now(),
   created_at_ist        TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')
@@ -119,6 +121,8 @@ CREATE TABLE chat_messages (
   token_usage     JSONB,
   error           TEXT,
   extra           JSONB,                      -- for any extra frontend fields (MCQ etc.)
+  query_verdict    TEXT,
+  failure_reason   TEXT,
   created_at_utc   TIMESTAMPTZ DEFAULT now(),
   created_at_ist   TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')
 );

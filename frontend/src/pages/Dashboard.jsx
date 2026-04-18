@@ -13,6 +13,7 @@ export default function Dashboard({ onBack, lmsId }) {
 
   const initialFilters = {
     username: '',
+    email: '',
     feedback_type: '',
     has_error: '',
     model: '',
@@ -23,16 +24,25 @@ export default function Dashboard({ onBack, lmsId }) {
   };
 
   const [filters, setFilters] = useState(initialFilters);
+  const [debouncedFilters, setDebouncedFilters] = useState(initialFilters);
+
+  // Debounce filters to avoid spamming the API on every keystroke
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedFilters(filters);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [filters]);
 
   const loadStats = async (pg=1) => {
-    const params = { page: pg, page_size: 10, ...filters };
+    const params = { page: pg, page_size: 10, ...debouncedFilters };
     const res = await fetchDashboardStats(params);
     if (res.ok) setStats(res.data);
   };
 
   const loadLogs = useCallback(async (pg = 1) => {
     setLoading(true);
-    const params = { page: pg, page_size: 10, ...filters };
+    const params = { page: pg, page_size: 10, ...debouncedFilters };
     const res = await fetchDashboardLogs(params);
     setLoading(false);
     if (res.ok) {
@@ -41,7 +51,7 @@ export default function Dashboard({ onBack, lmsId }) {
       setPage(res.data.page);
       setTotalPages(res.data.total_pages);
     }
-  }, [filters]);
+  }, [debouncedFilters]);
 
   useEffect(() => { loadStats(); }, [loadLogs]);
   useEffect(() => { loadLogs(1); }, [loadLogs]);
@@ -81,20 +91,17 @@ export default function Dashboard({ onBack, lmsId }) {
       {stats && (
         <>
           <div style={styles.cards}>
-            <StatCard label="Queries (24h)" value={stats.total_queries_24h} />
+            <StatCard label={stats.is_custom_range ? "Queries (Selected)" : "Queries (24h)"} value={stats.range_queries} />
             <StatCard label="Total Queries" value={stats.total_queries_all_time} />
-            <StatCard label="Most Active (24h)" value={stats.most_active_user_24h || '—'} small />
-            <StatCard label="Errors (24h)" value={stats.errors_24h} accent="#f87171" />
-            <StatCard label="Feedback (24h)" value={stats.feedback_queries_24h} accent="#4ade80" />
+            <StatCard label="Errors (Range)" value={stats.errors_range} accent="#f87171" />
+            <StatCard label="Most Active" value={stats.most_active_user_range || '—'} small />
           </div>
           
           <div style={{ ...styles.cards, marginTop: '12px' }}>
-            <StatCard label="Tokens (24h)" value={`${(stats.tokens_24h?.total / 1000).toFixed(1)}k`} 
-              sub={`${(stats.tokens_24h?.input / 1000).toFixed(1)}k in / ${(stats.tokens_24h?.output / 1000).toFixed(1)}k out`} />
-            <StatCard label="Cost (24h)" value={`$${stats.tokens_24h?.cost_total.toFixed(4)}`} accent="#fbbf24"
-              sub={`$${stats.tokens_24h?.cost_input.toFixed(4)} in / $${stats.tokens_24h?.cost_output.toFixed(4)} out`} />
-            <StatCard label="Total Tokens" value={`${(stats.tokens_all_time?.total / 1000000).toFixed(2)}M`} />
-            <StatCard label="Total Cost" value={`$${stats.tokens_all_time?.cost_total.toFixed(2)}`} accent="#fbbf24" />
+            <StatCard label="Tokens (Range)" value={`${(stats.tokens_range?.total / 1000).toFixed(1)}k`} 
+              sub={`$${stats.tokens_range?.cost_total.toFixed(4)} total cost`} />
+            <StatCard label="Total Cost" value={`$${stats.tokens_all_time?.cost_total.toFixed(2)}`} accent="#fbbf24"
+              sub={`${(stats.tokens_all_time?.total / 1000000).toFixed(2)}M cumulative tokens`} />
           </div>
         </>
       )}
@@ -102,6 +109,7 @@ export default function Dashboard({ onBack, lmsId }) {
       {/* Filters */}
       <form style={styles.filters} onSubmit={handleFilterSubmit}>
         <FilterInput label="Username" value={filters.username} onChange={v => handleFilterChange('username', v)} />
+        <FilterInput label="Email" value={filters.email} onChange={v => handleFilterChange('email', v)} />
         <FilterSelect label="Feedback" value={filters.feedback_type} onChange={v => handleFilterChange('feedback_type', v)}
           options={[['', 'All'], ['logic', 'Logic'], ['sql', 'SQL'], ['english', 'English'], ['any', 'Any']]} />
         <FilterSelect label="Error" value={filters.has_error} onChange={v => handleFilterChange('has_error', v)}
@@ -129,7 +137,7 @@ export default function Dashboard({ onBack, lmsId }) {
             <table style={styles.table}>
               <thead>
                 <tr>
-                  {['Timestamp (IST)', 'User', 'Query', 'Model', 'LMS', 'Exec (s)', 'Cost ($)', 'Error', 'Feedback'].map(h => (
+                  {['Timestamp (IST)', 'User', 'Query', 'Model', 'Verdict', 'Reason', 'Exec (s)', 'Cost ($)', 'Error'].map(h => (
                     <th key={h} style={styles.th}>{h}</th>
                   ))}
                 </tr>
@@ -144,16 +152,21 @@ export default function Dashboard({ onBack, lmsId }) {
       })
     : '—'}
 </td>
-                  <td style={styles.td}>{row.username || '—'}</td>
+                    <td style={styles.td}>{row.user_name || '—'}</td>
                     <td style={styles.td}>{(row.user_query || '').slice(0, 60)}{(row.user_query || '').length > 60 ? '…' : ''}</td>
                     <td style={styles.td}>{(row.model || '').replace('gemini-', '')}</td>
-                    <td style={styles.td}>{row.lms_type || '—'}</td>
+                    <td style={styles.td}>
+                      {row.query_verdict === 'correct' ? <span style={styles.fbBadge}>Correct</span> : 
+                       row.query_verdict === 'incorrect' ? <span style={styles.errorBadge}>Wrong</span> : '—'}
+                    </td>
+                    <td style={styles.td}>
+                      <span style={{fontSize:'11px', color:'#94a3b8'}}>{(row.failure_reason || '').slice(0, 30)}{ (row.failure_reason || '').length > 30 ? '…' : ''}</span>
+                    </td>
                     <td style={styles.td}>{row.execution_time != null ? row.execution_time.toFixed(2) : '—'}</td>
                     <td style={{ ...styles.td, color: '#fbbf24', fontFamily: 'monospace' }}>
                       {row.total_cost != null ? `$${row.total_cost.toFixed(5)}` : '—'}
                     </td>
                     <td style={styles.td}>{row.error_message ? <span style={styles.errorBadge}>Error</span> : '—'}</td>
-                    <td style={styles.td}>{row.has_any_feedback ? <span style={styles.fbBadge}>Yes</span> : '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -177,7 +190,7 @@ export default function Dashboard({ onBack, lmsId }) {
               <span style={{ fontSize: '15px', fontWeight: 700, color: '#e2e8f0' }}>Query Detail</span>
               <button style={styles.closeBtn} onClick={() => setSelectedRow(null)}>×</button>
             </div>
-            <DrawerField label="User" value={selectedRow.username} />
+            <DrawerField label="User" value={selectedRow.user_name} />
             <DrawerField label="Session ID" value={selectedRow.session_id} mono />
             <DrawerField label="Chat ID" value={selectedRow.chat_id} mono />
             <DrawerField label="Model" value={selectedRow.model} />
@@ -204,6 +217,15 @@ export default function Dashboard({ onBack, lmsId }) {
             <DrawerField label="Generated SQL" value={selectedRow.generated_sql} multiline code />
             <DrawerField label="Answer" value={selectedRow.answer} multiline />
             {selectedRow.error_message && <DrawerField label="Error" value={selectedRow.error_message} error />}
+            
+            {/* NEW FEEDBACK FIELDS */}
+            {selectedRow.query_verdict && (
+              <div style={{ padding: '12px', background: selectedRow.query_verdict === 'correct' ? 'rgba(34, 197, 94, 0.05)' : 'rgba(239, 68, 68, 0.05)', borderRadius: '8px', border: `1px solid ${selectedRow.query_verdict === 'correct' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)'}`, marginBottom: '16px' }}>
+                <div style={{ fontSize: '11px', color: selectedRow.query_verdict === 'correct' ? '#4ade80' : '#f87171', marginBottom: '8px', textTransform: 'uppercase', fontWeight: 600 }}>Feedback Result</div>
+                <DrawerField label="Verdict" value={selectedRow.query_verdict.toUpperCase()} />
+                <DrawerField label="Failure Reason" value={selectedRow.failure_reason} multiline />
+              </div>
+            )}
             {selectedRow.has_logic_feedback && <DrawerField label="Logic Feedback" value={selectedRow.logic_feedback_text} multiline />}
             {selectedRow.has_sql_feedback && <DrawerField label="Corrected SQL" value={selectedRow.corrected_sql} multiline code />}
             {selectedRow.has_english_feedback && (

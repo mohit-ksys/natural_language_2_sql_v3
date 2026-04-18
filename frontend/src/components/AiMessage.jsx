@@ -338,7 +338,16 @@ const AiMessage = React.memo(({ msg, addToast, onFix, onRegen, onUpdate, setting
     try {
       const res = await executeSql(sql, sessionId, userQuery, msgFeedbackId, lmsType, chatId, lmsId);
       if (res.ok) {
-        const { answer, data: resultRows, execution_time: execTime, thoughts: execThoughts } = res.data;
+        const { answer, data: resultRows, execution_time: execTime, thoughts: execThoughts, sql: responseSql } = res.data;
+        
+        // If SQL was auto-fixed, update local state so Export uses corrected SQL
+        if (responseSql && responseSql !== sql) {
+          console.log("SQL was auto-fixed by backend, updating local state.");
+          const newHistory = [...sqlHistory.slice(0, historyIdx + 1), responseSql];
+          setSqlHistory(newHistory);
+          setHistoryIdx(newHistory.length - 1);
+        }
+
         setResultData(resultRows);
         setResultAnswer(answer);
         setResultExecTime(execTime);
@@ -351,7 +360,8 @@ const AiMessage = React.memo(({ msg, addToast, onFix, onRegen, onUpdate, setting
             answer, 
             data: resultRows, 
             execution_time: execTime, 
-            thoughts: execThoughts 
+            thoughts: execThoughts,
+            sql: responseSql || sql // Pass fixed SQL up if available
           });
         }
 
@@ -741,11 +751,14 @@ const AiMessage = React.memo(({ msg, addToast, onFix, onRegen, onUpdate, setting
       {/* FEEDBACK FLOW */}
       {feedbackStep === 'verdict' && (
         <div className="rating-row" style={{gap:'14px'}}>
-          <span className="rating-label" style={{fontSize:'13px'}}>Was this data correct?</span>
-          <button className="action-btn" style={{padding:'9px 24px', fontSize:'13px', color:'var(--green)'}} onClick={() => {
+          <span className="rating-label" style={{fontSize:'13px'}}>Is this answer correct?</span>
+          <button className="action-btn" style={{padding:'9px 24px', fontSize:'13px', color:'var(--green)'}} onClick={async () => {
             setVerdict('correct');
-            submitVerdict(msgFeedbackId, 'correct');
-            setFeedbackStep('done');
+            const ok = await submitVerdict(msgFeedbackId, 'correct', null, sessionId);
+            if (ok) {
+              setFeedbackStep('done');
+              if (onUpdate) onUpdate(id, { queryVerdict: 'correct' });
+            }
           }}>✓ Yes</button>
           <button className="action-btn" style={{padding:'9px 24px', fontSize:'13px', color:'var(--red)'}} onClick={() => {
             setVerdict('incorrect');
@@ -756,33 +769,36 @@ const AiMessage = React.memo(({ msg, addToast, onFix, onRegen, onUpdate, setting
 
       {feedbackStep === 'reason' && (
         <div className="rating-feedback visible" style={{padding:'14px 16px'}}>
-          <div className="rfb-label-row" style={{marginBottom:'10px', fontSize:'13px'}}>What went wrong?</div>
+          <div className="rfb-label-row" style={{marginBottom:'10px', fontSize:'13px'}}>Tell us what was wrong...</div>
           <textarea
             className="fix-textarea"
-            placeholder="Describe what was wrong (optional)..."
+            placeholder="Type the problem here (mandatory)..."
             rows={3}
             value={failureReason}
             onChange={e => setFailureReason(e.target.value)}
             style={{width:'100%', marginBottom:'12px', fontSize:'13px', background:'rgba(255,255,255,0.05)', color:'var(--text)', border:'1px solid var(--border2)', borderRadius:'8px', padding:'10px 12px'}}
           />
           <div style={{display:'flex', gap:'10px', alignItems:'center'}}>
-            {['Wrong data', 'Incomplete filter'].map((reason, i) => (
-              <button key={i} className="action-btn" style={{padding:'9px 22px', fontSize:'13px'}} onClick={() => {
-                submitVerdict(msgFeedbackId, 'incorrect', reason);
-                setFeedbackStep('done');
-              }}>{reason}</button>
-            ))}
-            <button className="action-btn" style={{marginLeft:'auto', padding:'9px 22px', fontSize:'13px'}} onClick={() => {
-              submitVerdict(msgFeedbackId, 'incorrect', failureReason || null);
-              setFeedbackStep('done');
-            }}>Submit →</button>
+            <button 
+              className="action-btn" 
+              style={{marginLeft:'auto', padding:'9px 22px', fontSize:'13px'}} 
+              disabled={!failureReason.trim()}
+              onClick={async () => {
+                if (!failureReason.trim()) return;
+                const ok = await submitVerdict(msgFeedbackId, 'incorrect', failureReason, sessionId);
+                if (ok) {
+                  setFeedbackStep('done');
+                  if (onUpdate) onUpdate(id, { queryVerdict: 'incorrect', failureReason });
+                }
+              }}
+            >Send Feedback →</button>
           </div>
         </div>
       )}
 
       {feedbackStep === 'done' && (
         <div className="rating-row">
-          <span className="rating-label" style={{color:'var(--green)'}}>✓ Thanks for your feedback!</span>
+          <span className="rating-label" style={{color:'var(--green)'}}>✓ Got it! Thanks for helping.</span>
         </div>
       )}
     </div>

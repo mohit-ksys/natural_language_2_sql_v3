@@ -557,6 +557,9 @@ export default function ChatPage({
     );
   }
 
+  const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
+  const isLocked = lastMsg?.type === 'ai' && !lastMsg.queryVerdict;
+
   return (
     <>
       <Hero isHidden={chatStarted || (chatId && chatId.length > 5)} onSendChip={(text) => handleSendMessage(text, false)} />
@@ -589,6 +592,7 @@ export default function ChatPage({
         thinkOn={thinkOn}
         setThinkOn={setThinkOn}
         chatStarted={chatStarted || (chatId && chatId.length > 5)}
+        isLocked={isLocked}
       />
       <div className={`toast ${showToast ? 'show' : ''}`} id="toast">{toastMsg}</div>
     </>

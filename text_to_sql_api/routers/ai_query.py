@@ -204,6 +204,29 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
     )
 
 
+def _run_sql_with_autofix(sql: str, original_query: str, database_id: str, model: str = None, apply_limit: bool = True):
+    """Internal helper to execute SQL with automatic self-healing fallback."""
+    try:
+        results = execute_sql(sql, database_id, apply_limit=apply_limit)
+        return results, sql, False, None
+    except Exception as sql_err:
+        original_error = str(sql_err)
+        log.warning("SQL execution failed, attempting auto-fix. Error: %s", original_error[:200])
+        
+        prompt_query = original_query or sql
+        fixed_sql = llm_service.auto_fix_sql(prompt_query, sql, original_error, model=model, database_id=database_id)
+        
+        if fixed_sql and llm_service.validate_sql(fixed_sql):
+            try:
+                results = execute_sql(fixed_sql, database_id, apply_limit=apply_limit)
+                return results, fixed_sql, True, None
+            except Exception as e2:
+                log.error("Self-healing failed on second attempt: %s", e2)
+                return [], fixed_sql, True, str(e2)
+        else:
+            return [], sql, False, original_error
+
+
 @router.post("/execute", response_model=ExecuteResponse)
 def execute_query(req: ExecuteRequest, current_user: dict = Depends(get_current_user)):
     if not llm_service.validate_sql(req.sql):
@@ -213,26 +236,10 @@ def execute_query(req: ExecuteRequest, current_user: dict = Depends(get_current_
     user_id = str(current_user["id"])
     start_time = time.time()
 
-    results = []
-    sql_auto_fixed = False
-    sql_err_msg = None
-
-    try:
-        results = execute_sql(req.sql, database_id)
-    except Exception as sql_err:
-        original_error = str(sql_err)
-        log.warning("SQL execution failed, attempting auto-fix. Error: %s", original_error[:200])
-        fixed_sql = llm_service.auto_fix_sql(req.original_query or req.sql, req.sql, original_error, model=req.model, database_id=database_id)
-
-        if fixed_sql and llm_service.validate_sql(fixed_sql):
-            try:
-                results = execute_sql(fixed_sql, database_id)
-                req.sql = fixed_sql
-                sql_auto_fixed = True
-            except Exception as e2:
-                sql_err_msg = str(e2)
-        else:
-            sql_err_msg = original_error
+    results, fixed_sql, sql_auto_fixed, sql_err_msg = _run_sql_with_autofix(
+        req.sql, req.original_query, database_id, model=req.model, apply_limit=True
+    )
+    req.sql = fixed_sql
 
     execution_time = round(time.time() - start_time, 3)
     _exec_model = req.model or llm_service.get_active_model()
@@ -306,7 +313,14 @@ def export_excel(req: ExportRequest, current_user: dict = Depends(get_current_us
     """Expert full result set to Excel directly from backend to avoid frontend freezes."""
     try:
         database_id = _resolve_database_id(current_user, req.lms_id or req.lms_type)
-        results = execute_sql(req.sql, database_id, apply_limit=False)
+        
+        # Apply self-healing even to Excel Export
+        results, fixed_sql, was_fixed, err_msg = _run_sql_with_autofix(
+            req.sql, None, database_id, apply_limit=False
+        )
+        
+        if err_msg:
+            raise HTTPException(status_code=500, detail=f"Export failed even after auto-fix attempts: {err_msg}")
         
         if not results:
             raise HTTPException(status_code=404, detail="No data found for export.")

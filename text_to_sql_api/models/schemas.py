@@ -93,6 +93,7 @@ class RatingRequest(BaseModel):
     feedback_id: str
     query_verdict: str           # "correct" | "incorrect"
     failure_reason: Optional[str] = None
+    session_id: Optional[str] = None
 
 
 class ModelSwitchRequest(BaseModel):
