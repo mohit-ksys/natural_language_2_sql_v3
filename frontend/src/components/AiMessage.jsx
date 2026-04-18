@@ -1,23 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import PropTypes from 'prop-types';
-import { executeSql, sendQuery, submitEnglishFeedback, exportExcel } from '../services/api';
+import { executeSql, sendQuery, submitEnglishFeedback, exportExcel, submitVerdict } from '../services/api';
 import { calcCost, formatCost, formatUsd, formatTokens } from '../services/tokenCost';
 import * as XLSX from 'xlsx';
 
-// Star labels and per-score action options
-const STAR_NAMES=['','Wrong — bad query','Partially correct','Mostly right — small fix','Good — minor tweak','Perfect ✦'];
-const STAR_OPTS={
-  1:[{icon:'✎',name:'Fix via English',sub:'Describe the issue',act:'fix'},
-     {icon:'↺',name:'Regenerate',sub:'Fresh attempt',act:'regen'}],
-  2:[{icon:'✎',name:'Fix via English',sub:"Tell me what's off",act:'fix'},
-     {icon:'↺',name:'Regenerate',sub:'New attempt',act:'regen'}],
-  3:[{icon:'✎',name:'Fix the logic',sub:"Describe what's wrong",act:'fix'},
-     {icon:'↺',name:'Regenerate',sub:'Try again',act:'regen'}],
-  4:[{icon:'✎',name:'Fix the logic',sub:"What could improve?",act:'fix'},
-     {icon:'↺',name:'Regenerate',sub:'Try again',act:'regen'}],
-  5:[{icon:'✎',name:'Any improvements?',sub:'Share feedback',act:'fix'},
-     {icon:'↺',name:'Regenerate',sub:'Try again',act:'regen'}]
-};
 
 // Render a markdown string into an array of React-renderable segments
 function isTableRow(line) {
@@ -225,9 +211,10 @@ const AiMessage = React.memo(({ msg, addToast, onFix, onRegen, onUpdate, setting
   const [fixText, setFixText] = useState('');
   const [showExplain, setShowExplain] = useState(true);
 
-  const [rating, setRating] = useState(0);
-  const [previewRating, setPreviewRating] = useState(0);
-  const [lockedRating, setLockedRating] = useState(false);
+  // Feedback flow: null → verdict → reason → done
+  const [feedbackStep, setFeedbackStep] = useState(null);
+  const [verdict, setVerdict] = useState(null);
+  const [failureReason, setFailureReason] = useState('');
 
   const [copyText, setCopyText] = useState('⎘ Copy');
   const [copyAnswerText, setCopyAnswerText] = useState('⎘ Copy');
@@ -248,7 +235,7 @@ const AiMessage = React.memo(({ msg, addToast, onFix, onRegen, onUpdate, setting
   const editAreaRef = useRef(null);
 
   useEffect(() => {
-    if (data) setResultData(data);
+    if (data) { setResultData(data); setFeedbackStep('verdict'); }
     if (apiAnswer) setResultAnswer(apiAnswer);
     if (execution_time) setResultExecTime(execution_time);
     if (apiThoughts) setResultThoughts(apiThoughts);
@@ -742,50 +729,60 @@ const AiMessage = React.memo(({ msg, addToast, onFix, onRegen, onUpdate, setting
 
       <div className="msg-divider"></div>
 
-      {/* RATING */}
-      <div className="rating-row">
-        <span className="rating-label">Rate this response</span>
-        <div className="stars" onMouseLeave={() => !lockedRating && setPreviewRating(0)}>
-          {[1,2,3,4,5].map(n => (
-            <span
-              key={n}
-              className={`star ${previewRating >= n && !lockedRating ? 'preview' : ''} ${rating >= n ? 'lit' : ''}`}
-              onMouseEnter={() => !lockedRating && setPreviewRating(n)}
-              onClick={() => { setRating(n); setLockedRating(true); }}
-            >★</span>
-          ))}
+      {/* ACTION BUTTONS (always visible when no feedback flow active) */}
+      {!feedbackStep && (
+        <div className="action-btns">
+          <button className="action-btn" onClick={() => setFixPanelOpen(true)}>✎ Fix via English</button>
+          <button className="action-btn" onClick={() => handleFbAction('regen')}>↺ Regenerate</button>
+          <button className="action-btn" onClick={() => setShowExplain(!showExplain)}>⬡ Explain</button>
         </div>
-        <span className={`score-label ${lockedRating ? `s${rating}` : previewRating ? `s${previewRating}` : ''}`}>
-          {lockedRating ? STAR_NAMES[rating] : previewRating ? STAR_NAMES[previewRating] : ''}
-        </span>
-        {!lockedRating && (
-          <div className="action-btns">
-            <button className="action-btn" onClick={() => setFixPanelOpen(true)}>✎ Fix via English</button>
-            <button className="action-btn" onClick={() => handleFbAction('regen')}>↺ Regenerate</button>
-            <button className="action-btn" onClick={() => setShowExplain(!showExplain)}>⬡ Explain</button>
-          </div>
-        )}
-      </div>
+      )}
 
-      {/* CONTEXTUAL FEEDBACK */}
-      {lockedRating > 0 && (
-        <div className="rating-feedback visible">
-          <div className="rfb-label-row">
-            {rating <= 2 ? 'What went wrong?' : rating === 3 ? 'How can I improve it?' : rating === 4 ? 'Any final touches?' : 'Save or explore?'}
-          </div>
-          <div className="rfb-options">
-            {(STAR_OPTS[rating] || []).map((o, i) => (
-              <div key={i} className="rfb-option" onClick={(e) => {
-                e.currentTarget.parentElement.querySelectorAll('.rfb-option').forEach(el=>el.classList.remove('chosen'));
-                e.currentTarget.classList.add('chosen');
-                handleFbAction(o.act);
-              }}>
-                <span className="rfb-icon">{o.icon}</span>
-                <span className="rfb-name">{o.name}</span>
-                <span className="rfb-sub">{o.sub}</span>
-              </div>
+      {/* FEEDBACK FLOW */}
+      {feedbackStep === 'verdict' && (
+        <div className="rating-row" style={{gap:'14px'}}>
+          <span className="rating-label" style={{fontSize:'13px'}}>Was this data correct?</span>
+          <button className="action-btn" style={{padding:'9px 24px', fontSize:'13px', color:'var(--green)'}} onClick={() => {
+            setVerdict('correct');
+            submitVerdict(msgFeedbackId, 'correct');
+            setFeedbackStep('done');
+          }}>✓ Yes</button>
+          <button className="action-btn" style={{padding:'9px 24px', fontSize:'13px', color:'var(--red)'}} onClick={() => {
+            setVerdict('incorrect');
+            setFeedbackStep('reason');
+          }}>✗ No</button>
+        </div>
+      )}
+
+      {feedbackStep === 'reason' && (
+        <div className="rating-feedback visible" style={{padding:'14px 16px'}}>
+          <div className="rfb-label-row" style={{marginBottom:'10px', fontSize:'13px'}}>What went wrong?</div>
+          <textarea
+            className="fix-textarea"
+            placeholder="Describe what was wrong (optional)..."
+            rows={3}
+            value={failureReason}
+            onChange={e => setFailureReason(e.target.value)}
+            style={{width:'100%', marginBottom:'12px', fontSize:'13px', background:'rgba(255,255,255,0.05)', color:'var(--text)', border:'1px solid var(--border2)', borderRadius:'8px', padding:'10px 12px'}}
+          />
+          <div style={{display:'flex', gap:'10px', alignItems:'center'}}>
+            {['Wrong data', 'Incomplete filter'].map((reason, i) => (
+              <button key={i} className="action-btn" style={{padding:'9px 22px', fontSize:'13px'}} onClick={() => {
+                submitVerdict(msgFeedbackId, 'incorrect', reason);
+                setFeedbackStep('done');
+              }}>{reason}</button>
             ))}
+            <button className="action-btn" style={{marginLeft:'auto', padding:'9px 22px', fontSize:'13px'}} onClick={() => {
+              submitVerdict(msgFeedbackId, 'incorrect', failureReason || null);
+              setFeedbackStep('done');
+            }}>Submit →</button>
           </div>
+        </div>
+      )}
+
+      {feedbackStep === 'done' && (
+        <div className="rating-row">
+          <span className="rating-label" style={{color:'var(--green)'}}>✓ Thanks for your feedback!</span>
         </div>
       )}
     </div>

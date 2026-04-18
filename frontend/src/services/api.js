@@ -430,6 +430,20 @@ export async function submitMCQAnswers(queryId, sessionId, answers, model = 'gem
   }
 }
 
+export async function submitVerdict(feedbackId, queryVerdict, failureReason = null) {
+  try {
+    const res = await apiFetch(`${API_BASE}/feedback/rating`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ feedback_id: feedbackId, query_verdict: queryVerdict, failure_reason: failureReason }),
+    });
+    if (!res.ok) return { ok: false };
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+}
+
 export async function submitEnglishFeedback(queryId, sessionId, feedback, model = 'gemini-3.1-flash-lite-preview', execute = true, chatId = '', lmsId = null, userMsgId = null) {
   try {
     const res = await apiFetch(`${API_BASE}/english-feedback`, {
