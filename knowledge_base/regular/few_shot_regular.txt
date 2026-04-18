@@ -362,8 +362,8 @@ Question: Give me yesterday's daily activity summary — how many students had t
 WITH first_icc AS (
     SELECT COUNT(DISTINCT student_id) AS icc_count
     FROM students
-    WHERE first_Icc_Date >= CURRENT_DATE - INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
-      AND first_Icc_Date < CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+    WHERE first_icc_date >= CURRENT_DATE - INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+      AND first_icc_date < CURRENT_DATE - INTERVAL '5 hours 30 minutes'
 ),
 first_ni AS (
     SELECT COUNT(*) AS ni_count
@@ -402,6 +402,6 @@ SELECT
     (SELECT connected_count FROM first_connected) AS total_first_connected,
     (SELECT unique_remarks_count FROM total_remarks) AS total_unique_remarks;
 ```
-Key patterns: "yesterday" in IST = CURRENT_DATE - INTERVAL '1 day' - INTERVAL '5 hours 30 minutes' as lower bound AND CURRENT_DATE - INTERVAL '5 hours 30 minutes' as upper bound — always apply both offsets for IST day boundaries. first_icc uses students. first_Icc_Date. first_ni uses DISTINCT ON to get the earliest remark per student, then filters by date — only students currently in NotInterested status. first_connected uses MIN(created_at) per student from student_remarks where calling_status = 'Connected'. unique_remarks counts DISTINCT student_id from student_remarks in the window. Final SELECT uses scalar subqueries from each CTE — returns exactly one summary row. Always guard student_remarks with student_id IN (SELECT student_id FROM students).
+Key patterns: "yesterday" in IST = CURRENT_DATE - INTERVAL '1 day' - INTERVAL '5 hours 30 minutes' as lower bound AND CURRENT_DATE - INTERVAL '5 hours 30 minutes' as upper bound — always apply both offsets for IST day boundaries. first_icc uses students. first_icc_date. first_ni uses DISTINCT ON to get the earliest remark per student, then filters by date — only students currently in NotInterested status. first_connected uses MIN(created_at) per student from student_remarks where calling_status = 'Connected'. unique_remarks counts DISTINCT student_id from student_remarks in the window. Final SELECT uses scalar subqueries from each CTE — returns exactly one summary row. Always guard student_remarks with student_id IN (SELECT student_id FROM students).
 
 ---

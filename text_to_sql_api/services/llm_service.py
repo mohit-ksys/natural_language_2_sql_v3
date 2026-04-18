@@ -184,6 +184,12 @@ def generate_sql(
 - System Time (IST): {time_str}
 
 ### STRICT INSTRUCTIONS:
+Must Follow These -
+Use small, well-structured CTEs (Common Table Expressions) to simplify logic instead of relying on multiple complex joins.
+Prefer window functions (e.g., LEAD, LAG, ROW_NUMBER, RANK) wherever applicable to optimize performance and reduce query complexity.
+For heavy or complex queries, break the logic into multiple CTEs and leverage window functions to ensure clarity, scalability, and maintainability.
+Avoid unnecessary joins when the same result can be achieved using CTEs or analytical functions.
+
 1. MANDATORY: Use CONVERSATION HISTORY above for context. If the user asks a follow-up question (e.g., "yesterday" after discussing "remarks within 15 mins"), combine both constraints in the SQL.
 2. MANDATORY: JOIN with 'counsellors' table using 'counsellor_name' whenever a staff/counsellor name is mentioned. Never guess IDs.
 3. MANDATORY: For Admissions count, always use COUNT(DISTINCT student_id) to avoid duplicates.
