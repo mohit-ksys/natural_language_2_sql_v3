@@ -284,6 +284,12 @@ def save_feedback(
                     ) VALUES (
                         :qid, :uid, :model, :in_t, :out_t, :in_c, :out_c, now(), now()
                     )
+                    ON CONFLICT (query_id) DO UPDATE SET
+                        input_tokens = token_usage_logs.input_tokens + EXCLUDED.input_tokens,
+                        output_tokens = token_usage_logs.output_tokens + EXCLUDED.output_tokens,
+                        input_token_cost = token_usage_logs.input_token_cost + EXCLUDED.input_token_cost,
+                        output_token_cost = token_usage_logs.output_token_cost + EXCLUDED.output_token_cost,
+                        updated_at_utc = now()
                 """), {
                     "qid": feedback_id,
                     "uid": user_id,

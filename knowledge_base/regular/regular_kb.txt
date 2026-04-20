@@ -95,7 +95,7 @@ Pre Application → Initial Counselling Completed →  Application (Form Submitt
 - `preferred_university`, `preferred_stream`, `preferred_degree`, `preferred_level`, `preferred_specialization`, `preferred_city`, `preferred_state` are PostgreSQL arrays — always use `ANY()`.
 - Always use `COUNT(DISTINCT student_id)` after any JOIN, never `COUNT(*)`.'
 - Fresh leads are those leads which are not assigned yet or do not have any remark. 
-- NEVER select current_student_status = 'Fresh' in any query unless the user explicitly asks for "total fresh right now" for this only you can select current_student_status = 'Fresh' , Fresh Leads are decided on run time they can only at a point of time not today not yesterday.
+- NEVER select current_student_status = 'Fresh' in any query unless the user explicitly asks for "total fresh right now" for this only you can select current_student_status = 'Fresh' , Fresh Leads are decided on run time they can only at a point of time not today, not yesterday and not for any month or year.
 - If the query ask fresh leads today you must select the leads that came today ->
 ```SELECT COUNT(DISTINCT student_id) AS fresh_leads_count
 FROM students
@@ -1862,14 +1862,18 @@ Use when the user asks: "why are students not interested", "NI reasons by campai
 **What it does:** For a given date window, shows each campaign's total leads, then breaks them down into NI sub-status reasons vs "Interested / In-Progress", with percentage of total. Uses `COALESCE(utm_campaign, 'Direct/Organic')` to bucket leads with no UTM as organic.
 
 ```sql
-WITH campaign_totals AS (
+WITH fresh_leads AS (
+    SELECT student_id
+    FROM students
+    WHERE created_at >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+      AND created_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+),
+campaign_totals AS (
     SELECT
         COALESCE(sla.utm_campaign, 'Direct/Organic') AS campaign,
-        COUNT(DISTINCT s.student_id) AS total_leads
-    FROM students s
-    LEFT JOIN student_lead_activities sla ON s.student_id = sla.student_id
-    WHERE s.created_at >= (CURRENT_DATE - INTERVAL '5 hours 30 minutes')
-      AND s.created_at < (CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes')
+        COUNT(DISTINCT fl.student_id) AS total_leads
+    FROM fresh_leads fl
+    LEFT JOIN student_lead_activities sla ON fl.student_id = sla.student_id
     GROUP BY 1
 ),
 status_breakdown AS (
@@ -1877,30 +1881,29 @@ status_breakdown AS (
         COALESCE(sla.utm_campaign, 'Direct/Organic') AS campaign,
         CASE
             WHEN s.current_student_status = 'NotInterested' THEN s.current_student_ni_sub_status
-            ELSE 'Interested / In-Progress'
-        END AS lead_segment,
-        COUNT(DISTINCT s.student_id) AS segment_count
-    FROM students s
-    LEFT JOIN student_lead_activities sla ON s.student_id = sla.student_id
-    WHERE s.created_at >= (CURRENT_DATE - INTERVAL '5 hours 30 minutes')
-      AND s.created_at < (CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes')
+            ELSE 'Reason Not Given'
+        END AS not_interested_reason,
+        COUNT(DISTINCT fl.student_id) AS ni_count
+    FROM fresh_leads fl
+    JOIN students s ON fl.student_id = s.student_id
+    LEFT JOIN student_lead_activities sla ON fl.student_id = sla.student_id
     GROUP BY 1, 2
 )
 SELECT
     ct.campaign,
     ct.total_leads,
-    sb.lead_segment,
-    sb.segment_count,
-    ROUND((sb.segment_count::numeric * 100.0 / ct.total_leads), 2) AS percentage_of_total
+    sb.not_interested_reason,
+    sb.ni_count,
+    ROUND((sb.ni_count::numeric * 100.0 / ct.total_leads), 2) AS percentage_of_total
 FROM campaign_totals ct
 JOIN status_breakdown sb ON ct.campaign = sb.campaign
-ORDER BY ct.total_leads DESC, sb.segment_count DESC;
+ORDER BY ct.total_leads DESC, sb.ni_count DESC;
 ```
 
 **Key rules:**
 - `COALESCE(sla.utm_campaign, 'Direct/Organic')` — leads with no UTM activity row or NULL campaign are grouped as `'Direct/Organic'`.
 - `LEFT JOIN student_lead_activities` — use LEFT JOIN so students with no activity row are still counted (they fall into `'Direct/Organic'`).
-- `lead_segment` = `current_student_ni_sub_status` for NI students, `'Interested / In-Progress'` for all others. Do NOT filter by `current_student_status = 'NotInterested'` inside the CTE — all statuses must be included for the total to be accurate.
+- `lead_segment` = `current_student_ni_sub_status` for NI students, `'Reason not given'` for all others. Do NOT filter by `current_student_status = 'NotInterested'` inside the CTE — all statuses must be included for the total to be accurate.
 - Date window applies to `students.created_at` (IST-adjusted). Adjust the window using standard IST offset when the user specifies a different period.
 - `percentage_of_total` = `segment_count / total_leads * 100`, rounded to 2 decimal places.
 - `COUNT(DISTINCT s.student_id)` in both CTEs — never `COUNT(*)`.
