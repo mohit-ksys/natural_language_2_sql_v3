@@ -1901,6 +1901,7 @@ ORDER BY ct.total_leads DESC, sb.ni_count DESC;
 ```
 
 **Key rules:**
+-  Never use this ELSE 'Interested / In-Progress' this is  always use this ELSE 'Reason Not Given' this
 - `COALESCE(sla.utm_campaign, 'Direct/Organic')` — leads with no UTM activity row or NULL campaign are grouped as `'Direct/Organic'`.
 - `LEFT JOIN student_lead_activities` — use LEFT JOIN so students with no activity row are still counted (they fall into `'Direct/Organic'`).
 - `lead_segment` = `current_student_ni_sub_status` for NI students, `'Reason not given'` for all others. Do NOT filter by `current_student_status = 'NotInterested'` inside the CTE — all statuses must be included for the total to be accurate.
