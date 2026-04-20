@@ -191,6 +191,7 @@ For heavy or complex queries, break the logic into multiple CTEs and leverage wi
 Avoid unnecessary joins when the same result can be achieved using CTEs or analytical functions.
 
 1. MANDATORY: Use CONVERSATION HISTORY above for context. If the user asks a follow-up question (e.g., "yesterday" after discussing "remarks within 15 mins"), combine both constraints in the SQL.
+   - FOLLOW-UP DRILL-DOWN RULE: If the user says "this data", "same data", "break this down", "show by source/campaign/counsellor" or any similar phrase referring to the previous query — copy ALL WHERE conditions and date filters EXACTLY from the previous SQL, and ONLY change the GROUP BY / SELECT columns to the new dimension requested. Do NOT drop date filters or any constraints from the previous query.
 2. MANDATORY: JOIN with 'counsellors' table using 'counsellor_name' whenever a staff/counsellor name is mentioned. Never guess IDs.
 3. MANDATORY: For Admissions count, always use COUNT(DISTINCT student_id) to avoid duplicates.
 4. MANDATORY: Apply date, time, month, day and year filters ONLY if specified in the user query explicitly. Otherwise do not filter by date.

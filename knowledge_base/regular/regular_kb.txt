@@ -1,4 +1,4 @@
-REGULAR KB 
+﻿REGULAR KB 
 
 # TEXT-TO-SQL KNOWLEDGE BASE
 # READ SECTION 6 (CRITICAL RULES) BEFORE WRITING ANY SQL.
@@ -20,7 +20,7 @@ One row per student/lead. Primary funnel record.
 | student_phone | VARCHAR | Unique. |
 | parents_number | VARCHAR | Parent's contact number. |
 | whatsapp | VARCHAR | WhatsApp number. |
-| current_student_status | VARCHAR | **Only source of truth for funnel stage.** Default 'Fresh'. |
+| current_student_status | VARCHAR | **Only source of truth for funnel stage.** |
 | current_student_ni_sub_status | VARCHAR | Sub-reason for NI. Only populated when `current_student_status = 'NotInterested'`. Valid values: 'Not Enquired', 'Multiple Attempts made', 'Reason not shared', 'Course Not Available', 'Already Enrolled_NP', 'Only_Regular course', 'Invalid number / Wrong Number', 'First call Not Interested', 'Next Year', 'Budget issue', 'Not Eligible', 'Already Enrolled_Partner', 'Language Barrier', 'Reason Not Shared', 'Counselling Yet to be Done', 'Location issue', 'Not Reachable Tried Multiple Times', 'College Rejected', 'Student Reject', 'Dublicate_Same student exists', 'Budget Issue', 'Initial Counselling Completed', 'Duplicate_Same student exists', 'Only_Online course', 'College Reject'. |
 | assigned_counsellor_id | VARCHAR → counsellors | L2 counsellor. Handles lead from creation up to (not including) application stage. Use for all pre-application counsellor queries. |
 | assigned_counsellor_l3_id | VARCHAR → counsellors | L3 counsellor. Handles from application stage through admission. Use for application/admission-stage counsellor queries or when question specifies L3. |
@@ -77,7 +77,7 @@ One row per student/lead. Primary funnel record.
 ---
 
 ### Funnel stages handled by this table:
-Fresh, Pre Application, Initial Counselling Completed, NotInterested (before application)
+Pre Application, Initial Counselling Completed, NotInterested (till application)
 **L2 counsellor (`assigned_counsellor_id`) owns all stages in this table.**
 
 ### Stages handled by `course_status_journeys` table:
@@ -85,15 +85,26 @@ Application (form submitted / walkin / exam / offer letter), Admission, Document
 **L3 counsellor (`assigned_counsellor_l3_id`) owns all stages in this table.**
 
 ### Full funnel order (Regular LMS):
-Fresh → Pre Application → Initial Counselling Completed → [L3 takes over] → Application (Form Submitted) → Exam/Interview → Offer Letter → Admission → Document Pending → Document Submitted → Enrolled
+Pre Application → Initial Counselling Completed →  Application (Form Submitted) →[L3 takes over] → Exam/Interview → Offer Letter → Admission → Document Pending → Document Submitted → Enrolled
 
 ### Business rules:
-- `current_student_status` covers early funnel stages: Fresh, Pre Application, Initial Counselling Completed, and NotInterested (before application). These are owned by **L2** (`assigned_counsellor_id`).
+- `current_student_status` covers early funnel stages: Pre Application, Initial Counselling Completed, and NotInterested (before application). These are owned by **L2** (`assigned_counsellor_id`).
 - `current_student_ni_sub_status` gives the sub-reason for NI. Use this column ONLY when the query asks for NI breakdown by reason, NI category, or why students went NI. Always filter `current_student_status = 'NotInterested'` .
 - For Application, Admission, Document Pending, Document Submitted, Enrolled queries → use `course_status_journeys.course_status`. These are owned by **L3** (`assigned_counsellor_l3_id`).
 - For university-specific queries: join path = `students → latest_course_statuses → university_courses`.
 - `preferred_university`, `preferred_stream`, `preferred_degree`, `preferred_level`, `preferred_specialization`, `preferred_city`, `preferred_state` are PostgreSQL arrays — always use `ANY()`.
-- Always use `COUNT(DISTINCT student_id)` after any JOIN, never `COUNT(*)`.
+- Always use `COUNT(DISTINCT student_id)` after any JOIN, never `COUNT(*)`.'
+- Fresh leads are those leads which are not assigned yet or do not have any remark. 
+- NEVER select current_student_status = 'Fresh' in any query unless the user explicitly asks for "total fresh right now" for this only you can select current_student_status = 'Fresh' , Fresh Leads are decided on run time they can only at a point of time not today, not yesterday and not for any month or year.
+- If the query ask fresh leads today you must select the leads that came today ->
+```SELECT COUNT(DISTINCT student_id) AS fresh_leads_count
+FROM students
+WHERE created_at >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+  AND created_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes';
+```
+- If any query mentions fresh until and unless is "total fresh right now" then only select current_student_status = 'Fresh'.
+
+
 
 ---
 
@@ -116,7 +127,7 @@ One row per staff member or partner.
 | updated_at | TIMESTAMPTZ | When record was last updated (UTC). |
 
 ### Counsellor FK selection:
-- Pre-application queries (Fresh, Pre Application, ICC, NI before application) → `students.assigned_counsellor_id` (L2)
+- Pre-application queries (Pre Application, ICC, NI before application) → `students.assigned_counsellor_id` (L2)
 - Application / admission queries (form filled, exam scheduled, offer letter) → `course_status_journeys.assigned_l3_counsellor_id` (L3) — NEVER use `students.assigned_counsellor_l3_id`, it is sparsely populated
 - **"Supervisor" / "Team Owner" → `role ILIKE '%to%'`** — covers both `to` (L2 team owners) and `to_l3` (L3 team owners). NEVER use `role = 'to'` alone — it misses `to_l3` team owners.
 - Team of a manager → `WHERE assigned_to = '<manager_counsellor_id>'`
@@ -131,7 +142,7 @@ One row per staff member or partner.
 | `to_l3` | Team Owner for L3 teams |
 
 ### L2 vs L3 ownership (Regular LMS):
-- **L2 counsellor** (`assigned_counsellor_id` on `students`) owns the student from **Fresh through all pre-application stages** (Fresh → Pre Application → Initial Counselling Completed → NotInterested before application). All these stages live in the `students` table.
+- **L2 counsellor** (`assigned_counsellor_id` on `students`) owns the student from **Pre Application** through all pre-application stages** ( Pre Application → Initial Counselling Completed → Application → NotInterested before application). All these stages live in the `students` table.
 - **L3 counsellor** (`assigned_counsellor_l3_id` on `students`) takes over from **Application stage through Admission and beyond** (Form Submitted → Exam/Interview → Offer Letter → Admission → Document Pending → Document Submitted → Enrolled → NotInterested after application). All these stages live in `course_status_journeys`.
 - **CRITICAL — Regular LMS counsellors are course-wise:** In the Regular LMS, the L3 counsellor assignment is **per course**, not per student. A single student can have a different L3 counsellor for each course they applied to. When querying L3 counsellor performance, always join via `course_status_journeys.counsellor_id` (which tracks who handled each course-level event) rather than relying solely on `students.assigned_counsellor_l3_id`. For L2, the assignment is at the student level (`students.assigned_counsellor_id`).
 
@@ -419,7 +430,6 @@ One row per break session taken by a counsellor.
 | created_at | TIMESTAMPTZ NOT NULL | When record was created (UTC). |
 | updated_at | TIMESTAMPTZ NOT NULL | When record was last updated (UTC). |
 | break_type | VARCHAR(255) | Type of break (e.g. 'lunch', 'short break'). Defaults to empty string. |
-| notes | VARCHAR(255) | Optional notes about the break. Defaults to empty string. |
 
 ### Business rules:
 - An ongoing break has `break_end IS NULL`.
@@ -429,20 +439,125 @@ One row per break session taken by a counsellor.
 
 ---
 
+## TABLE: l2_assignment_rulesets
+Lead assignment rules for L2 counsellors. One row per rule.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| lead_assignment_rule_l2_id | int4 PK | Auto-incremented. |
+| name | varchar(255) | Internal rule code name (e.g. 'Rule_7b92ea'). |
+| conditions | jsonb | JSON object of matching conditions (e.g. `{"source":[...],"first_source_url":[...]}`) |
+| assigned_counsellor_ids | text[] | Array of counsellor IDs (CNS-XXXX format) assigned under this rule. |
+| is_active | bool | Whether the rule is currently active. Default true. |
+| priority | int4 | Rule priority order. Default 0. |
+| round_robin_index | int4 | Current position in round-robin assignment. Default 0. |
+| created_at | timestamptz | When rule was created (UTC). |
+| updated_at | timestamptz | When rule was last updated (UTC). |
+| custom_rule_name | varchar(255) | Human-readable rule label (e.g. 'Punjab Specific', 'CP_Ref'). |
+| description | text | Optional description of the rule. |
+| total_matched_leads | int4 | Total leads matched by this rule. Default 0. |
+| last_matched_at | timestamp | When the rule last matched a lead. NULL if never matched. |
+
+### Business rules:
+- `conditions` is a JSONB column — use `->>` or `@>` operators to filter by source, first_source_url, etc.
+- `assigned_counsellor_ids` is a PostgreSQL text array — use `ANY()` or `@>` to check for a specific counsellor.
+- To find which rule covers a given source: `WHERE conditions @> '{"source":["<Source Name>"]}'::jsonb`
+- `custom_rule_name` is the user-friendly label; `name` is the internal code.
+- Only query `is_active = true` rules unless user asks for inactive/all rules.
+
+---
+
+## TABLE: admission_assignment_rulesets
+Lead assignment rules for admission counsellors. One row per rule.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| admission_assignment_rulesets_id | int4 PK | Auto-incremented. |
+| name | varchar(255) | Internal rule code name (e.g. 'Rule_1ab86c'). |
+| college | varchar(255) | College filter for this rule. |
+| university_name | text[] | Array of university names this rule applies to. |
+| course_conditions | jsonb | JSON object with course-level conditions (keys: level, degree, stream, courseName, specialization). |
+| source | text[] | Array of lead sources this rule applies to. |
+| assigned_counsellor_ids | text[] | Array of counsellor IDs (CNS-XXXX format) assigned under this rule. |
+| is_active | bool | Whether the rule is currently active. Default true. |
+| priority | int4 | Rule priority order. Default 0. |
+| round_robin_index | int4 | Current position in round-robin assignment. Default 0. |
+| created_at | timestamptz | When rule was created (UTC). |
+| updated_at | timestamptz | When rule was last updated (UTC). |
+| custom_rule_name | varchar(255) | Human-readable rule label (e.g. 'Admission RUle set test'). |
+
+### Business rules:
+- `university_name` is a PostgreSQL text array — use `'Uni Name' = ANY(university_name)` to check membership.
+- `source` is a PostgreSQL text array — use `'Source Name' = ANY(source)` to filter by source.
+- `assigned_counsellor_ids` is a PostgreSQL text array — use `ANY()` to find a specific counsellor.
+- `course_conditions` is JSONB — use `->>` or `@>` operators for filtering by level, degree, stream, courseName, or specialization.
+- Only query `is_active = true` rules unless user asks for inactive/all rules.
+- These rules govern admission-phase counsellor assignment (role = 'admission_to').
+
+---
+
+## TABLE: l3_assignment_rulesets
+Lead assignment rules for L3 counsellors. One row per rule.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| l3_assignment_rulesets_id | int4 PK | Auto-incremented. |
+| name | varchar(255) | Internal rule code name (e.g. 'Rule_649ab8'). |
+| college | varchar(255) | College filter for this rule. Default ''. |
+| university_name | text[] | Array of university names this rule applies to. Default ARRAY[]::text[]. |
+| course_conditions | jsonb | JSON object with course-level conditions (keys: level, degree, stream, courseName, specialization). Default '{}'. |
+| source | text[] | Array of lead sources this rule applies to. Default ARRAY[]::text[]. |
+| assigned_counsellor_ids | text[] | Array of counsellor IDs (CNS-XXXX format) assigned under this rule. Default ARRAY[]::text[]. |
+| is_active | bool | Whether the rule is currently active. Default true. |
+| priority | int4 | Rule priority order. Default 0. |
+| round_robin_index | int4 | Current position in round-robin assignment. Default 0. |
+| created_at | timestamptz | When rule was created (UTC). |
+| updated_at | timestamptz | When rule was last updated (UTC). |
+| custom_rule_name | varchar(255) | Human-readable rule label (e.g. 'CGC', 'CU Regular'). Default ''. |
+
+- These rules govern L3 counsellor assignment for the Regular LMS.
+
+---
+
+## TABLE: lead_assignment_log
+Audit trail of lead assignments to counsellors. One row per assignment event.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | int4 PK | Auto-incremented. |
+| student_id | varchar → students | Student who was assigned. |
+| assigned_counsellor_id | varchar → counsellors | Counsellor assigned to the student. |
+| assigned_by | varchar | Who/what made the assignment (e.g., 'Ruleset Based', 'Manual'). |
+| reference_from | varchar | Reference source for the assignment. Default NULL. |
+| created_at | timestamptz | When the assignment occurred (UTC). |
+
+### Business rules:
+- Join to `students` via `student_id` to get student details.
+- Join to `counsellors` via `assigned_counsellor_id` to get counsellor names.
+- Use this table for assignment history and audit trails.
+- Always apply IST timezone conversion when filtering on `created_at` (see TIMEZONE RULES).
+
+---
+
 # SECTION 2 — TABLE RELATIONSHIPS
 
-```
-students.student_id               ← student_remarks.student_id
-students.student_id               ← latest_course_statuses.student_id
-students.student_id               ← course_status_journeys.student_id
-students.student_id               ← student_lead_activities.student_id
-students.assigned_counsellor_id   → counsellors.counsellor_id  (L2)
-course_status_journeys.assigned_l3_counsellor_id → counsellors.counsellor_id (L3)
-counsellors.assigned_to           → counsellors.counsellor_id  (manager, self-ref)
-student_remarks.counsellor_id     → counsellors.counsellor_id
-latest_course_statuses.course_id  → university_courses.course_id
-course_status_journeys.course_id  → university_courses.course_id
-```
+| Column | Type | Notes |
+|--------|------|-------|
+| students.student_id               ← student_remarks.student_id |
+| students.student_id               ← latest_course_statuses.student_id |
+| lead_assignment_log.student_id    → students.student_id |
+| lead_assignment_log.assigned_counsellor_id → counsellors.counsellor_id |
+| students.student_id               ← course_status_journeys.student_id |
+| students.student_id               ← student_lead_activities.student_id |
+| students.assigned_counsellor_id   → counsellors.counsellor_id  (L2) |
+| course_status_journeys.assigned_l3_counsellor_id → counsellors.counsellor_id (L3) |
+| counsellors.assigned_to           → counsellors.counsellor_id  (manager, self-ref) |
+| l2_assignment_rulesets.assigned_counsellor_ids (array) → counsellors.counsellor_id |
+| admission_assignment_rulesets.assigned_counsellor_ids (array) → counsellors.counsellor_id |
+| l3_assignment_rulesets.assigned_counsellor_ids (array) → counsellors.counsellor_id |
+| student_remarks.counsellor_id     → counsellors.counsellor_id |
+| latest_course_statuses.course_id  → university_courses.course_id |
+| course_status_journeys.course_id  → university_courses.course_id |
 
 **Common join chains:**
 - Student count by university: `students → latest_course_statuses → university_courses`
@@ -461,7 +576,7 @@ course_status_journeys.course_id  → university_courses.course_id
 
 | User asks about... | Table | Column | Filter | Counsellor |
 |---|---|---|---|---|
-| Fresh / Pre Application / Initial Counselling Completed | students | `current_student_status` | `= 'Fresh'`, `= 'Pre Application'`, `= 'Initial Counselling Completed'` | L2 (`assigned_counsellor_id`) |
+| Pre Application / Initial Counselling Completed | students | `current_student_status` | `= 'Pre Application'`, `= 'Initial Counselling Completed'` | L2 (`assigned_counsellor_id`) |
 | Application / "form filled" / "applied" / "walkin" / "exam scheduled" / "offer letter" / "ready for admission" | course_status_journeys | `course_status` | `IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')` | L3 (`assigned_l3_counsellor_id`) |
 | Admission / "got admission" / "admitted" / "admissions" | course_status_journeys | `course_status` | `IN ('Admission', 'Enrolled')` AND exclude partial payments | L3 (`assigned_l3_counsellor_id`) |
 | Document Pending / "docs pending" | course_status_journeys | `course_status` | `= 'Document Pending'` | L3 (`assigned_l3_counsellor_id`) |
@@ -523,6 +638,7 @@ course_status_journeys.course_id  → university_courses.course_id
 | "total leads today" / "attempted leads today" / "leads and attempts today" (counsellor wise) | Two COUNT(DISTINCT) on students and student_remarks filtered by today's IST window — see PATTERN 15 |
 | "form fills today" / "form fills yesterday" / "applications today" / "how many applied today" / "how many forms yesterday" / any date-bounded **aggregate** form-fill count by university or counsellor | Use PATTERN 17 — `MIN(created_at)` per `(student_id, course_id)` across ALL application-stage statuses (first-ever form per student-course), then apply the IST date filter. See RULE CSJ-FORM. |
 | "portal pending today" / "status breakdown today" / per-individual-status breakdown for a date window | Use PATTERN 16 — `DISTINCT ON (student_id, course_id, course_status) ORDER BY ... ASC` to get first occurrence of each individual status per student, then apply the IST date filter |
+| "why are students not interested" / "NI reasons by campaign" / "not interested breakdown by campaign" / "campaign wise NI analysis" / "NI sub-status by campaign" / "which campaign has most NI" | Use PATTERN 21 — `campaign_totals` + `status_breakdown` CTEs, LEFT JOIN `student_lead_activities` for `utm_campaign`, `COALESCE(utm_campaign, 'Direct/Organic')`, group by NI sub-status vs Interested, show `percentage_of_total` |
 | "forms and admissions for [university]" / "application and admission count for [university]" / "how many applied and admitted to [university]" / "forms and admissions by university" / "monthly forms and admissions" / "forms and admissions till date" / "forms and admissions today" | Use PATTERN 18 — CTEs with `MIN(created_at)` deduplication per `(student_id, course_id)`, UNION ALL for both metrics, excludes partial payments from admissions |
 | "L3 form metrics" / "how many forms per L3" / "L3 response time breakdown" / "forms not initiated by L3" / "L3 counsellor form TAT" / "active vs completed forms per L3" / "L3 form assignment performance" / "L3 follow-up time" / "which L3 counsellors are not following up" | Use PATTERN 19 — Complex CTE with first/latest status deduplication, tracks first remark by assigned L3 counsellor, categorizes response time (0-3 days, 4-6 days, 7+ days), shows active vs completed forms |
 | "how many forms per L2" / "L2 form count" / "forms filled by L2 counsellors" / "L2 today's forms" / "how many students moved forward under L2" / "L2 counsellor form count" | Use PATTERN 20 Variant A — L2 form count = students *assigned to L2* (via `students.assigned_counsellor_id`) who first hit an application-stage `course_status` in `course_status_journeys`. Join `students s JOIN course_status_journeys csj ON s.student_id = csj.student_id`, deduplicate with `DISTINCT ON (s.student_id) ORDER BY csj.created_at ASC`, attribute to L2 via `s.assigned_counsellor_id`. Date filter on `csj.created_at` in the LEFT JOIN ON clause. |
@@ -1739,6 +1855,61 @@ ORDER BY counsellor_role, total_remarks DESC;
 
 ---
 
+### PATTERN 21 — NI Reason Breakdown by Campaign (Why Students Are Not Interested)
+
+Use when the user asks: "why are students not interested", "NI reasons by campaign", "campaign wise NI analysis", "not interested breakdown by campaign", "which campaign has most NI", "NI sub-status by campaign".
+
+**What it does:** For a given date window, shows each campaign's total leads, then breaks them down into NI sub-status reasons vs "Interested / In-Progress", with percentage of total. Uses `COALESCE(utm_campaign, 'Direct/Organic')` to bucket leads with no UTM as organic.
+
+```sql
+WITH fresh_leads AS (
+    SELECT student_id
+    FROM students
+    WHERE created_at >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+      AND created_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+),
+campaign_totals AS (
+    SELECT
+        COALESCE(sla.utm_campaign, 'Direct/Organic') AS campaign,
+        COUNT(DISTINCT fl.student_id) AS total_leads
+    FROM fresh_leads fl
+    LEFT JOIN student_lead_activities sla ON fl.student_id = sla.student_id
+    GROUP BY 1
+),
+status_breakdown AS (
+    SELECT
+        COALESCE(sla.utm_campaign, 'Direct/Organic') AS campaign,
+        CASE
+            WHEN s.current_student_status = 'NotInterested' THEN s.current_student_ni_sub_status
+            ELSE 'Reason Not Given'
+        END AS not_interested_reason,
+        COUNT(DISTINCT fl.student_id) AS ni_count
+    FROM fresh_leads fl
+    JOIN students s ON fl.student_id = s.student_id
+    LEFT JOIN student_lead_activities sla ON fl.student_id = sla.student_id
+    GROUP BY 1, 2
+)
+SELECT
+    ct.campaign,
+    ct.total_leads,
+    sb.not_interested_reason,
+    sb.ni_count,
+    ROUND((sb.ni_count::numeric * 100.0 / ct.total_leads), 2) AS percentage_of_total
+FROM campaign_totals ct
+JOIN status_breakdown sb ON ct.campaign = sb.campaign
+ORDER BY ct.total_leads DESC, sb.ni_count DESC;
+```
+
+**Key rules:**
+- `COALESCE(sla.utm_campaign, 'Direct/Organic')` — leads with no UTM activity row or NULL campaign are grouped as `'Direct/Organic'`.
+- `LEFT JOIN student_lead_activities` — use LEFT JOIN so students with no activity row are still counted (they fall into `'Direct/Organic'`).
+- `lead_segment` = `current_student_ni_sub_status` for NI students, `'Reason not given'` for all others. Do NOT filter by `current_student_status = 'NotInterested'` inside the CTE — all statuses must be included for the total to be accurate.
+- Date window applies to `students.created_at` (IST-adjusted). Adjust the window using standard IST offset when the user specifies a different period.
+- `percentage_of_total` = `segment_count / total_leads * 100`, rounded to 2 decimal places.
+- `COUNT(DISTINCT s.student_id)` in both CTEs — never `COUNT(*)`.
+
+---
+
 **RULE O2.** ALWAYS use wide-format (pivot) for stage breakdown — one row per entity, one column per stage. Never one row per status.
 
 **RULE O3.** Dormant/inactive/uncontacted student queries MUST include `student_email` and `counsellor_name`.
@@ -1824,7 +1995,7 @@ This inflates results and produces an incorrect count. Using `AND` ensures only 
 
 ### STATUS / COLUMN RULES
 
-**RULE S1.** `students.current_student_status` is the source for early funnel stages (Fresh, Pre Application, Initial Counselling Completed, NotInterested before application). For Application, Admission, Document Pending, Document Submitted, Enrolled, and NotInterested after application → use `course_status_journeys.course_status`.
+**RULE S1.** `students.current_student_status` is the source for early funnel stages (Pre Application, Initial Counselling Completed, NotInterested before application). For Application, Admission, Document Pending, Document Submitted, Enrolled, and NotInterested after application → use `course_status_journeys.course_status`.
 
 **RULE S2.** When user asks "form filled" or "form fills" or "applied" → query `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')` from `course_status_journeys`. NEVER use `latest_course_statuses` for this. NEVER use `course_status = 'Application'` in Regular LMS — that status does not exist.
 
@@ -1864,6 +2035,7 @@ This is the canonical way to count total ICC. Never use `COUNT(DISTINCT student_
 For date-filtered queries on `course_status_journeys` (Application, Admission, Document Pending, Document Submitted, Enrolled, NotInterested after application), use `MIN(created_at)` per student to get their first event date, then apply the date filter on that. This ensures accurate counts by avoiding duplicate rows for the same `course_status` (re-triggers, duplicates). Use PATTERN 11 — subquery with `MIN(created_at)` grouped by `student_id`, then filter on `first_event_date`.
 
 **RULE S5.** ALWAYS use `COUNT(DISTINCT student_id)` when counting students — never `COUNT(*)` after a JOIN.
+
 
 **RULE S6.** "Form filled" / "form fills" / "applied" → `course_status IN ('Form Submitted – Portal Pending', 'Form Submitted – Completed', 'Walkin Completed', 'Walkin Marked', 'Exam/Interview Scheduled', 'Offer Letter/Results Pending', 'Offer Letter/Results Released', 'Ready For Admission')` on `course_status_journeys`. Do NOT use `latest_course_statuses` for form fill queries. NEVER use `course_status = 'Application'` in Regular LMS.
 
@@ -2025,7 +2197,7 @@ When generating clarifying questions for ambiguous queries, consider these patte
 - Options: All counsellors, Active counsellors only, L2 counsellors, L3 counsellors
 
 ## Student Funnel Stage (mentions "students" without stage)
-- Options: All stages, Fresh leads only, Application+, Enrolled only
+- Options: All stages, Application+, Enrolled only
 
 ## Metric Type (mentions "performance" / "stats" / "report")
 - Options: Count, Conversion rate, Average, Total sum

@@ -43,21 +43,33 @@ One row per student/lead. Primary funnel record.
 ---
 
 ### Funnel stages handled by this table:
-Fresh, Pre Application, Initial Counselling Completed, NotInterested (before application)
+Pre Application, Initial Counselling Completed, NotInterested (before application)
 
 ### Stages handled by `course_status_journeys` table:
 Application, Admission, Document Pending, Document Submitted, Enrolled, NotInterested (after application)
 
 ### Full funnel order:
-Fresh → Pre Application → Initial Counselling Completed → Application → Admission → Document Pending → Document Submitted → Enrolled
+Pre Application → Initial Counselling Completed → Application → Admission → Document Pending → Document Submitted → Enrolled
+
+
 
 ### Business rules:
-- `current_student_status` covers early funnel stages: Fresh, Pre Application, Initial Counselling Completed, and NotInterested (before application).
+- `current_student_status` covers early funnel stages:  Pre Application, Initial Counselling Completed, and NotInterested (before application).
 - `current_student_ni_sub_status` gives the sub-reason for NI. Use this column ONLY when the query asks for NI breakdown by reason, NI category, or why students went NI. Always filter `current_student_status = 'NotInterested'` .
 - For Application, Admission, Document Pending, Document Submitted, Enrolled queries → use `course_status_journeys.course_status`.
 - For university-specific queries: join path = `students → latest_course_statuses → university_courses`.
 - `preferred_university` and `preferred_course` are PostgreSQL arrays — always use `ANY()`.
 - Always use `COUNT(DISTINCT student_id)` after any JOIN, never `COUNT(*)`.
+- Fresh leads are those leads which are not assigned yet or do not have any remark. 
+- NEVER select current_student_status = 'Fresh' in any query unless the user explicitly asks for "total fresh right now" for this only you can select current_student_status = 'Fresh' , Fresh Leads are decided on run time they can only at a point of time not today, not yesterday and not for any month or year.
+- If the query ask fresh leads today you must select the leads that came today ->
+```SELECT COUNT(DISTINCT student_id) AS fresh_leads_count
+FROM students
+WHERE created_at >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+  AND created_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes';
+```
+- If any query mentions fresh until and unless is "total fresh right now" then only select current_student_status = 'Fresh'.
+
 
 ---
 
@@ -323,11 +335,33 @@ Lead assignment rules for admission counsellors. One row per rule.
 
 ---
 
+## TABLE: lead_assignment_log
+Audit trail of lead assignments to counsellors. One row per assignment event.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | int4 PK | Auto-incremented. |
+| student_id | varchar → students | Student who was assigned. |
+| assigned_counsellor_id | varchar → counsellors | Counsellor assigned to the student. |
+| assigned_by | varchar | Who/what made the assignment (e.g., 'Ruleset Based', 'Manual'). |
+| reference_from | varchar | Reference source for the assignment. Default NULL. |
+| created_at | timestamptz | When the assignment occurred (UTC). |
+
+### Business rules:
+- Join to `students` via `student_id` to get student details.
+- Join to `counsellors` via `assigned_counsellor_id` to get counsellor names.
+- Use this table for assignment history and audit trails.
+- Always apply IST timezone conversion when filtering on `created_at` (see TIMEZONE RULES).
+
+---
+
 # SECTION 2 — TABLE RELATIONSHIPS
 
 ```
 students.student_id               ← student_remarks.student_id
 students.student_id               ← latest_course_statuses.student_id
+lead_assignment_log.student_id    → students.student_id
+lead_assignment_log.assigned_counsellor_id → counsellors.counsellor_id
 students.student_id               ← course_status_journeys.student_id
 students.student_id               ← student_lead_activities.student_id
 students.assigned_counsellor_id   → counsellors.counsellor_id  (L2)
@@ -397,7 +431,7 @@ WHERE course_status IN (...)
 
 | User asks about... | Table | Column | Filter |
 |---|---|---|---|
-| Fresh / Pre Application / Initial Counselling Completed | students | `current_student_status` | `= 'Fresh'`, `= 'Pre Application'`, `= 'Initial Counselling Completed'` |
+| Pre Application / Initial Counselling Completed | students | `current_student_status` | `= 'Pre Application'`, `= 'Initial Counselling Completed'` |
 | Application / "form filled" / "applied" | course_status_journeys | `course_status` | `= 'Application'` |
 | Admission / "got admission" | course_status_journeys | `course_status` | `= 'Admission'` |
 | Document Pending / "docs pending" | course_status_journeys | `course_status` | `= 'Document Pending'` |
@@ -408,7 +442,7 @@ WHERE course_status IN (...)
 | Shortlisted courses/universities | latest_course_statuses | `latest_course_status` | `= 'Shortlisted'` |
 
 - "form filled" / "form fills" = `course_status = 'Application'` on `course_status_journeys`. NEVER use `latest_course_statuses` for this.
-- Early funnel stages (Fresh, Pre Application, ICC) = `students.current_student_status`. NEVER use `course_status_journeys` for these.
+- Early funnel stages ( Pre Application, ICC) = `students.current_student_status`. NEVER use `course_status_journeys` for these.
 
 ---
 
@@ -416,7 +450,7 @@ WHERE course_status IN (...)
 
 | Column | Table | Use for |
 |--------|-------|---------|
-| `current_student_status` | students | Early funnel stages: Fresh, Pre Application, Initial Counselling Completed, NotInterested (before application) |
+| `current_student_status` | students | Early funnel stages: Pre Application, Initial Counselling Completed, NotInterested (before application) |
 | `latest_course_status = 'Shortlisted'` | latest_course_statuses | Whether a course/university has been shortlisted by counsellor |
 | `course_status` | course_status_journeys | Application, Admission, Document Pending, Document Submitted, Enrolled, NotInterested (after application), payment events |
 
@@ -594,11 +628,11 @@ Use when: "NI students who are at [stage]", "NI students marked as [stage]", "NI
 NEVER query both NI and stage from the same students table — they cannot coexist on the same row.
 
 **Rule:** Always get NI from `course_status_journeys.course_status = 'NotInterested'`, and filter stage via subquery:
-- Stage from `students` table (Fresh, Pre Application, ICC) → subquery on `students.current_student_status`
+- Stage from `students` table ( Pre Application, ICC) → subquery on `students.current_student_status`
 - Stage from `course_status_journeys` (Application, Admission, Document Pending, Document Submitted, Enrolled) → subquery on `course_status_journeys.course_status`
 
 ```sql
--- Stage from students table (e.g. Pre Application, ICC, Fresh):
+-- Stage from students table (e.g. Pre Application, ICC):
 SELECT COUNT(DISTINCT student_id) FROM course_status_journeys
 WHERE course_status = 'NotInterested'
 AND student_id IN (
@@ -879,6 +913,7 @@ WHERE course_status = 'Admission'
 | "total leads today" / "attempted leads today" / "leads and attempts today" (counsellor wise) | Two COUNT(DISTINCT) on students and student_remarks filtered by today's IST window — see PATTERN 15 |
 | "form fills today" / "form fills yesterday" / "applications today" / "how many applied today" / "how many forms yesterday" / any date-bounded **aggregate** application count by university or counsellor | Use `MIN(created_at)` per `(student_id, course_id)` where `course_status = 'Application'` (first-ever application per student-course), then apply the IST date filter on that deduplicated timestamp. See RULE CSJ-FORM. |
 | "status breakdown today" / per-individual-status breakdown for a date window | Use `DISTINCT ON (student_id, course_id, course_status) ORDER BY ... ASC` to get first occurrence of each individual status per student, then apply the IST date filter |
+| "why are students not interested" / "NI reasons by campaign" / "not interested breakdown by campaign" / "campaign wise NI analysis" / "NI sub-status by campaign" / "which campaign has most NI" | Use PATTERN 18 — `campaign_totals` + `status_breakdown` CTEs, LEFT JOIN `student_lead_activities` for `utm_campaign`, `COALESCE(utm_campaign, 'Direct/Organic')`, group by NI sub-status vs Interested, show `percentage_of_total` |
 
 ---
 
@@ -1373,6 +1408,62 @@ GROUP BY uc.university_name;
 
 ---
 
+### PATTERN 18 — NI Reason Breakdown by Campaign (Why Students Are Not Interested)
+
+Use when the user asks: "why are students not interested", "NI reasons by campaign", "campaign wise NI analysis", "not interested breakdown by campaign", "which campaign has most NI", "NI sub-status by campaign".
+
+**What it does:** For a given date window, shows each campaign's total leads, then breaks them down into NI sub-status reasons vs "Interested / In-Progress", with percentage of total. Uses `COALESCE(utm_campaign, 'Direct/Organic')` to bucket leads with no UTM as organic.
+
+```sql
+WITH fresh_leads AS (
+    SELECT student_id
+    FROM students
+    WHERE created_at >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+      AND created_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+),
+campaign_totals AS (
+    SELECT
+        COALESCE(sla.utm_campaign, 'Direct/Organic') AS campaign,
+        COUNT(DISTINCT fl.student_id) AS total_leads
+    FROM fresh_leads fl
+    LEFT JOIN student_lead_activities sla ON fl.student_id = sla.student_id
+    GROUP BY 1
+),
+status_breakdown AS (
+    SELECT
+        COALESCE(sla.utm_campaign, 'Direct/Organic') AS campaign,
+        CASE
+            WHEN s.current_student_status = 'NotInterested' THEN s.current_student_ni_sub_status
+            ELSE 'Reason Not Given'
+        END AS not_interested_reason,
+        COUNT(DISTINCT fl.student_id) AS ni_count
+    FROM fresh_leads fl
+    JOIN students s ON fl.student_id = s.student_id
+    LEFT JOIN student_lead_activities sla ON fl.student_id = sla.student_id
+    GROUP BY 1, 2
+)
+SELECT
+    ct.campaign,
+    ct.total_leads,
+    sb.not_interested_reason,
+    sb.ni_count,
+    ROUND((sb.ni_count::numeric * 100.0 / ct.total_leads), 2) AS percentage_of_total
+FROM campaign_totals ct
+JOIN status_breakdown sb ON ct.campaign = sb.campaign
+ORDER BY ct.total_leads DESC, sb.ni_count DESC;
+```
+
+**Key rules:**
+- `COALESCE(sla.utm_campaign, 'Direct/Organic')` — leads with no UTM activity row or NULL campaign are grouped as `'Direct/Organic'`.
+- `LEFT JOIN student_lead_activities` — use LEFT JOIN so students with no activity row are still counted (they fall into `'Direct/Organic'`).
+- `lead_segment` = `current_student_ni_sub_status` for NI students, `'Reason not given'` for all others. Do NOT filter by `current_student_status = 'NotInterested'` inside the CTE — all statuses must be included for the total to be accurate.
+- Date window applies to `students.created_at` (IST-adjusted). Adjust the window using standard IST offset when the user specifies a different period.
+- `percentage_of_total` = `segment_count / total_leads * 100`, rounded to 2 decimal places.
+- `COUNT(DISTINCT s.student_id)` in both CTEs — never `COUNT(*)`.
+
+
+---
+
 **RULE O1.** Output ONLY raw PostgreSQL SQL — no markdown fences, no comments, no explanations.
 
 **RULE O2.** ALWAYS use wide-format (pivot) for stage breakdown — one row per entity, one column per stage. Never one row per status.
@@ -1460,7 +1551,7 @@ This inflates results and produces an incorrect count. Using `AND` ensures only 
 
 ### STATUS / COLUMN RULES
 
-**RULE S1.** `students.current_student_status` is the source for early funnel stages (Fresh, Pre Application, Initial Counselling Completed, NotInterested before application). For Application, Admission, Document Pending, Document Submitted, Enrolled, and NotInterested after application → use `course_status_journeys.course_status`.
+**RULE S1.** `students.current_student_status` is the source for early funnel stages ( Pre Application, Initial Counselling Completed, NotInterested before application). For Application, Admission, Document Pending, Document Submitted, Enrolled, and NotInterested after application → use `course_status_journeys.course_status`.
 
 **RULE S2.** When user asks "form filled" or "form fills" → query `course_status = 'Application'` from `course_status_journeys`. NEVER use `latest_course_statuses` for this.
 
@@ -1622,7 +1713,7 @@ When generating clarifying questions for ambiguous queries, consider these patte
 - Options: All counsellors, Active counsellors only, L2 counsellors, L3 counsellors
 
 ## Student Funnel Stage (mentions "students" without stage)
-- Options: All stages, Fresh leads only, Application+, Enrolled only
+- Options: All stages, Application+, Enrolled only
 
 ## Metric Type (mentions "performance" / "stats" / "report")
 - Options: Count, Conversion rate, Average, Total sum
