@@ -129,6 +129,13 @@ export default function Dashboard({ onBack, lmsId }) {
 
       <p style={styles.resultCount}>{total} total results</p>
 
+      {/* Top Pagination */}
+      <div style={{ ...styles.pagination, marginTop: 0, marginBottom: '24px', justifyContent: 'flex-end' }}>
+        <button style={styles.pageBtn} disabled={page <= 1} onClick={() => loadLogs(page - 1)}>Prev</button>
+        <span style={{ color: '#9ca3af', fontSize: '13px' }}>Page {page} / {totalPages}</span>
+        <button style={styles.pageBtn} disabled={page >= totalPages} onClick={() => loadLogs(page + 1)}>Next</button>
+      </div>
+
       {/* Log table */}
       {loading
         ? <p style={styles.info}>Loading...</p>
@@ -298,7 +305,7 @@ function DrawerField({ label, value, multiline, code, error, mono }) {
 }
 
 const styles = {
-  container: { padding: '32px', color: '#e2e8f0', fontFamily: 'Inter, sans-serif',background: '#0f1117', minHeight: '100vh',overflowY: 'auto' },
+  container: { padding: '32px', color: '#e2e8f0', fontFamily: 'Inter, sans-serif',background: '#0f1117', height: '100%', overflowY: 'auto' },
   topbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' },
   dashboardIcon: { fontSize: '20px', width: '38px', height: '38px', background: 'rgba(99, 102, 241, 0.1)', border: '1px solid rgba(99, 102, 241, 0.25)', borderRadius: '10px', display: 'grid', placeItems: 'center' },
   title: { fontSize: '20px', fontWeight: 700, letterSpacing: '-0.02em' },

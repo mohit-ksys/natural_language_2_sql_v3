@@ -314,7 +314,6 @@ def export_excel(req: ExportRequest, current_user: dict = Depends(get_current_us
     try:
         database_id = _resolve_database_id(current_user, req.lms_id or req.lms_type)
         
-        # Apply self-healing even to Excel Export
         results, fixed_sql, was_fixed, err_msg = _run_sql_with_autofix(
             req.sql, None, database_id, apply_limit=False
         )
@@ -327,7 +326,6 @@ def export_excel(req: ExportRequest, current_user: dict = Depends(get_current_us
 
         df = pd.DataFrame(results)
 
-        # Excel does not support timezone-aware datetimes. Convert them to timezone-unaware.
         for col in df.select_dtypes(include=['datetimetz']).columns:
             df[col] = df[col].dt.tz_localize(None)
         
@@ -348,7 +346,6 @@ def export_excel(req: ExportRequest, current_user: dict = Depends(get_current_us
         )
     except Exception as e:
         log.error("Deep export failed: %s", e)
-        print(f"❌ Export error: {e}")
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 

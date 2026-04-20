@@ -210,9 +210,20 @@ def get_logs(
     where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 
     query = f"""
-        SELECT *
+        SELECT ql.*, 
+               tu.aggregated_input_tokens, tu.aggregated_output_tokens,
+               tu.aggregated_input_cost, tu.aggregated_output_cost,
+               (COALESCE(tu.aggregated_input_cost, 0) + COALESCE(tu.aggregated_output_cost, 0)) as total_cost
         FROM query_logs ql
-        LEFT JOIN token_usage_logs tu ON tu.query_id = ql.id
+        LEFT JOIN (
+            SELECT query_id, 
+                   SUM(input_tokens) as aggregated_input_tokens, 
+                   SUM(output_tokens) as aggregated_output_tokens,
+                   SUM(input_token_cost) as aggregated_input_cost, 
+                   SUM(output_token_cost) as aggregated_output_cost
+            FROM token_usage_logs
+            GROUP BY query_id
+        ) tu ON tu.query_id = ql.id
         {where_clause}
         ORDER BY ql.created_at_utc DESC
         LIMIT :limit OFFSET :offset
