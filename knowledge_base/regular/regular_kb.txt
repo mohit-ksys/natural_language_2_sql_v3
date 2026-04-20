@@ -1876,19 +1876,40 @@ campaign_totals AS (
     LEFT JOIN student_lead_activities sla ON fl.student_id = sla.student_id
     GROUP BY 1
 ),
+WITH fresh_leads AS (
+    SELECT student_id
+    FROM students
+    WHERE created_at >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
+      AND created_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+),
+campaign_totals AS (
+    SELECT
+        COALESCE(sla.utm_campaign, 'Direct/Organic') AS campaign,
+        COUNT(DISTINCT fl.student_id) AS total_leads
+    FROM fresh_leads fl
+    LEFT JOIN student_lead_activities sla ON fl.student_id = sla.student_id
+    GROUP BY 1
+),
 status_breakdown AS (
     SELECT
         COALESCE(sla.utm_campaign, 'Direct/Organic') AS campaign,
-        CASE
-            WHEN s.current_student_status = 'NotInterested' THEN s.current_student_ni_sub_status
-            ELSE 'Reason Not Given'
-        END AS not_interested_reason,
+        COALESCE(s.current_student_ni_sub_status, 'Reason Not Given') AS not_interested_reason,
         COUNT(DISTINCT fl.student_id) AS ni_count
     FROM fresh_leads fl
     JOIN students s ON fl.student_id = s.student_id
     LEFT JOIN student_lead_activities sla ON fl.student_id = sla.student_id
+    WHERE s.current_student_status = 'NotInterested'
     GROUP BY 1, 2
 )
+SELECT
+    ct.campaign,
+    ct.total_leads,
+    sb.not_interested_reason,
+    sb.ni_count,
+    ROUND((sb.ni_count::numeric * 100.0 / ct.total_leads), 2) AS percentage_of_total
+FROM campaign_totals ct
+JOIN status_breakdown sb ON ct.campaign = sb.campaign
+ORDER BY ct.total_leads DESC, sb.ni_count DESC;
 SELECT
     ct.campaign,
     ct.total_leads,
@@ -1901,7 +1922,7 @@ ORDER BY ct.total_leads DESC, sb.ni_count DESC;
 ```
 
 **Key rules:**
--  Never use this ELSE 'Interested / In-Progress' this is  always use this ELSE 'Reason Not Given' this
+- When current_student_ni_sub_status is null use only ELSE 'Reason Not Given'. Do not this when it is null ELSE 'Interested / In-Progress' this will create ambigous result.
 - `COALESCE(sla.utm_campaign, 'Direct/Organic')` — leads with no UTM activity row or NULL campaign are grouped as `'Direct/Organic'`.
 - `LEFT JOIN student_lead_activities` — use LEFT JOIN so students with no activity row are still counted (they fall into `'Direct/Organic'`).
 - `lead_segment` = `current_student_ni_sub_status` for NI students, `'Reason not given'` for all others. Do NOT filter by `current_student_status = 'NotInterested'` inside the CTE — all statuses must be included for the total to be accurate.
