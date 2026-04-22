@@ -159,13 +159,13 @@ def _clean_sql(raw: str) -> str:
 
 def generate_sql(
     user_query: str,
+    database_id: str,
     session_history: str = "",
     learned_rules: str = "",
     model: str = None,
     thinking_enabled: bool = False,
     thinking_level: str = "high",
     include_thoughts: bool = False,
-    database_id: str = "online",
 ) -> tuple[str, str]:
     """Returns (sql, thoughts). thoughts is empty unless include_thoughts=True."""
     knowledge_base = get_knowledge_base_prompt(database_id=database_id)
@@ -195,15 +195,14 @@ Avoid unnecessary joins when the same result can be achieved using CTEs or analy
 2. MANDATORY: JOIN with 'counsellors' table using 'counsellor_name' whenever a staff/counsellor name is mentioned. Never guess IDs.
 3. MANDATORY: For Admissions count, always use COUNT(DISTINCT student_id) to avoid duplicates.
 4. MANDATORY: Apply date, time, month, day and year filters ONLY if specified in the user query explicitly. Otherwise do not filter by date.
-5. MANDATORY: Do NOT add LIMIT unless the user explicitly says "top N", "limit to", or gives a specific number. Summary and aggregation queries must have NO LIMIT. 
-6. MANDATORY: Add limit 5 for all queries that return a list of records or rows more than 50.
-7. TIMEZONE for 'created_at' (stored UTC, CURRENT_DATE is IST) — two cases only:
+5. MANDATORY: Add limit 5 for all queries that return a list of records or rows more than 50.
+6. TIMEZONE for 'created_at' (stored UTC, CURRENT_DATE is IST) — two cases only:
     - Rolling windows (last N days/hours/months): use plain `NOW() - INTERVAL 'X days'` — NO timezone offset needed.
     - IST day-boundary (Today/Yesterday): subtract offset — `created_at >= CURRENT_DATE - interval '5 hours 30 minutes' AND created_at < CURRENT_DATE + interval '1 day' - interval '5 hours 30 minutes'`
     - callback_date is type DATE — never apply timezone offset to it.
-8. For year-based queries, always use EXTRACT(YEAR FROM CURRENT_DATE) or DATE_TRUNC('year', CURRENT_DATE). NEVER hardcode a numeric year literal.
-9. NEVER use ILIKE on IDs. Always join by name.
-10. Output ONLY raw SQL. No markdown, no comments, no explanation.
+7. For year-based queries, always use EXTRACT(YEAR FROM CURRENT_DATE) or DATE_TRUNC('year', CURRENT_DATE). NEVER hardcode a numeric year literal.
+8. NEVER use ILIKE on IDs. Always join by name.
+9. Output ONLY raw SQL. No markdown, no comments, no explanation.
 
 
 User Question: "{user_query}"
@@ -267,7 +266,7 @@ Instructions:
     return answer, chart_type, thoughts, usage
 
 
-def auto_fix_sql(user_query: str, failed_sql: str, error_message: str, model: str = None, database_id: str = "online") -> str | None:
+def auto_fix_sql(user_query: str, failed_sql: str, error_message: str, model: str = None, database_id: str = None) -> str | None:
     print(f"Attempting to auto-fix SQL for query: {user_query} with error: {error_message}")
     knowledge_base = get_knowledge_base_prompt(database_id=database_id)
     prompt = f"""{knowledge_base}
@@ -320,7 +319,7 @@ def regenerate_sql_with_feedback(
     session_history: str = "",
     learned_rules: str = "",
     model: str = None,
-    database_id: str = "degreefyd_online_lms",
+    database_id: str = None,
 ) -> str:
     knowledge_base = get_knowledge_base_prompt(database_id=database_id)
 

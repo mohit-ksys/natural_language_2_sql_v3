@@ -12,13 +12,13 @@ KB_CONFIG: dict[str, tuple[str, str]] = {
 _cache: dict[str, str] = {}
 
 
-def reload_knowledge_base(database_id: str = "degreefyd_online_lms") -> str:
+def reload_knowledge_base(database_id: str) -> str:
     """Force-reload the knowledge base for a given database_id, bypassing cache."""
     _cache.pop(database_id, None)
     return get_knowledge_base_prompt(database_id=database_id)
 
 
-def get_knowledge_base_prompt(database_id: str = "degreefyd_online_lms", force_reload: bool = False) -> str:
+def get_knowledge_base_prompt(database_id: str, force_reload: bool = False) -> str:
     """Return the knowledge base prompt for the given database_id.
 
     Resolves database_id → kb_category ('online' or 'regular') via settings.DATABASE_MAP,
@@ -26,7 +26,7 @@ def get_knowledge_base_prompt(database_id: str = "degreefyd_online_lms", force_r
     """
     import os
 
-    cache_key = database_id or "degreefyd_online_lms"
+    cache_key = database_id
 
     if force_reload or os.environ.get("RELOAD_KB") == "1":
         _cache.pop(cache_key, None)

@@ -18,9 +18,9 @@ LABELS = ["A", "B", "C", "D"]
 
 def generate_mcqs(
     user_query: str,
+    database_id: str,
     session_history: str = "",
     model: str = None,
-    database_id: str = "degreefyd_online_lms",
 ) -> tuple[list[dict], Optional[str]]:
     """
     Generate exactly 3 MCQ questions to disambiguate the user query.
