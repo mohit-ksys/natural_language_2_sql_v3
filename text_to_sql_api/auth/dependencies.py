@@ -22,17 +22,18 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
         email = payload.get("email")
         name = payload.get("name")
         role = payload.get("role")
-        
+        lms_type = payload.get("lms_type")
+
         if user_id is None:
             raise credentials_exception
-            
+
         return {
             "id": user_id,
-            "username": email, 
+            "username": email,
             "email": email,
             "full_name": name,
             "role": role or "analyser",
-            "lms_type": "online",
+            "lms_type": lms_type,
         }
 
     except JWTError:

@@ -94,6 +94,9 @@ Pre Application → Initial Counselling Completed →  Application (Form Submitt
 - For university-specific queries: join path = `students → latest_course_statuses → university_courses`.
 - `preferred_university`, `preferred_stream`, `preferred_degree`, `preferred_level`, `preferred_specialization`, `preferred_city`, `preferred_state` are PostgreSQL arrays — always use `ANY()`.
 - Always use `COUNT(DISTINCT student_id)` after any JOIN, never `COUNT(*)`.'
+- **"connected yet" / "has L2 connected" / "L2 ever connected" / "how many leads connected by L2"** → use `is_connected_yet = true` on `students`. NEVER use `student_remarks` for this.
+- **"L3 connected yet" / "has L3 connected" / "L3 ever connected" / "how many students L3 connected to"** → use `is_connected_yet_l3 = true` on `students`. NEVER use `student_remarks` for this.
+- **"not connected yet" / "L2 never connected"** → `is_connected_yet = false`. **"L3 never connected"** → `is_connected_yet_l3 = false`.
 - Fresh leads are those leads which are not assigned yet or do not have any remark. 
 - NEVER select current_student_status = 'Fresh' in any query unless the user explicitly asks for "total fresh right now" for this only you can select current_student_status = 'Fresh' , Fresh Leads are decided on run time they can only at a point of time not today, not yesterday and not for any month or year.
 - If the query ask fresh leads today you must select the leads that came today ->
@@ -111,6 +114,13 @@ WHERE created_at >= CURRENT_DATE - INTERVAL '5 hours 30 minutes'
 ## TABLE: counsellors
 One row per staff member or partner.
 
+Counsellor Level Enforcement (Strict Directive)
+Non-negotiable rule: Under no circumstances are you to use SELECT * when handling counsellor-wise queries. This is unacceptable and will not be tolerated.
+You are required to explicitly confirm whether L3 counsellor data has been requested. Do not assume.
+If L3 is not explicitly demanded, you will default to L2—no exceptions.
+Providing L3 data without a clear, direct request is a violation of protocol. Do not do it.
+If a user asks for “counsellor” data without specifying the level, you will return only L2 counsellor data. Anything beyond that is incorrect.
+
 | Column | Type | Notes |
 |--------|------|-------| 
 | counsellor_id | VARCHAR PK | CNS-XXXX for staff, PAR-XXXX for partners. |
@@ -126,9 +136,28 @@ One row per staff member or partner.
 | created_at | TIMESTAMPTZ | When record was created (UTC). |
 | updated_at | TIMESTAMPTZ | When record was last updated (UTC). |
 
+### Counsellor Data Retrieval &Shift Definition Rules (Strict)
+
+#### Counsellor Level Enforcement
+- Critical Rules : Never I am saying never when asked for counsellor wise never all select columns 
+- Always verify whether L3 counsellor data has been explicitly requested.
+- If L3 is **not explicitly specified**, default to L2.
+- Under no circumstances should L3 data be provided unless it is clearly and explicitly requested.
+- When a user asks for a counsellor without specifying a level, **only provide L2 counsellor data**.
+
+#### Shift Definition
+- A counsellor’s shift is strictly defined by their activity within a given day.
+- The **first remark** recorded by the counsellor on that day marks the **start of the shift**.
+- The **last remark** recorded by the counsellor on that day marks the **end of the shift**.
+- No other indicators should be used to determine shift boundaries.
+
+
 ### Counsellor FK selection:
+- **RULE CNS-DEFAULT — "counsellor wise", "counsellor data", "counsellor breakdown", or ANY general per-counsellor query without an explicit level → ALWAYS use L2 only.** Join via `students.assigned_counsellor_id` and filter `counsellors.role = 'l2'`. This rule applies regardless of the metric being broken down (forms, admissions, leads, NI, etc.). Do NOT produce a UNION of L2 + L3. Do NOT add an L3 section. L2 is the first point of contact and the default owner of every lead.
+- **RULE CNS-L3 — Only use L3 when the query explicitly says "L3", "l3 counsellor", or "admission counsellor".** In that case join via `course_status_journeys.assigned_l3_counsellor_id` and filter `counsellors.role = 'l3'`. NEVER mix L2 and L3 in the same output unless the user explicitly asks for both.
+- **"counsellor wise lead assignment" / "leads assigned per counsellor" / "how many leads each counsellor has" / "lead count per counsellor"** → `COUNT(DISTINCT s.student_id)` from `students` grouped by `s.assigned_counsellor_id`, joined to `counsellors` filtering `c.role = 'l2'` and `c.status = 'active'`. There is NO `lead_assignment_log` table — NEVER invent or use it. The `counsellors.total_leads` column is a denormalized cache — do NOT use it for breakdowns; always query `students` directly.
 - Pre-application queries (Pre Application, ICC, NI before application) → `students.assigned_counsellor_id` (L2)
-- Application / admission queries (form filled, exam scheduled, offer letter) → `course_status_journeys.assigned_l3_counsellor_id` (L3) — NEVER use `students.assigned_counsellor_l3_id`, it is sparsely populated
+- Application / admission queries (form filled, exam scheduled, offer letter) — for the DATA source use `course_status_journeys`; for the COUNSELLOR grouping dimension, still default to L2 (`students.assigned_counsellor_id`) unless L3 is explicitly requested. NEVER use `students.assigned_counsellor_l3_id`, it is sparsely populated.
 - **"Supervisor" / "Team Owner" → `role ILIKE '%to%'`** — covers both `to` (L2 team owners) and `to_l3` (L3 team owners). NEVER use `role = 'to'` alone — it misses `to_l3` team owners.
 - Team of a manager → `WHERE assigned_to = '<manager_counsellor_id>'`
 - NEVER OR across two counsellor FK columns in one JOIN (Rule J1).
@@ -142,9 +171,12 @@ One row per staff member or partner.
 | `to_l3` | Team Owner for L3 teams |
 
 ### L2 vs L3 ownership (Regular LMS):
+- **For counsellor-wise data or counsellor data queries, always show only L2 data unless L3 is explicitly requested.** When L3 is explicitly asked for, show only L3 data. Never mix L2 and L3 in the same output unless specifically requested.
 - **L2 counsellor** (`assigned_counsellor_id` on `students`) owns the student from **Pre Application** through all pre-application stages** ( Pre Application → Initial Counselling Completed → Application → NotInterested before application). All these stages live in the `students` table.
 - **L3 counsellor** (`assigned_counsellor_l3_id` on `students`) takes over from **Application stage through Admission and beyond** (Form Submitted → Exam/Interview → Offer Letter → Admission → Document Pending → Document Submitted → Enrolled → NotInterested after application). All these stages live in `course_status_journeys`.
 - **CRITICAL — Regular LMS counsellors are course-wise:** In the Regular LMS, the L3 counsellor assignment is **per course**, not per student. A single student can have a different L3 counsellor for each course they applied to. When querying L3 counsellor performance, always join via `course_status_journeys.counsellor_id` (which tracks who handled each course-level event) rather than relying solely on `students.assigned_counsellor_l3_id`. For L2, the assignment is at the student level (`students.assigned_counsellor_id`).
+
+
 
 ---
 
@@ -177,11 +209,16 @@ Append-only call log. One row per call attempt, multiple per student.
 - Latest remark per student: `DISTINCT ON (student_id) ORDER BY student_id, created_at DESC`.
 - Overdue callbacks: `callback_date < CURRENT_DATE`. Upcoming: `callback_date >= CURRENT_DATE`.
 - Count callbacks by `remark_id`, not `student_id`.
+- **For counsellor-wise data or counsellor data queries, always show only L2 data unless L3 is explicitly requested.** When L3 is explicitly asked for, show only L3 data. Never mix L2 and L3 in the same output unless specifically requested.
+- **MANDATORY — For ANY query that joins `counsellors` with `student_remarks` (call counts, connection rate, success rate, dubious counsellor, low connection, top/bottom performer, most/least calls, callback analysis, remarks analysis, etc.), ALWAYS add `c.role = 'l2'` AND `c.status = 'active'` to the WHERE clause on `counsellors`.** This applies regardless of how the question is phrased. Never pull team owners (`to`, `to_l3`), L3 counsellors, inactive, or suspended counsellors into any call/remarks metric unless the user explicitly asks for them.
 
 ---
 
 ## TABLE: university_courses
 Master catalog. One row per course offering.
+
+| "region" / "[state] region" / "Punjab region" / "Delhi region" / "region wise" — in context of forms, admissions, L3 data, counsellor performance, university data | **ALWAYS means `university_courses.university_state`** — the state where the university is located. Join path: `course_status_journeys → university_courses ON csj.course_id = uc.course_id`, then filter `uc.university_state ILIKE '%Punjab%'`. NEVER use `students.student_current_state` or `students.preferred_state` for region filtering in this context. |
+
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -353,6 +390,63 @@ SELECT COUNT(DISTINCT student_id)
 FROM course_status_journeys
 WHERE course_status IN (...)
   AND created_at >= <start_ist> AND created_at < <end_ist>;
+
+**RULE CSJ-GROUPING — Ensure count consistency across different grouping dimensions:**
+When writing queries that group by different dimensions (e.g., by university only vs by university + campaign), the total counts must always match. To ensure consistency:
+1. **Identical WHERE clauses:** All variations of a query must have identical WHERE clause conditions, including NULL handling.
+2. **Handle LEFT JOIN row multiplication:** When joining one-to-many tables (e.g., `student_lead_activities`), use subqueries to get a single value per student before joining to prevent the same student from being counted in multiple groups.
+
+
+**RULE CSJ-GROUPING — Ensure count consistency across different grouping dimensions:**
+When writing queries that group by different dimensions (e.g., by university only vs by university + campaign), the total counts must always match. To ensure consistency:
+
+1. **Identical WHERE clauses:** All variations of a query must have identical WHERE clause conditions, including NULL handling.
+2. **Handle LEFT JOIN row multiplication:** When joining one-to-many tables (e.g., `student_lead_activities`), use subqueries to get a single value per student before joining to prevent the same student from being counted in multiple groups.
+
+**Incorrect pattern (causes count mismatch):**
+```sql
+-- Query A: Groups by university only
+SELECT uc.university_name, COUNT(DISTINCT csj.student_id)
+FROM course_status_journeys csj
+JOIN university_courses uc ON csj.course_id = uc.course_id
+WHERE csj.course_status = 'Admission'
+  AND (csj.fee_type NOT IN ('Partial Done', 'Partial Paid', 'Partially Paid') OR csj.fee_type IS NULL)
+GROUP BY uc.university_name;
+
+-- Query B: Groups by university + campaign (LEFT JOIN causes duplication + missing NULL handling)
+SELECT uc.university_name, COALESCE(sla.utm_campaign, 'Direct/Organic'), COUNT(DISTINCT csj.student_id)
+FROM course_status_journeys csj
+JOIN university_courses uc ON csj.course_id = uc.course_id
+LEFT JOIN student_lead_activities sla ON csj.student_id = sla.student_id
+WHERE csj.course_status = 'Admission'
+  AND (csj.fee_type NOT IN ('Partial Done', 'Partial Paid', 'Partially Paid'))  -- ← Missing NULL handling
+GROUP BY uc.university_name, COALESCE(sla.utm_campaign, 'Direct/Organic');
+
+
+-- Get single campaign per student before joining
+WITH student_campaigns AS (
+    SELECT DISTINCT student_id, 
+           COALESCE(utm_campaign, 'Direct/Organic') AS campaign
+    FROM student_lead_activities
+    WHERE id = (
+        SELECT MAX(id) 
+        FROM student_lead_activities sla2 
+        WHERE sla2.student_id = student_lead_activities.student_id
+    )
+)
+SELECT
+    uc.university_name,
+    COALESCE(sc.campaign, 'Direct/Organic') AS campaign,
+    COUNT(DISTINCT csj.student_id) AS admission_count
+FROM course_status_journeys csj
+JOIN university_courses uc ON csj.course_id = uc.course_id
+LEFT JOIN student_campaigns sc ON csj.student_id = sc.student_id
+WHERE csj.course_status = 'Admission'
+  AND (csj.fee_type NOT IN ('Partial Done', 'Partial Paid', 'Partially Paid') OR csj.fee_type IS NULL)  -- ← Same NULL handling
+  AND csj.student_id IN (SELECT student_id FROM students)
+GROUP BY uc.university_name, COALESCE(sc.campaign, 'Direct/Organic')
+ORDER BY admission_count DESC;
+
 ```
 ---
 
@@ -572,6 +666,16 @@ Audit trail of lead assignments to counsellors. One row per assignment event.
 
 ---
 
+## OUTPUT FORMATTING RULES
+
+- **MANDATORY — Percentage columns must always include the `%` symbol.** Whenever a query computes a percentage (connection rate, conversion rate, success rate, NI rate, form-to-admission rate, etc.), the column must concatenate the `%` symbol:
+  ```sql
+  ROUND(..., 2) || '%' AS connection_percentage
+  ```
+  NEVER return a bare numeric value for a percentage column. The `%` symbol must always be appended.
+
+---
+
 ## DISTINCTION 1 — Table Split by Stage
 
 | User asks about... | Table | Column | Filter | Counsellor |
@@ -607,6 +711,7 @@ Audit trail of lead assignments to counsellors. One row per assignment event.
 | "total ICC" / "total initial counselling calls" / "how many ICC" / "ICC count" / "ICC done" / "students who had ICC" (any form) | `COUNT(DISTINCT student_id) WHERE first_icc_date IS NOT NULL` from `students` — ALWAYS use `first_icc_date` column, NOT `current_student_status` |
 | "call at 9 AM" / "hourly call breakdown" / "best/worst time slot" | `EXTRACT(HOUR FROM ... AT TIME ZONE 'Asia/Kolkata')` on `student_remarks` |
 | "city" / "location" / "where are leads from" | `student_lead_activities.ip_city` |
+| "region" / "[state] region" / "Punjab region" / "Delhi region" / "region wise" — in context of forms, admissions, L3 data, counsellor performance, university data | **ALWAYS means `university_courses.university_state`** — the state where the university is located. Join path: `course_status_journeys → university_courses ON csj.course_id = uc.course_id`, then filter `uc.university_state ILIKE '%Punjab%'`. NEVER use `students.student_current_state` or `students.preferred_state` for region filtering in this context. |
 | "working professional" (activity context) | `student_lead_activities.working_professional = true` |
 | "first call" / "first contact" | `ROW_NUMBER() OVER (PARTITION BY student_id ORDER BY created_at, remark_id) = 1` on student_remarks |
 | "overdue callback" | `callback_date < CURRENT_DATE` on student_remarks |
@@ -641,8 +746,8 @@ Audit trail of lead assignments to counsellors. One row per assignment event.
 | "why are students not interested" / "NI reasons by campaign" / "not interested breakdown by campaign" / "campaign wise NI analysis" / "NI sub-status by campaign" / "which campaign has most NI" | Use PATTERN 21 — `campaign_totals` + `status_breakdown` CTEs, LEFT JOIN `student_lead_activities` for `utm_campaign`, `COALESCE(utm_campaign, 'Direct/Organic')`, group by NI sub-status vs Interested, show `percentage_of_total` |
 | "forms and admissions for [university]" / "application and admission count for [university]" / "how many applied and admitted to [university]" / "forms and admissions by university" / "monthly forms and admissions" / "forms and admissions till date" / "forms and admissions today" | Use PATTERN 18 — CTEs with `MIN(created_at)` deduplication per `(student_id, course_id)`, UNION ALL for both metrics, excludes partial payments from admissions |
 | "L3 form metrics" / "how many forms per L3" / "L3 response time breakdown" / "forms not initiated by L3" / "L3 counsellor form TAT" / "active vs completed forms per L3" / "L3 form assignment performance" / "L3 follow-up time" / "which L3 counsellors are not following up" | Use PATTERN 19 — Complex CTE with first/latest status deduplication, tracks first remark by assigned L3 counsellor, categorizes response time (0-3 days, 4-6 days, 7+ days), shows active vs completed forms |
-| "how many forms per L2" / "L2 form count" / "forms filled by L2 counsellors" / "L2 today's forms" / "how many students moved forward under L2" / "L2 counsellor form count" | Use PATTERN 20 Variant A — L2 form count = students *assigned to L2* (via `students.assigned_counsellor_id`) who first hit an application-stage `course_status` in `course_status_journeys`. Join `students s JOIN course_status_journeys csj ON s.student_id = csj.student_id`, deduplicate with `DISTINCT ON (s.student_id) ORDER BY csj.created_at ASC`, attribute to L2 via `s.assigned_counsellor_id`. Date filter on `csj.created_at` in the LEFT JOIN ON clause. |
-| "forms per L2 and L3" / "L2 and L3 form count" / "both L2 and L3 forms today" / "combined form count by role" / "how many forms did each counsellor handle" (when role context implies both) | Use PATTERN 20 Variant C (UNION ALL block) — both halves query `course_status_journeys` for the form event but use different FK columns: L2 attributes via `students.assigned_counsellor_id` (student-join approach), L3 attributes via `course_status_journeys.assigned_l3_counsellor_id`. Combined with UNION ALL. Never mix into one query. |
+| "counsellor wise form" / "form breakdown by counsellor" / "form count per counsellor" / "how many forms per counsellor" / "how many forms did each counsellor handle" / "how many forms per L2" / "L2 form count" / "forms filled by L2 counsellors" / "L2 today's forms" / "how many students moved forward under L2" / "L2 counsellor form count" — **ANY counsellor-level form query with no explicit level or with L2** | Use PATTERN 20 Variant A (L2 only) — NEVER use UNION ALL. L2 form count = students assigned to L2 via `students.assigned_counsellor_id` who first hit an application-stage `course_status` in `course_status_journeys`. Filter `counsellors.role = 'l2'`. |
+| "forms per L2 and L3" / "L2 and L3 form count" / "both L2 and L3 forms today" / "combined form count by role" / explicitly asks for both levels | Use PATTERN 20 Variant C (UNION ALL block) — ONLY when user explicitly requests both L2 and L3. Never default to this variant. |
 
 ---
 # SECTION 4 — SQL PATTERNS
@@ -1572,21 +1677,20 @@ ORDER BY students_with_connected_calls DESC;
 - **Response time logic:** Only calculates days if a remark exists; uses `GREATEST(0, ...)` to handle pre-status remarks
 - **Remark filtering:** Only counts remarks where `sr.counsellor_id = fs.assigned_l3_counsellor_id` (remarks by the assigned L3, not other counsellors)
 - **Active forms:** Excludes terminal statuses (Registration done, Partially Paid, Semester Paid, Enrollment in Process, Enrolled)
-- **Student validation:** Applies `AND student_id IN (SELECT student_id FROM students)` in all CTEs to exclude orphaned records
-- **Excludes Shortlisted:** Filters out `course_status = 'Shortlisted'` as it's not an active form submission
 
 ---
 
-### PATTERN 20 — L2 and L3 Form Count (counsellor-wise, any date window)
+### PATTERN 20 — Counsellor-wise Form Count (any date window)
 
-Use when user asks for form counts per L2 counsellor, per L3 counsellor, or both combined.
+**DEFAULT BEHAVIOUR (RULE CNS-DEFAULT applies here):**
+- "counsellor wise form", "form breakdown by counsellor", "form count per counsellor", "counsellor wise forms in [region/university]" — with NO level specified → **use Variant A (L2 only)**. Do NOT produce a UNION ALL. Do NOT add an L3 block.
+- **Adding a region, university, or date filter does NOT change the default.** "Counsellor wise forms in Punjab" → still Variant A (L2), just add `JOIN university_courses uc ON csj.course_id = uc.course_id` and `uc.university_state ILIKE '%Punjab%'` inside the subquery. NEVER switch to `assigned_l3_counsellor_id` or `c.role = 'l3'` for these queries.
+- Only use Variant B (L3 only) when user explicitly says "L3 counsellor", "l3 wise", or "admission counsellor".
+- Only use Variant C (UNION ALL) when user explicitly asks for "both L2 and L3" or "all counsellors including L3".
 
-**CRITICAL ownership rules:**
-- **L2 form count** = students assigned to L2 via `students.assigned_counsellor_id` who first hit an application-stage status in `course_status_journeys`. Deduplicate with `DISTINCT ON (s.student_id, csj.course_id)`.
-- **L3 form count** = students whose CSJ entry has `assigned_l3_counsellor_id` set. Deduplicate with `DISTINCT ON (student_id, course_id)`.
-- Never mix the two FK columns. Combine with UNION ALL when both roles needed.
+- Never mix the two FK columns. Combine with UNION ALL ONLY when both roles are explicitly requested.
 
----
+--------------------------------------------------------
 
 **Variant A — L2 only (form count, any date window):**
 
@@ -1632,6 +1736,47 @@ ORDER BY form_count DESC;
 - `DISTINCT ON (s.student_id, csj.course_id) ORDER BY s.student_id, csj.course_id, csj.created_at ASC` gets the first form event per student-course pair. `COUNT(DISTINCT fs.student_id)` on the outer query gives unique student headcount (RULE S18).
 - Date filter on `form_date` goes in the LEFT JOIN ON clause (RULE J8).
 - `csj.student_id IN (SELECT student_id FROM students)` guards against orphaned rows (RULE T12).
+
+---
+
+**Variant A with region filter — L2 only, filtered by university state (e.g. "counsellor wise forms in Punjab region"):**
+
+- **CNS-DEFAULT still applies** — "counsellor wise forms in [region]" with no explicit L3 → **L2 only**. NEVER switch to L3 or use `assigned_l3_counsellor_id` just because a region/university filter is added.
+- Region filter = `university_courses.university_state ILIKE '%Punjab%'`. Add `JOIN university_courses uc ON csj.course_id = uc.course_id` inside the subquery and filter on `uc.university_state`.
+- Counsellor is still attributed via `students.assigned_counsellor_id`. Filter `c.role = 'l2'` and `c.status = 'active'`.
+
+```sql
+SELECT
+    c.counsellor_name,
+    COALESCE(COUNT(DISTINCT fs.student_id), 0) AS form_count
+FROM counsellors c
+LEFT JOIN (
+    SELECT DISTINCT ON (s.student_id, csj.course_id)
+        s.student_id,
+        csj.course_id,
+        s.assigned_counsellor_id
+    FROM students s
+    JOIN course_status_journeys csj ON s.student_id = csj.student_id
+    JOIN university_courses uc ON csj.course_id = uc.course_id
+    WHERE csj.course_status IN (
+        'Form Submitted – Portal Pending',
+        'Form Submitted – Completed',
+        'Walkin Completed',
+        'Walkin Marked',
+        'Exam/Interview Scheduled',
+        'Offer Letter/Results Pending',
+        'Offer Letter/Results Released',
+        'Ready For Admission'
+    )
+      AND csj.student_id IN (SELECT student_id FROM students)
+      AND uc.university_state ILIKE '%Punjab%'
+    ORDER BY s.student_id, csj.course_id, csj.created_at ASC
+) fs ON c.counsellor_id = fs.assigned_counsellor_id
+WHERE c.role = 'l2'
+  AND c.status = 'active'
+GROUP BY c.counsellor_id, c.counsellor_name
+ORDER BY form_count DESC;
+```
 
 ---
 

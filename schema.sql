@@ -1,161 +1,563 @@
--- DataWhisper PostgreSQL Schema
--- Run once on auth DB host. Plain PostgreSQL — no Supabase-specific features.
+public
+chat_messages
 
-CREATE TYPE user_role AS ENUM ('super_admin', 'admin', 'analyser');
+01
+PK
+id
+text
+NOT NULL
+02
+chat_id
+text
+NULL
+03
+type
+text
+NOT NULL
+04
+text
+text
+NULL
+05
+is_fix
+bool
+NULL
+false
+06
+is_regenerate
+bool
+NULL
+false
+07
+sql
+text
+NULL
+08
+answer
+text
+NULL
+09
+chart_type
+text
+NULL
+10
+execution_time
+float8
+NULL
+11
+model
+text
+NULL
+12
+session_id
+text
+NULL
+13
+user_query
+text
+NULL
+14
+feedback_id
+text
+NULL
+15
+token_usage
+jsonb
+NULL
+16
+error
+text
+NULL
 
-CREATE TABLE users (
-  id                TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
-  username          TEXT UNIQUE NOT NULL,
-  hashed_password   TEXT NOT NULL,
-  full_name         TEXT NOT NULL,
-  role              user_role NOT NULL DEFAULT 'admin',
-  database_id       TEXT,                   -- e.g. 'degreefyd_regular_lms'; NULL for super_admin
-  is_active         BOOLEAN DEFAULT true,
-  created_by        TEXT,
-  created_at_utc    TIMESTAMPTZ DEFAULT now(),
-  created_at_ist    TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata'),
-  last_login_at_utc TIMESTAMPTZ,
-  last_login_at_ist TIMESTAMPTZ
-);
 
-CREATE TABLE refresh_tokens (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id         TEXT,
-  token_hash      TEXT UNIQUE NOT NULL,     -- bcrypt hash of the refresh token
-  expires_at_utc  TIMESTAMPTZ NOT NULL,
-  expires_at_ist  TIMESTAMPTZ NOT NULL,
-  created_at_utc  TIMESTAMPTZ DEFAULT now(),
-  created_at_ist  TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata'),
-  revoked         BOOLEAN DEFAULT false
-);
 
-CREATE TABLE query_logs (
-  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id               TEXT,
-  session_id            TEXT NOT NULL,
-  chat_id               TEXT,
-  user_query            TEXT,
-  generated_sql         TEXT,
-  answer                TEXT,
-  execution_time        FLOAT,
-  error_message         TEXT,
-  model                 TEXT,
-  lms_type              TEXT,
-  user_name             TEXT,
-  user_email            TEXT,
-  user_role             TEXT,
-  token_usage           JSONB,
-  chart_type            TEXT,
-  mcq_data              JSONB,
-  is_fix                BOOLEAN DEFAULT false,
-  is_regenerate              BOOLEAN DEFAULT false,
+chats
+01
+PK
+id
+text
+NOT NULL
+02
+user_id
+text
+NULL
+03
+title
+text
+NULL
+04
+last_message
+text
+NULL
+05
+is_pinned
+bool
+NULL
+false
+06
+created_at_utc
+timestamptz
+NULL
+now()
+07
+created_at_ist
+timestamptz
+NULL
+(now() AT TIME ZONE 'Asia/Kolkata'::text)
+08
+updated_at_utc
+timestamptz
+NULL
+now()
+09
+updated_at_ist
+timestamptz
+NULL
+(now() AT TIME ZONE 'Asia/Kolkata'::text)
+10
+is_deleted
+bool
+NULL
+false
+11
+lms_id
+varchar
+(50)
+NULL
 
-  -- feedback/logic
-  has_logic_feedback    BOOLEAN DEFAULT false,
-  logic_feedback_text   TEXT,
 
-  -- feedback/sql
-  has_sql_feedback      BOOLEAN DEFAULT false,
-  corrected_sql         TEXT,
 
-  -- english-feedback
-  has_english_feedback  BOOLEAN DEFAULT false,
-  english_feedback_text TEXT,
-  regenerated_sql       TEXT,
+public
+conversation_memory
 
-  -- any feedback flag for easy filtering
-  has_any_feedback      BOOLEAN DEFAULT false,
-  query_verdict         TEXT,
-  failure_reason        TEXT,
+01
+PK
+id
+uuid
+NOT NULL
+gen_random_uuid()
+02
+chat_id
+text
+NULL
+03
+role
+text
+NOT NULL
+04
+content
+text
+NOT NULL
+05
+created_at_utc
+timestamptz
+NULL
+now()
+06
+created_at_ist
+timestamptz
+NULL
+(now() AT TIME ZONE 'Asia/Kolkata'::text)
+07
+feedback_id
+text
+NULL
 
-  created_at_utc        TIMESTAMPTZ DEFAULT now(),
-  created_at_ist        TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')
-);
 
-CREATE TABLE sessions (
-  id              TEXT PRIMARY KEY,
-  user_id         TEXT,
-  title           TEXT,
-  created_at_utc  TIMESTAMPTZ DEFAULT now(),
-  created_at_ist  TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata'),
-  updated_at_utc  TIMESTAMPTZ DEFAULT now(),
-  updated_at_ist  TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')
-);
 
-CREATE TABLE session_turns (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  chat_id      TEXT REFERENCES sessions(id) ON DELETE CASCADE,
-  role            TEXT NOT NULL,    -- 'turn'
-  content         TEXT NOT NULL,    -- JSON blob: {user_query, generated_sql, answer, feedback_id}
-  created_at_utc  TIMESTAMPTZ DEFAULT now(),
-  created_at_ist  TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')
-);
+public
+query_logs
 
-CREATE TABLE chats (
-  id              TEXT PRIMARY KEY,           -- frontend chat id
-  user_id         TEXT,                       -- Reference to users(id)
-  title           TEXT,
-  last_message    TEXT,
-  is_pinned       BOOLEAN DEFAULT false,
-  created_at_utc  TIMESTAMPTZ DEFAULT now(),
-  created_at_ist  TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata'),
-  updated_at_utc  TIMESTAMPTZ DEFAULT now(),
-  updated_at_ist  TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')
-);
+1
+PK
+id
+uuid
+NOT NULL
+gen_random_uuid()
+02
+user_id
+text
+NULL
+03
+session_id
+text
+NOT NULL
+04
+chat_id
+text
+NULL
+05
+user_query
+text
+NULL
+06
+generated_sql
+text
+NULL
+07
+answer
+text
+NULL
+08
+execution_time
+float8
+NULL
+09
+error_message
+text
+NULL
+10
+model
+text
+NULL
+11
+lms_type
+text
+NULL
+12
+user_name
+text
+NULL
+13
+user_email
+text
+NULL
+14
+user_role
+text
+NULL
+15
+token_usage
+jsonb
+NULL
+16
+chart_type
+text
+NULL
+17
+mcq_data
+jsonb
+NULL
+18
+is_fix
+bool
+NULL
+false
+19
+is_regenerate
+bool
+NULL
+false
+20
+has_logic_feedback
+bool
+NULL
+false
+21
+logic_feedback_text
+text
+NULL
+22
+has_sql_feedback
+bool
+NULL
+false
+23
+corrected_sql
+text
+NULL
+24
+has_english_feedback
+bool
+NULL
+false
+25
+english_feedback_text
+text
+NULL
+26
+regenerated_sql
+text
+NULL
+27
+has_any_feedback
+bool
+NULL
+false
+28
+created_at_utc
+timestamptz
+NULL
+now()
+29
+created_at_ist
+timestamptz
+NULL
+(now() AT TIME ZONE 'Asia/Kolkata'::text)
+30
+sql_auto_fixed
+bool
+NULL
+false
+31
+error
+text
+NULL
+32
+extra
+jsonb
+NULL
+33
+lms_id
+varchar
+(50)
+NULL
+34
+query_verdict
+text
+NULL
+35
+failure_reason
+text
+NULL
 
-CREATE TABLE chat_messages (
-  id              TEXT PRIMARY KEY,           -- frontend message id
-  chat_id         TEXT REFERENCES chats(id) ON DELETE CASCADE,
-  type            TEXT NOT NULL,
-  text            TEXT,
-  is_fix          BOOLEAN DEFAULT false,
-  is_regenerate        BOOLEAN DEFAULT false,
-  sql             TEXT,
-  answer          TEXT,
-  chart_type      TEXT,
-  execution_time  FLOAT,
-  model           TEXT,
-  session_id      TEXT,
-  user_query      TEXT,
-  feedback_id     TEXT,
-  token_usage     JSONB,
-  error           TEXT,
-  extra           JSONB,                      -- for any extra frontend fields (MCQ etc.)
-  query_verdict    TEXT,
-  failure_reason   TEXT,
-  created_at_utc   TIMESTAMPTZ DEFAULT now(),
-  created_at_ist   TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')
-);
 
-CREATE TABLE token_usage_logs (
-  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  query_id            UUID REFERENCES query_logs(id) ON DELETE SET NULL,
-  user_id             TEXT,
-  model               TEXT,
-  input_tokens        INTEGER DEFAULT 0,
-  output_tokens       INTEGER DEFAULT 0,
-  input_token_cost    NUMERIC(15, 10) DEFAULT 0,
-  output_token_cost   NUMERIC(15, 10) DEFAULT 0,
-  created_at_utc      TIMESTAMPTZ DEFAULT now(),
-  updated_at_utc      TIMESTAMPTZ DEFAULT now()
-);
+public
+refresh_tokens
 
-CREATE TABLE user_chats (
-  user_id         TEXT PRIMARY KEY,
-  chats_blob      JSONB,
-  last_chat_id    TEXT,
-  updated_at_utc  TIMESTAMPTZ DEFAULT now(),
-  updated_at_ist  TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')
-);
+1
+PK
+id
+uuid
+NOT NULL
+gen_random_uuid()
+02
+user_id
+text
+NULL
+03
+token_hash
+text
+NOT NULL
+04
+expires_at_utc
+timestamptz
+NOT NULL
+05
+expires_at_ist
+timestamptz
+NOT NULL
+06
+created_at_utc
+timestamptz
+NULL
+now()
+07
+created_at_ist
+timestamptz
+NULL
+(now() AT TIME ZONE 'Asia/Kolkata'::text)
+08
+revoked
+bool
+NULL
+false
 
--- Indexes for common queries
-CREATE INDEX idx_query_logs_user_id ON query_logs(user_id);
-CREATE INDEX idx_query_logs_created_at_utc ON query_logs(created_at_utc DESC);
-CREATE INDEX idx_session_turns_session_id ON session_turns(session_id);
-CREATE INDEX idx_refresh_tokens_user_id ON refresh_tokens(user_id);
-CREATE INDEX idx_refresh_tokens_token_hash ON refresh_tokens(token_hash);
-CREATE INDEX idx_chats_user_id ON chats(user_id);
-CREATE INDEX idx_chat_messages_chat_id ON chat_messages(chat_id);
-CREATE INDEX idx_chat_messages_created_at_utc ON chat_messages(created_at_utc DESC);
-CREATE INDEX idx_token_usage_logs_query_id ON token_usage_logs(query_id);
-CREATE INDEX idx_token_usage_logs_user_id ON token_usage_logs(user_id);
+
+
+public
+sessions
+
+01
+PK
+id
+text
+NOT NULL
+02
+user_id
+text
+NULL
+03
+title
+text
+NULL
+04
+created_at_utc
+timestamptz
+NULL
+now()
+05
+created_at_ist
+timestamptz
+NULL
+(now() AT TIME ZONE 'Asia/Kolkata'::text)
+06
+updated_at_utc
+timestamptz
+NULL
+now()
+07
+updated_at_ist
+timestamptz
+NULL
+(now() AT TIME ZONE 'Asia/Kolkata'::text)
+
+
+
+public
+token_usage_logs
+
+1
+PK
+id
+uuid
+NOT NULL
+gen_random_uuid()
+02
+query_id
+uuid
+NULL
+03
+user_id
+text
+NULL
+04
+model
+text
+NULL
+05
+input_tokens
+int4
+NULL
+0
+06
+output_tokens
+int4
+NULL
+0
+07
+input_token_cost
+numeric
+NULL
+0
+08
+output_token_cost
+numeric
+NULL
+0
+09
+created_at_utc
+timestamptz
+NULL
+now()
+10
+updated_at_utc
+timestamptz
+NULL
+now()
+
+public
+user_chats
+5 Columns
+Primary Key
+Columns
+Indexes
+Foreign Keys
+01
+PK
+user_id
+text
+NOT NULL
+02
+chats_blob
+jsonb
+NULL
+03
+last_chat_id
+text
+NULL
+04
+updated_at_utc
+timestamptz
+NULL
+now()
+05
+updated_at_ist
+timestamptz
+NULL
+(now() AT TIME ZONE 'Asia/Kolkata'::text)
+
+
+public
+users
+12 Columns
+Primary Key
+Columns
+Indexes
+Foreign Keys
+01
+PK
+id
+text
+NOT NULL
+(gen_random_uuid())::text
+02
+username
+text
+NOT NULL
+03
+hashed_password
+text
+NOT NULL
+04
+full_name
+text
+NOT NULL
+05
+role
+user_role
+NOT NULL
+'admin'::user_role
+06
+lms_type
+lms_type
+NULL
+07
+is_active
+bool
+NULL
+true
+08
+created_by
+text
+NULL
+09
+created_at_utc
+timestamptz
+NULL
+now()
+10
+created_at_ist
+timestamptz
+NULL
+(now() AT TIME ZONE 'Asia/Kolkata'::text)
+11
+last_login_at_utc
+timestamptz
+NULL
+12
+last_login_at_ist
+timestamptz
+NULL
+
+
+-- ─────────────────────────── MIGRATIONS ──────────────────────────────────────
+-- query rewriter: classify independent/dependent queries and store rewrite info
+
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS query_type TEXT;
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS rewritten_query TEXT;
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS is_rewritten BOOLEAN DEFAULT false;
+
+ALTER TABLE query_logs ADD COLUMN IF NOT EXISTS query_type TEXT;
+ALTER TABLE query_logs ADD COLUMN IF NOT EXISTS rewritten_query TEXT;
+ALTER TABLE query_logs ADD COLUMN IF NOT EXISTS is_rewritten BOOLEAN DEFAULT false;

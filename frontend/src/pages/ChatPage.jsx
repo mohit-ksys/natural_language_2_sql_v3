@@ -123,25 +123,30 @@ export default function ChatPage({
     saveChatsToBackend(chatsToSave, lastId).catch(e => console.error('Failed to save chats:', e));
   };
 
+  const _saveChatDebounceRef = useRef(null);
+
   useEffect(() => {
     if (!chatId || !messages || messages.length === 0) return;
-    
-    setChats(prev => {
-      if (!prev || !Array.isArray(prev)) return prev;
-       const updatedChats = prev.map(c => {
-        if (c.id === chatId) {
-          const validMsgs = Array.isArray(messages) ? messages : [];
-          const lastMsg = [...validMsgs].reverse().find(m => m.type === 'ai' || m.type === 'user');
-          const preview = lastMsg?.text ? lastMsg.text.slice(0, 50) : (lastMsg?.answer ? lastMsg.answer.slice(0, 50) : '');
-          return { ...c, lastMessage: preview, messages: validMsgs }; 
-        }
-        return { ...c, messages: undefined };
-      });
-      saveChatsToBackendAsync(updatedChats, chatId);
-      return updatedChats;
-    });
-  }, [messages, chatId]);
 
+    if (_saveChatDebounceRef.current) clearTimeout(_saveChatDebounceRef.current);
+    _saveChatDebounceRef.current = setTimeout(() => {
+      setChats(prev => {
+        if (!prev || !Array.isArray(prev)) return prev;
+        const updatedChats = prev.map(c => {
+          if (c.id === chatId) {
+            const validMsgs = Array.isArray(messages) ? messages : [];
+            const lastMsg = [...validMsgs].reverse().find(m => m.type === 'ai' || m.type === 'user');
+            const preview = lastMsg?.text ? lastMsg.text.slice(0, 50) : (lastMsg?.answer ? lastMsg.answer.slice(0, 50) : '');
+            return { ...c, lastMessage: preview, messages: validMsgs };
+          }
+          return { ...c, messages: undefined };
+        });
+        saveChatsToBackend(updatedChats, chatId).catch(e => console.error('Failed to save chats:', e));
+        return updatedChats;
+      });
+    }, 800);
+  }, [messages, chatId]);
+  
   const updateChatListWithNewChat = (newId, title, firstQueryMsg) => {
     setChats(prev => {
       if (prev.some(c => c.id === newId)) return prev;

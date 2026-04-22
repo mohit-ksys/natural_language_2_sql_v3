@@ -88,6 +88,15 @@ One row per staff member or partner.
 | current_lead_capacity | INTEGER | Current capacity. |
 | updated_at | TIMESTAMPTZ | When record was last updated (UTC). |
 
+
+### Counsellor Shift Definition Rules (Strict)
+
+#### Shift Definition
+- A counsellor’s shift is strictly defined by their activity within a given day.
+- The **first remark** recorded by the counsellor on that day marks the **start of the shift**.
+- The **last remark** recorded by the counsellor on that day marks the **end of the shift**.
+- No other indicators should be used to determine shift boundaries.
+
 ### Counsellor FK selection:
 - General queries (L2) → `students.assigned_counsellor_id` (role = 'l2')
 - L3-specific → `students.assigned_counsellor_l3_id` (role = 'l3')
@@ -201,6 +210,56 @@ Full audit trail of every status change. One row per event, multiple per student
 | enrollment_counsellor_id | VARCHAR | Counsellor at enrollment stage. |
 | created_at | TIMESTAMPTZ | When status change occurred (UTC). |
 | updated_at | TIMESTAMPTZ | When record was last updated (UTC). |
+
+**RULE CSJ-GROUPING — Ensure count consistency across different grouping dimensions:**
+When writing queries that group by different dimensions (e.g., by university only vs by university + campaign), the total counts must always match. To ensure consistency:
+
+1. **Identical WHERE clauses:** All variations of a query must have identical WHERE clause conditions, including NULL handling.
+2. **Handle LEFT JOIN row multiplication:** When joining one-to-many tables (e.g., `student_lead_activities`), use subqueries to get a single value per student before joining to prevent the same student from being counted in multiple groups.
+
+**Incorrect pattern (causes count mismatch):**
+```sql
+-- Query A: Groups by university only
+SELECT uc.university_name, COUNT(DISTINCT csj.student_id)
+FROM course_status_journeys csj
+JOIN university_courses uc ON csj.course_id = uc.course_id
+WHERE csj.course_status = 'Admission'
+  AND (csj.fee_type NOT IN ('Partial Done', 'Partial Paid', 'Partially Paid') OR csj.fee_type IS NULL)
+GROUP BY uc.university_name;
+
+-- Query B: Groups by university + campaign (LEFT JOIN causes duplication + missing NULL handling)
+SELECT uc.university_name, COALESCE(sla.utm_campaign, 'Direct/Organic'), COUNT(DISTINCT csj.student_id)
+FROM course_status_journeys csj
+JOIN university_courses uc ON csj.course_id = uc.course_id
+LEFT JOIN student_lead_activities sla ON csj.student_id = sla.student_id
+WHERE csj.course_status = 'Admission'
+  AND (csj.fee_type NOT IN ('Partial Done', 'Partial Paid', 'Partially Paid'))  -- ← Missing NULL handling
+GROUP BY uc.university_name, COALESCE(sla.utm_campaign, 'Direct/Organic');
+
+
+-- Get single campaign per student before joining
+WITH student_campaigns AS (
+    SELECT DISTINCT student_id, 
+           COALESCE(utm_campaign, 'Direct/Organic') AS campaign
+    FROM student_lead_activities
+    WHERE id = (
+        SELECT MAX(id) 
+        FROM student_lead_activities sla2 
+        WHERE sla2.student_id = student_lead_activities.student_id
+    )
+)
+SELECT
+    uc.university_name,
+    COALESCE(sc.campaign, 'Direct/Organic') AS campaign,
+    COUNT(DISTINCT csj.student_id) AS admission_count
+FROM course_status_journeys csj
+JOIN university_courses uc ON csj.course_id = uc.course_id
+LEFT JOIN student_campaigns sc ON csj.student_id = sc.student_id
+WHERE csj.course_status = 'Admission'
+  AND (csj.fee_type NOT IN ('Partial Done', 'Partial Paid', 'Partially Paid') OR csj.fee_type IS NULL)  -- ← Same NULL handling
+  AND csj.student_id IN (SELECT student_id FROM students)
+GROUP BY uc.university_name, COALESCE(sc.campaign, 'Direct/Organic')
+ORDER BY admission_count DESC;
 
 ### Business rules:
 - **Primary table for Application, Admission, Document Pending, Document Submitted, Enrolled, and NotInterested (after application) queries.** Use `course_status` column.

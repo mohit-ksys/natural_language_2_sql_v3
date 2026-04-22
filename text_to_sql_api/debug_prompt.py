@@ -48,8 +48,9 @@ def test_prompt_generation(user_query: str, session_id: str = "test-session"):
     try:
         # This will trigger the internal prompt construction with real history/rules
         generate_sql(
-            user_query, 
-            session_history=session_history, 
+            user_query,
+            database_id="degreefyd_online_lms",
+            session_history=session_history,
             learned_rules=learned_rules
         )
         

@@ -3,6 +3,7 @@ import threading
 import time
 import traceback
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Optional, List
 
@@ -30,7 +31,7 @@ from models.schemas import (
     SessionsResponse,
 )
 from pydantic import BaseModel
-from services import llm_service, mcq_service, memory_service
+from services import llm_service, mcq_service, memory_service, query_rewriter
 from config.settings import settings
 
 log = logging.getLogger("text2sql")
@@ -68,7 +69,9 @@ def _resolve_database_id(current_user: dict, req_id: str = None) -> str:
         return settings._resolve_id(req_id)  
     profile_lms = current_user.get("lms_type") or current_user.get("database_id")
     resolved = settings._resolve_id(str(profile_lms)) if profile_lms else None
-    return resolved if resolved else "degreefyd_online_lms"  
+    if not resolved:
+        raise HTTPException(status_code=400, detail="Could not determine database. User has no lms_type assigned.")
+    return resolved
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -89,14 +92,20 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
 
     log.info("QUERY user=%s session=%s query=%r model=%s", current_user["username"], req.session_id, req.user_query[:100], req_model)
 
-    session_history = memory_service.format_session_for_prompt(req.session_id)
     session = memory_service.get_session(req.session_id)
-    turns_count = len(session.get("turns", []))
+    turns = session.get("turns", [])
+    turns_count = len(turns)
     should_show_context_alert = turns_count >= settings.SESSION_MAX_TURNS
+
+    with ThreadPoolExecutor(max_workers=2) as _pool:
+        _history_fut = _pool.submit(memory_service.format_session_for_prompt, req.session_id)
+        _rewriter_fut = _pool.submit(query_rewriter.classify_and_rewrite, req.user_query, turns)
+        session_history = _history_fut.result()
+        _query_type, _final_query, _is_rewritten = _rewriter_fut.result()
 
     try:
         generated_sql, thoughts, sql_usage = llm_service.generate_sql(
-            user_query=req.user_query,
+            user_query=_final_query,
             session_history=session_history,
             learned_rules="",
             model=req_model,
@@ -160,7 +169,10 @@ def process_query(req: QueryRequest, current_user: dict = Depends(get_current_us
         token_usage=sql_usage,
         thoughts=thoughts,
         user_msg_id=req.user_msg_id,
-        lms_id=req.lms_id
+        lms_id=req.lms_id,
+        query_type=_query_type,
+        rewritten_query=_final_query if _is_rewritten else None,
+        is_rewritten=_is_rewritten,
     )
 
     if not req.execute:
@@ -410,10 +422,16 @@ def _generate_and_respond(
     sql_usage = {}
     actual_query = actual_llm_query or user_query
     
-    session_history = memory_service.format_session_for_prompt(session_id)
     session = memory_service.get_session(session_id)
-    turns_count = len(session.get("turns", []))
+    turns = session.get("turns", [])
+    turns_count = len(turns)
     should_show_context_alert = turns_count >= settings.SESSION_MAX_TURNS
+
+    with ThreadPoolExecutor(max_workers=2) as _pool:
+        _history_fut = _pool.submit(memory_service.format_session_for_prompt, session_id)
+        _rewriter_fut = _pool.submit(query_rewriter.classify_and_rewrite, actual_query, turns)
+        session_history = _history_fut.result()
+        _query_type, _final_query, _is_rewritten = _rewriter_fut.result()
 
     combined_history = session_history
     if extra_context:
@@ -421,7 +439,7 @@ def _generate_and_respond(
 
     try:
         generated_sql, thoughts, sql_usage = llm_service.generate_sql(
-            user_query=actual_query, 
+            user_query=_final_query,
             session_history=combined_history,
             learned_rules="", 
             model=req_model, 
@@ -471,7 +489,10 @@ def _generate_and_respond(
         is_mcq_answer=True,
         user_msg_id=user_msg_id,
         lms_id=lms_id,
-        delete_msg_id=delete_msg_id
+        delete_msg_id=delete_msg_id,
+        query_type=_query_type,
+        rewritten_query=_final_query if _is_rewritten else None,
+        is_rewritten=_is_rewritten,
     )
 
     if not execute:

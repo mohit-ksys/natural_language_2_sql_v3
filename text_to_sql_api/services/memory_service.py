@@ -107,6 +107,9 @@ def save_feedback(
     sql_error: str = None,
     extra: dict = None,
     delete_msg_id: str = None,
+    query_type: str = None,
+    rewritten_query: str = None,
+    is_rewritten: bool = False,
 ) -> str:
     """Insert a query/response pair into query_logs table and track token usage."""
     from config.database import get_auth_engine
@@ -147,11 +150,13 @@ def save_feedback(
                     id, user_id, user_name, user_email, user_role, session_id, chat_id, user_query, generated_sql,
                     answer, execution_time, error_message, model, lms_type, lms_id,
                     token_usage, chart_type, mcq_data,
+                    query_type, rewritten_query, is_rewritten,
                     created_at_utc, created_at_ist
                 ) VALUES (
                     :id, :user_id, :user_name, :user_email, :user_role, :session_id, :chat_id, :user_query, :generated_sql,
                     :answer, :execution_time, :error_message, :model, :lms_type, :lms_id,
                     CAST(:token_usage AS jsonb), :chart_type, CAST(:mcq_data AS jsonb),
+                    :query_type, :rewritten_query, :is_rewritten,
                     :now, :now AT TIME ZONE 'Asia/Kolkata'
                 )
                 ON CONFLICT (id) DO UPDATE SET
@@ -160,7 +165,10 @@ def save_feedback(
                     execution_time = EXCLUDED.execution_time,
                     token_usage = EXCLUDED.token_usage,
                     chart_type = EXCLUDED.chart_type,
-                    mcq_data = EXCLUDED.mcq_data
+                    mcq_data = EXCLUDED.mcq_data,
+                    query_type = COALESCE(query_logs.query_type, EXCLUDED.query_type),
+                    rewritten_query = COALESCE(query_logs.rewritten_query, EXCLUDED.rewritten_query),
+                    is_rewritten = COALESCE(query_logs.is_rewritten, EXCLUDED.is_rewritten)
             """), {
                 "id": feedback_id,
                 "user_id": user_id,
@@ -180,6 +188,9 @@ def save_feedback(
                 "token_usage": token_usage_json,
                 "chart_type": chart_type,
                 "mcq_data": mcq_data,
+                "query_type": query_type,
+                "rewritten_query": rewritten_query,
+                "is_rewritten": is_rewritten,
                 "now": now_utc,
             })
 
@@ -232,11 +243,15 @@ def save_feedback(
                 INSERT INTO chat_messages (
                     id, chat_id, type, text, sql, answer, chart_type, execution_time, 
                     model, session_id, user_query, feedback_id, token_usage, 
-                    sql_auto_fixed, error, lms_id, extra, created_at_utc, created_at_ist
+                    sql_auto_fixed, error, lms_id, extra,
+                    query_type, rewritten_query, is_rewritten,
+                    created_at_utc, created_at_ist
                 ) VALUES (
                     :id, :cid, :type, :text, :sql, :ans, :chart, :etime,
                     :model, :sid, :q, :fid, CAST(:tokens AS jsonb),
-                    :saf, :err, :lms_id, CAST(:extra AS jsonb), :now, :now AT TIME ZONE 'Asia/Kolkata'
+                    :saf, :err, :lms_id, CAST(:extra AS jsonb),
+                    :query_type, :rewritten_query, :is_rewritten,
+                    :now, :now AT TIME ZONE 'Asia/Kolkata'
                 )
                 ON CONFLICT (id) DO UPDATE SET
                     sql = EXCLUDED.sql,
@@ -246,7 +261,10 @@ def save_feedback(
                     token_usage = EXCLUDED.token_usage,
                     sql_auto_fixed = EXCLUDED.sql_auto_fixed,
                     error = EXCLUDED.error,
-                    extra = EXCLUDED.extra
+                    extra = EXCLUDED.extra,
+                    query_type = COALESCE(chat_messages.query_type, EXCLUDED.query_type),
+                    rewritten_query = COALESCE(chat_messages.rewritten_query, EXCLUDED.rewritten_query),
+                    is_rewritten = COALESCE(chat_messages.is_rewritten, EXCLUDED.is_rewritten)
             """), {
                 "id": target_msg_id,
                 "cid": chat_id,
@@ -265,6 +283,9 @@ def save_feedback(
                 "err": sql_error or error_message,
                 "lms_id": lms_id,
                 "extra": json.dumps(rich_extra, default=str),
+                "query_type": query_type,
+                "rewritten_query": rewritten_query,
+                "is_rewritten": is_rewritten,
                 "now": now_utc
             })
 
@@ -308,7 +329,7 @@ def save_feedback(
         log.info("feedback[%s] session=%s exec=%.3fs query=%r", feedback_id[:8], session_id, execution_time, user_query[:80])
 
     if _db_saved:
-        append_session_turn(session_id, user_query, generated_sql, answer, feedback_id, user_id=user_id)
+        append_session_turn(session_id, user_query, generated_sql, answer, feedback_id, user_id=user_id, query_type=query_type, rewritten_query=rewritten_query, is_rewritten=is_rewritten)
 
     return feedback_id
 
@@ -398,16 +419,23 @@ def get_session(session_id: str) -> dict:
         return {"turns": []}
 
 
-def append_session_turn(session_id: str, user_query: str, generated_sql: str, answer: str, feedback_id: str, user_id: str = None):
+def append_session_turn(session_id: str, user_query: str, generated_sql: str, answer: str, feedback_id: str, user_id: str = None, query_type: str = None, rewritten_query: str = None, is_rewritten: bool = False):
     """Insert or update a turn in conversation_memory using feedback_id column."""
     from config.database import get_auth_engine
     now_utc = datetime.now(timezone.utc)
-    content = json.dumps({
+    content_dict = {
         "user_query": user_query,
         "generated_sql": generated_sql,
         "answer": answer,
         "feedback_id": feedback_id,
-    })
+    }
+    if query_type:
+        content_dict["query_type"] = query_type
+    if rewritten_query:
+        content_dict["rewritten_query"] = rewritten_query
+    if is_rewritten:
+        content_dict["is_rewritten"] = is_rewritten
+    content = json.dumps(content_dict)
     try:
         engine = get_auth_engine()
         with engine.begin() as conn:
